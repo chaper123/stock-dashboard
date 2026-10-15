@@ -12,7 +12,7 @@
 ## 下一步
 1. 使用者把共用帳本「發布到網路」（整份文件、CSV），把連結貼給 Claude。
 2. Claude 從 Pages 網址實測瀏覽器能否直接讀該 CSV（CORS）；不行就改由 Actions 定時抓。驗收後 Phase 0 打 tag v0.1。
-3. 開始 Phase 1：在 market-data 加「來源探測」workflow。
+3. Phase 1 來源探測已完成（結果見下）。使用者同意「建議實作順序」後，從第 1 項開始實作。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）
@@ -26,9 +26,43 @@
 - [ ] 驗證 Google Sheet 發布的 CSV 能被瀏覽器直接讀
 
 ## Phase 1 強化資料（market-data）
-- [ ] 來源探測 workflow
-- [ ] 待探測結果後展開
-- 備註：market-data 的 fetch.yml 用 checkout@v4、setup-python@v5，會出現 Node 20 淘汰警告，Phase 1 一起升級。
+- [x] 來源探測：`probe.py`（標準庫）＋`.github/workflows/probe.yml`（只手動觸發、不 commit）。Actions 上 33/36 通過（[run 38784686621](https://github.com/chaper123/market-data/actions/runs/38784686621)，結果在 job summary）
+- [x] fetch.yml 升級 checkout、setup-python 至 v7；手動跑成功、meta.json 17 項 ok、無錯誤，Node 20 警告消失（[run 38784691731](https://github.com/chaper123/market-data/actions/runs/38784691731)）
+- [ ] 依下方順序實作（等使用者同意）
+- 備註：Actions 提示 `ubuntu-latest` 自 2026-10-19 起改用 Ubuntu 26，之後第一次排程留意是否正常。
+
+### 探測結果（GitHub Actions，2026-10-16 02:19 台北）
+| 資料 | 來源 | 結果 | 備註 |
+|---|---|---|---|
+| 美股指數與總經收盤 | Yahoo chart：^GSPC ^IXIC ^SOX ^VIX ^TNX DX-Y.NYB GC=F CL=F TSM | ✅ | 每檔約 3.5 KB、0.2 秒。盤中會含未收盤 K 棒，要沿用 fetch.py 的收盤截止 |
+| 加權指數 | Yahoo ^TWII | ⚠️ | 抓得到，但停在 10/14（少 10/15）。repo 目前只有 quotes.json 的 TSE01 盤中快照，建議改用證交所或鉅亨日線（尚未探測） |
+| 恐懼貪婪 | CNN dataviz graphdata | ✅ | 要帶 Referer（否則 418）。分數、評等、252 點歷史、7 個分項 |
+| 台指 VIX | 期交所月檔 `vix/log2data/YYYYMMnew.txt`（Big5） | ✅ | 第一次逾時、重試才成功（共 23 秒）→ 實作要重試並放寬逾時 |
+| 台銀美元即期買賣 | FinMind TaiwanExchangeRate（免 token） | ✅ | 6 個月 131 列，spot_buy／spot_sell 到 10/15 |
+| 台銀本站（對照組） | rate.bot.com.tw CSV | ❌ | 「Challenge Validation」驗證頁（本機也一樣），不繞過 |
+| 估值 | stockanalysis statistics、`/etf/voo/` | ✅ | Forward PE、PEG、VOO 本益比、頁面股價與時間都解析得到 |
+| 估值、財報日 | Yahoo quoteSummary | ✅ | 無 crumb 回 401；cookie＋crumb 可得 Forward PE、PEG、下次財報日。數字與 stockanalysis 差很多（NVDA 13.6 vs 18.0、PEG 0.27 vs 0.37，預估期間不同），不能直接互相核對 |
+| 台股休市 | 證交所 OpenAPI 與 rwd holidaySchedule | ✅ | 2026 年 27 筆 |
+| FOMC | federalreserve.gov FOMC 行事曆 | ✅ | 2026 年 8 次 |
+| CPI 發布日 | BLS 時程頁 | ❌ | 403 Access Denied（本機也一樣），要另找來源 |
+| 法人買賣超（個股） | 證交所 rwd T86 | ✅ | 2.7 MB、約 5 秒；OpenAPI 沒有 T86 |
+| 法人買賣金額 | 證交所 BFI82U | ✅ | |
+| 融資（大盤） | 證交所 rwd MI_MARGN（MS） | ✅ | |
+| 融資（個股） | 證交所 OpenAPI MI_MARGN | ✅ | 沒有日期欄位，難判斷資料日，優先用 rwd 版 |
+| 00411A 法人 | 櫃買 insti/dailyTrade | ✅ | 額外加測（00411A 是上櫃） |
+| 主動 ETF 每日持股 | 統一投信 ezmoney（00981A=49YTW、00411A=64YTW） | ✅ | 頁面內嵌完整持股 JSON（代號、名稱、股數、權重）；要帶 cookie；00411A 資料日晚一天 |
+| 8-K 等申報 | SEC EDGAR submissions（NVDA AAPL GOOGL TSLA） | ✅ | 用 fetch.py 的瀏覽器 UA 可通；SEC 規範要求自報 UA＋聯絡信箱，不附信箱的自訂 UA 會 403 |
+| 新聞標題 | Google News RSS（英、中） | ✅ | 各 100 則 |
+
+### 建議實作順序（等使用者同意再做）
+1. 美股指數與總經收盤（Yahoo chart）＋CNN 恐懼貪婪＋台指 VIX：格式單純，直接取代排程搜尋轉述。
+2. 台銀美元即期（FinMind）：取代 AI 轉述 6 個月表，與現有 Yahoo 中間價核對（應高約 0.1～0.2 元）。
+3. 估值：stockanalysis 為主（與排程現用來源相同，數字不跳動）；Yahoo 只取財報日，不拿來核對本益比，改檢查與上週差距。
+4. 行事曆：證交所休市＋Fed FOMC＋Yahoo 財報日；CPI 另找來源。
+5. 法人與融資：T86（只留關注代號）、BFI82U、MI_MARGN；00411A 用櫃買。
+6. 主動 ETF 持股：統一投信每日快照，比對前十大變化，取代每週轉述。
+7. 新聞預篩：SEC 8-K＋Google News RSS 標題（SEC 的 UA 寫法另請使用者決定）。
+8. 加權指數日線改正式來源（另行探測）；cron-job.org 外部觸發可平行處理。
 
 ## Phase 2～6
 - [ ] 尚未開始
