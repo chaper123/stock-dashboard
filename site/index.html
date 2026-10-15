@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>股票儀表板</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #1d1d1b; --muted: #6b6b66; --card: #ffffff; --line: #e3e3de;
+    --ok: #1f7a4d; --warn: #a86400; --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413; --fg: #ececea; --muted: #9b9b95; --card: #1e1e1c; --line: #2f2f2c;
+      --ok: #5cc28f; --warn: #e0a64a; --bad: #f08a80;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.6 system-ui, -apple-system, "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: .85rem; }
+  .ok { color: var(--ok); } .stale { color: var(--warn); } .fail { color: var(--bad); }
+  footer { color: var(--muted); font-size: .8rem; margin-top: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>股票儀表板</h1>
+  <p class="sub">建置中：這是部署測試頁，確認網站讀得到 market-data 的行情資料。</p>
+  <section class="card">
+    <p id="status">讀取 market-data/meta.json 中…</p>
+    <table id="datasets" hidden>
+      <thead><tr><th>資料集</th><th>狀態</th><th>最後日期</th><th>收盤</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+  <footer>依自訂規則計算的訊號，不是投資建議。</footer>
+</main>
+<script type="module">
+  const META = "https://raw.githubusercontent.com/chaper123/market-data/main/data/meta.json";
+  const status = document.getElementById("status");
+  const table = document.getElementById("datasets");
+  try {
+    const res = await fetch(META, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const meta = await res.json();
+    status.textContent = `行情資料產生時間（台北）：${meta.generated_at_taipei}`;
+    const body = table.querySelector("tbody");
+    for (const [name, d] of Object.entries(meta.datasets)) {
+      const tr = document.createElement("tr");
+      for (const [text, cls] of [[name], [d.status, d.status], [d.last ?? "—"], [d.last_close ?? "—"]]) {
+        const td = document.createElement("td");
+        td.textContent = text;
+        if (cls) td.className = cls;
+        tr.append(td);
+      }
+      body.append(tr);
+    }
+    table.hidden = false;
+  } catch (err) {
+    status.textContent = `讀取失敗：${err.message}`;
+    status.className = "fail";
+  }
+</script>
+</body>
+</html>
