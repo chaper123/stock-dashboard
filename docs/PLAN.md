@@ -1,0 +1,110 @@
+# 實作計畫：股票儀表板（台美跨市場買點整合＋手機儀表板）
+
+> 2026-10-16 規劃並經使用者確認。進度請看 [PROGRESS.md](PROGRESS.md)。
+
+## 1. 需求
+1. **一站式網站**：集中看兩個排程（美股晨報平日 09:20、台股 ETF 晨報 10:17）的報告、訊號與帳本；GitHub Pages 發布、手機可看。
+2. **跨市場整合（核心）**：當天已進買區的台、美標的放在一起排序 → 依分數重新分配共用資金池 → 產出分批買進計畫（每批價位＋金額），避免台股先買光、美股沒錢。
+3. **先強化資料**：讓排程拿到的資料更新、更正確。
+4. **加值功能**：買點 K 線、策略圖示（買區＋分批點位）、可用資金、總資產、恐懼貪婪指數等。
+5. Git 版本控管、控制額度。
+
+## 2. 現況（2026-10-16）
+| 項目 | 現況 | 影響 |
+|---|---|---|
+| 兩個排程 | claude.ai 雲端排程，提示詞各約 2 萬字，monitor 程式寫在提示詞裡 | 輸出只有推播與 email，沒有結構化存檔 |
+| 排程網路 | shell 只連得到 raw.githubusercontent.com | 新資料源放 GitHub Actions 抓，排程只讀 repo |
+| AI 轉述的資料 | 台銀 6 個月匯率表、估值、指數收盤 | 容易抄錯、耗 token，Phase 1 優先取代 |
+| market-data | Actions 平日 5 個時段抓、meta.json、雙來源核對 | 在這裡擴充；GitHub cron 常延遲 |
+| 帳本 | Google Sheet；美股上限 40%、台股 60% | 上限只防同一天超額，跨天資金分配沒處理 |
+
+## 3. 架構
+```
+GitHub Actions（market-data）：行情、匯率、估值、恐懼貪婪、法人、行事曆（公開）
+        │ raw.githubusercontent
+        ▼
+09:20 美股排程 ─┐  從 repo 下載 engine/*.py 執行（提示詞瘦身）
+10:17 台股排程 ─┤  額外跑 allocator.py：台美合併排序 → 資金配置 → 分批計畫
+               │  寫入「儀表板資料」試算表，推播照常
+               ▼
+Google Sheet：帳本（不變）＋儀表板資料（新開，與帳本分開）
+               │ 「發布到網路」成 CSV，網站直接讀
+               ▼
+GitHub Pages（本 repo 的 site/）：純靜態網站，不需 Node
+```
+
+## 4. 已確認的決定
+| # | 決定 |
+|---|---|
+| D1 | 帳本只有交易數字，可公開被看到。repo 公開（免費 Pages）；網站直接讀 Google Sheet「發布到網路」的 CSV，不做登入或加密。若瀏覽器讀不到（CORS），改由 Actions 定時抓 CSV 存進 repo。market-data 仍只放行情數據。 |
+| D2 | 專案放 `C:\stock-dashboard`（「文件」在 Google Drive 備份清單內，避免同步 .git）。market-data clone 到 `C:\market-data`。 |
+| D3 | winget 安裝 Python 3.12、Git、GitHub CLI；不需要 Node。 |
+| D4 | 配置器參數 Phase 3 先給預設值，影子模式 1～2 週後再決定是否取代原金額。 |
+
+## 5. 分階段
+
+### Phase 0 基礎建設（低）
+- 裝工具、建 repo、`.gitignore`、提交前檢查（tools/precommit_guard.py）
+- docs/PLAN.md、docs/PROGRESS.md、CLAUDE.md
+- 排程提示詞備份到 private/（不進 git）
+- Pages 部署測試頁；測試頁讀 market-data 的 meta.json（驗證瀏覽器讀 raw.githubusercontent）
+- 驗證 Google Sheet 發布 CSV 能否被瀏覽器直接讀（需使用者先發布一個分頁）
+
+### Phase 1 強化資料（高；在 market-data）
+先用一次「來源探測」workflow 確認哪些網站不擋 GitHub 機房 IP，再實作通過的：
+| 優先 | 新資料 | 候選來源 | 取代 |
+|---|---|---|---|
+| 1 | 指數與總經收盤：S&P、Nasdaq、費半、VIX、10Y、美元指數、金、油、台積電 ADR、加權 | Yahoo chart API | 排程搜尋轉述 |
+| 2 | 恐懼貪婪：CNN（分數＋歷史＋分項）、台指 VIX | CNN dataviz、期交所 | 只有口袋晨報一個數字 |
+| 3 | 台銀美元即期賣出 | FinMind TaiwanExchangeRate | AI 轉述 6 個月表 |
+| 4 | 估值 Forward PE、PEG | stockanalysis／Yahoo＋交叉核對 | 每週轉述 |
+| 5 | 行事曆：台美休市、財報日、FOMC、CPI | 證交所 holidaySchedule 等官方來源 | 推測休市 |
+| 6 | 法人買賣超、融資；主動 ETF 每日持股 | 證交所 OpenAPI、統一投信 | 每週轉述 MoneyDJ／CMoney |
+| 7 | 新聞預篩：SEC 8-K、RSS 標題 | 官方、RSS | 減少搜尋次數 |
+| 8 | 排程可靠度：cron-job.org 外部觸發 workflow_dispatch | — | GitHub cron 延遲 |
+
+沿用慣例：失敗保留舊檔、meta.json 標 stale、雙來源核對。
+
+### Phase 2 排程結構化輸出（中；動到正式排程）
+- monitor.py、monitor_us.py 原封不動搬進 `engine/`，黃金測試鎖住行為；加 JSON 輸出
+- 新試算表「儀表板資料」：報告存檔、配置計畫
+- 提示詞 v2：從 repo 下載 engine、讀 Phase 1 資料、寫存檔（約 2 萬字 → 7～8 千字）
+- 先用一次性測試 run 與舊版比對，一致才更新正式排程；每次更新先問使用者
+
+### Phase 3 跨市場配置＋分批（中高；核心）
+`engine/allocator.py`（確定性程式）：
+1. 候選＝兩邊 monitor 判定在起始倉或買區的標的；原本閘門全保留，配置器只分配、不能把「等待」升成「買」
+2. 評分 0～100：買區深度 35、區內位置 15、估值或溢價 20、組合缺口 20、趨勢品質 10；重疊扣分（009816↔00981A、VOO↔NVDA/AAPL/GOOGL）
+3. 跨市場預留：某市場今天沒訊號但有標的離第一買區 ≤3%，先保留資金池 15%；各標的不超過原 monitor 上限
+4. 分批：每檔 2～3 批，掛在目前區／下一個更深買區上緣／深度買區，預設 50/30/20，間隔 ≥3 個交易日，低於 NT$500 併批
+5. 影子模式：與原金額並列 1～2 週
+驗收：性質測試（總額 ≤ 預算、不超過單檔上限、分批價位由高到低、非候選為 0）＋真實日期回放。
+
+### Phase 4 網站雛形（中）
+純靜態（HTML＋原生 JS＋CSS）；Lightweight Charts；報告用 marked＋DOMPurify；手機優先、深色模式、PWA。頁面：總覽、今日計畫、報告歷史、持倉。
+
+### Phase 5 加值（中高）
+K 線（均線、買區色帶、分批掛單線、成交標記）、價格階梯圖、資金流向、總資產走勢、台美比重、恐懼貪婪儀表與歷史、匯率與估值走勢；選做：買區歷史統計（標樣本數，僅供參考）。
+
+### Phase 6 維運
+pytest CI、資料健康警示、PROGRESS.md 持續更新。
+
+## 6. 沿用的既有寫法
+| 類別 | 來源 | 做法 |
+|---|---|---|
+| 命名 | market-data `data/<市場>/<代號>.csv`、`config.json` role | 新資料集同格式 |
+| 錯誤處理 | market-data `fetch.py` 的 `http()`：重試＋退避、失敗保留舊檔標 stale | 新抓取器沿用 |
+| 參數 | monitor 的 `P = dict(...)`「使用者同意後才改」 | allocator 同寫法 |
+| 外部依賴 | fetch.py 只用標準庫 | 抓取器維持標準庫；engine 用 pandas |
+| 測試 | 原本沒有 | 新增 pytest |
+
+## 7. 風險
+| 等級 | 風險 | 對策 |
+|---|---|---|
+| 高 | 新來源擋 GitHub 機房 IP | 先探測再實作；舊方法當備援 |
+| 中 | 改動正式排程出錯 | 備份舊提示詞；測試 run 比對一致才切換；每次先問 |
+| 中 | GitHub cron 延遲 | 外部觸發；報告靠推播送達，不依賴網站 |
+| 中 | 配置器是新規則 | 參數由使用者決定；影子模式；不放寬原閘門 |
+| 低 | 非官方 API 改版 | 失敗標 stale，不影響核心判定 |
+| 低 | Sheet 儲存格 5 萬字上限 | JSON 精簡格式，必要時拆欄 |
+| 低 | 金鑰誤提交 | tools/precommit_guard.py；private/ 不進 git |
