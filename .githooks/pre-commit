@@ -1,0 +1,6 @@
+#!/bin/sh
+# 提交前檢查：擋下私密檔案與金鑰（tools/precommit_guard.py）
+if command -v py >/dev/null 2>&1; then
+  exec py -3 tools/precommit_guard.py
+fi
+exec python tools/precommit_guard.py
