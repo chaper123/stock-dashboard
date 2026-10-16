@@ -12,7 +12,7 @@
 ## 下一步
 1. 使用者把共用帳本「發布到網路」（整份文件、CSV），把連結貼給 Claude。
 2. Claude 從 Pages 網址實測瀏覽器能否直接讀該 CSV（CORS）；不行就改由 Actions 定時抓。驗收後 Phase 0 打 tag v0.1。
-3. Phase 1 來源探測已完成（結果見下）。使用者同意「建議實作順序」後，從第 1 項開始實作。
+3. Phase 1 第 1～6 項實作中（分支 session，進度見下方勾選）；第 7 項 SEC 之後再做（UA 信箱從 Actions secret 讀）。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）
@@ -29,7 +29,15 @@
 - [x] 來源探測：`probe.py`（標準庫）＋`.github/workflows/probe.yml`（只手動觸發、不 commit）。Actions 上 33/36 通過（[run 38784686621](https://github.com/chaper123/market-data/actions/runs/38784686621)，結果在 job summary）
 - [x] fetch.yml 升級 checkout、setup-python 至 v7；手動跑成功、meta.json 17 項 ok、無錯誤，Node 20 警告消失（[run 38784691731](https://github.com/chaper123/market-data/actions/runs/38784691731)）
 - [x] 修正 fetch.py 略過邏輯（market-data 326e84e）：原本只看 meta 是否今天產生，10/16 02:19 手動執行（美股未收盤）導致當天三次排程都略過、美股晨報用到 10/14 日線。改成核心資料最後日期都到「台北今天的前一個平日」才略過；6 個情境測試通過。11:25 手動重抓後資料已補到 10/15。
-- [ ] 依下方順序實作（等使用者同意）
+- 實作（使用者 2026-10-16 同意第 1～6 項；第 7、8 項之後再做）：
+  - [x] 共用工具抽到 `common.py`（market-data ac96705；本機完整執行比對，日線與淨值歷史輸出不變）
+  - [x] ① 指數與總經收盤、CNN 恐懼貪婪、台指 VIX：`macro.py` → `data/macro/`、`data/sentiment/`（b9e1a35）。本機測試：SPX、IXIC、SOX、DXY 與鉅亨網收盤一致；TSM 鉅亨網 10/15 還是盤中價（差 2.4%），meta 會標核對衝突
+  - [ ] ② 台銀美元即期（FinMind），與 usdtwd_mid 核對
+  - [ ] ③ 估值（stockanalysis）＋Yahoo 財報日，檢查與上週差距
+  - [ ] ④ 行事曆：證交所休市、FOMC、財報日；CPI 標「未取得」
+  - [ ] ⑤ 法人與融資：T86（關注代號）、BFI82U、MI_MARGN；00411A 用櫃買
+  - [ ] ⑥ 主動 ETF 每日持股（統一投信），比對前十大變化
+  - [ ] 台北白天手動觸發 fetch，確認 meta.json 新舊資料集都 ok
 - 備註：Actions 提示 `ubuntu-latest` 自 2026-10-19 起改用 Ubuntu 26，之後第一次排程留意是否正常。
 
 ### 探測結果（GitHub Actions，2026-10-16 02:19 台北）
