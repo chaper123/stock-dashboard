@@ -93,7 +93,7 @@
   - 既有行為（照實記錄，沒有改）：台股已持有的標的若從第一買區因溢價降一級、或從等待因 boost 升一級，會落在「趨勢起始倉」等級拿 15%（10/16 的 00981A 357 元就是這樣）；價格剛好等於門檻時浮點數會略超過門檻（例如乖離剛好 6% 判成追價區），方向偏保守
 - [x] ③ JSON 精簡輸出：`engine/run.py`（薄包裝，monitor 不改；欄位見 [engine/README.md](../engine/README.md)）。`schema_version` 1、台北時區產生時間、engine 的 SHA-256 與版本、統一的等級（台股從狀態名稱對應）、`--full` 存 monitor 原始輸出、`--rows` 產生「儀表板資料」試算表的列。測試 22 項：包裝後 monitor 輸出與黃金檔逐字相同、精簡 JSON 黃金檔 4 組、金額加總＝合計≤上限、不認得的狀態直接失敗、命令列用法（本機共 179 項通過）
   - 快照補記：market-data 的 CSV 是 CRLF，快照原本被 `eol=lf` 轉成 LF；改設 `-text` 後 17 個資料檔的 git blob id 與 market-data 8a9a1a1 相同（ca8e0ee）
-- [ ] ④ requirements-dev.txt、CI
+- [x] ④ `requirements-dev.txt`（pandas 3.0.6、numpy 2.5.4、pytest 9.1.1、tzdata 2026.5，版本固定讓本機與 CI 數字相同；`py -3.12 -m pip install --user -r requirements-dev.txt`）＋`.github/workflows/test.yml`（每次 push、PR 跑 pytest，Python 3.12）
 - [ ] ⑤ docs/ROUTINE_V2.md（v1 → v2 規劃）
 - [ ] ⑥ v2 提示詞草稿（private/routines/*.v2.prompt.md）
 - [ ] ⑦ 使用者同意後才做：建立「儀表板資料」試算表、一次性測試執行並與 v1 比對、更新正式排程

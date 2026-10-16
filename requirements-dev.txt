@@ -1,0 +1,6 @@
+# 開發與 CI 用（排程環境不讀這份）。版本固定，讓黃金測試在本機與 CI 算出一樣的數字。
+# 安裝：py -3.12 -m pip install --user -r requirements-dev.txt
+pandas==3.0.6
+numpy==2.5.4
+pytest==9.1.1
+tzdata==2026.5
