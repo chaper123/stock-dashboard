@@ -1,6 +1,6 @@
 # 2026-10-15 收盤快照
 
-黃金測試用的固定資料，從 chaper123/market-data commit `8a9a1a15501ff31835710e4e97428a3e1beebeb4`（bot「data 2026-10-16 12:47」，日線已改用 MoneyDJ／官方之後的第一次完整抓取）原樣複製（`git show <commit>:data/...`），不再更新。
+黃金測試用的固定資料，從 chaper123/market-data commit `8a9a1a15501ff31835710e4e97428a3e1beebeb4`（bot「data 2026-10-16 12:47」，日線已改用 MoneyDJ／官方之後的第一次完整抓取）原樣複製（`git show <commit>:data/...`），不再更新。CSV 保留原始的 CRLF 換行（`.gitattributes` 設 `-text`），git blob id 與 market-data 相同。
 
 | 路徑 | 內容 |
 |---|---|

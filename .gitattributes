@@ -4,3 +4,5 @@
 *.ico binary
 *.ps1 text eol=crlf
 *.bat text eol=crlf
+# 測試快照：保留 market-data 的原始位元組（CSV 是 CRLF），不做換行轉換
+tests/fixtures/** -text
