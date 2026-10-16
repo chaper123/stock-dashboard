@@ -33,7 +33,7 @@
   - [x] 共用工具抽到 `common.py`（market-data ac96705；本機完整執行比對，日線與淨值歷史輸出不變）
   - [x] ① 指數與總經收盤、CNN 恐懼貪婪、台指 VIX：`macro.py` → `data/macro/`、`data/sentiment/`（b9e1a35）。本機測試：SPX、IXIC、SOX、DXY 與鉅亨網收盤一致；TSM 鉅亨網 10/15 還是盤中價（差 2.4%），meta 會標核對衝突
   - [x] ② 台銀美元即期（FinMind），與 usdtwd_mid 核對：`fxbot.py` → `data/fx/usdtwd_bot_sell.csv`（date,rate，可直接當 fx_csv；38943a8）。本機與台銀網頁 6 個月表 125 列逐筆一致；16:30 前不收當天（台銀網頁會列出當天盤中牌告，Phase 2 再決定要不要用）
-  - [ ] ③ 估值（stockanalysis）＋Yahoo 財報日，檢查與上週差距
+  - [x] ③ 估值（stockanalysis）＋Yahoo 財報日，檢查與上週差距：`valuation.py` → `data/valuation/us.json`、`us_history.csv`（02ea55b）。頁面股價與 repo 收盤核對（本機 6 檔差 ≤0.06%）；隱含預估 EPS 一週變動超過 ±20% 標記；Yahoo 只取財報日（GOOGL 10/28、TSLA 10/21、SPCX 11/03 估計、AAPL 11/02、NVDA 11/17）
   - [ ] ④ 行事曆：證交所休市、FOMC、財報日；CPI 標「未取得」
   - [ ] ⑤ 法人與融資：T86（關注代號）、BFI82U、MI_MARGN；00411A 用櫃買
   - [ ] ⑥ 主動 ETF 每日持股（統一投信），比對前十大變化
