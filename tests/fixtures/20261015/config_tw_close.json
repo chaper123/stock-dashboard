@@ -1,0 +1,4 @@
+{"pool": 9600, "last_buy_days": 31,
+ "etfs": {"009816": {"csv": "tw/009816_norm.csv", "held": true,  "premium": null, "intraday": null, "event": "none"},
+          "00981A": {"csv": "tw/00981A_norm.csv", "held": true,  "premium": 2.0,  "intraday": null, "event": "boost"},
+          "00411A": {"csv": "tw/00411A_norm.csv", "held": false, "premium": 4.47, "intraday": null, "event": "block"}}}

@@ -1,0 +1,13 @@
+{"pool_twd": 2580, "fx_csv": "fx/usdtwd_bot_sell.csv",
+ "positions": {"GOOGL": {"shares": 0.1826, "cost_usd": 62.1}, "VOO": {"shares": 0.1262, "cost_usd": 82.4}},
+ "tickers": {
+  "VOO":  {"csv": "us/VOO.csv",  "role": "buy", "kind": "etf",   "event": "none", "val": {"pe": 27.05, "px_at": 714.77}},
+  "GOOGL":{"csv": "us/GOOGL.csv","role": "buy", "kind": "stock", "event": "none", "val": {"fwd_pe": 26.18, "peg": 1.98, "px_at": 352.59}},
+  "NVDA": {"csv": "us/NVDA.csv", "role": "buy", "kind": "stock", "event": "none", "val": {"fwd_pe": 18.96, "peg": 0.38, "px_at": 226.42}},
+  "TSLA": {"csv": "us/TSLA.csv", "role": "buy", "kind": "stock", "event": "none", "val": {"fwd_pe": 196.14, "peg": 10.45, "px_at": 379.28}},
+  "SPCX": {"csv": "us/SPCX.csv", "role": "buy", "kind": "stock", "event": "none", "val": {"fwd_pe": 103.23, "peg": null, "px_at": 163.76}},
+  "AAPL": {"csv": "us/AAPL.csv", "role": "buy", "kind": "stock", "event": "none", "val": {"fwd_pe": 36.55, "peg": 3.29, "px_at": 340.04}},
+  "IAUM": {"csv": "us/IAUM.csv", "role": "gauge"},
+  "ARKK": {"csv": "us/ARKK.csv", "role": "watch"},
+  "ARKQ": {"csv": "us/ARKQ.csv", "role": "watch"},
+  "ARKX": {"csv": "us/ARKX.csv", "role": "watch"}}}
