@@ -11,8 +11,10 @@ role：buy（可給金額）/ watch（只觀察）/ gauge（市場指標）。
 event：none / block（重大負面，暫停）/ boost（情緒錯殺且已修復，買區內升一級）。
 val：每週估值快取；px_at 是抓估值當時的股價，程式依今日收盤等比例換算本益比與 PEG。
 fx_csv：台銀美元即期賣出，欄位 date,rate（無表頭，任意排序）。
+下單限制（口袋美股，使用者 2026-10-16 告知）：每筆最低 50 美元；台幣交割要圈存「委託金額 × 匯率 × 1.03」。
+規則金額（台幣）換成可下單美元時先扣掉這 3%；不足 50 美元就不下單（使用者選擇「不足就不買」）。
 """
-import sys, json
+import sys, json, math
 import pandas as pd
 import numpy as np
 
@@ -25,9 +27,11 @@ P = dict(
     fx_window=120, fx_down=2.0, fx_only_z3=4.0,                 # 匯率濾網（%）
     pe_stock=(20, 30, 45), peg_cheap=1.0, peg_rich=2.5,         # 個股 Forward PE 分級
     pe_index=(18, 24, 30),                                      # 指數 ETF 本益比分級
+    min_order_usd=50.0, hold_mult=1.03,                         # 最低下單 50 美元；台幣交割圈存多 3%
 )
 LABELS = ["偏便宜", "合理", "偏貴", "明顯偏貴"]
 ZONES = ["z1", "z2", "z3"]
+PCT = {"z1": P["pct_z1"], "z2": P["pct_z2"], "z3": P["pct_z3"]}
 NAMES = {"overheat": "追價區（不買）", "wait": "等待回檔", "z1": "第一買區", "z2": "第二買區", "z3": "深度買區"}
 
 
@@ -157,6 +161,63 @@ def down(level, why, reason):
     return {"z3": "z2", "z2": "z1", "z1": "wait"}.get(level, level)
 
 
+def to_usd(twd, fx):
+    """台幣預算 → 可下單美元。圈存 = 委託金額 × 匯率 × 1.03，所以除以 (匯率 × 1.03)，無條件捨去到 0.01。"""
+    return math.floor(twd / (fx["rate"] * P["hold_mult"]) * 100 + 1e-9) / 100
+
+
+def min_pool(level, fx):
+    """這個買區單獨出現時，資金池至少要多少台幣，規則金額才夠下單最低 50 美元（上限 40% 也算進去）。"""
+    eff = min(PCT[level], P["run_cap"])
+    pool = math.ceil(P["min_order_usd"] * fx["rate"] * P["hold_mult"] / eff)
+    while to_usd(round(pool * eff), fx) < P["min_order_usd"]:
+        pool += 1
+    return pool
+
+
+def allocate(res, order, pool, fx):
+    """分配本次美股金額（就地修改 res）。
+    1. 每檔先照買區比例算規則金額；合計超過上限 40% 時等比例縮小（和原本相同）。
+    2. 換成可下單美元（扣 3% 圈存）；有一檔不足 50 美元，就拿掉其中優先順序最低的一檔，其餘重算，直到都夠或都拿掉。
+    優先順序：買區越深越前面 → 估值越便宜越前面 → 價格低於第一買區上緣越多越前面 → config 順序。"""
+    cap = pool * P["run_cap"]
+    val_rank = {"偏便宜": 0, "合理": 1, "偏貴": 2}
+    cand = [c for c in order if res[c]["amount_twd"] > 0]
+    cand.sort(key=lambda c: (-ZONES.index(res[c]["level"]), val_rank.get(res[c]["valuation"], 3),
+                             -(res[c]["dist_to_z1_pct"] or 0), order.index(c)))
+    budget = {c: res[c]["amount_twd"] for c in cand}
+    for v in res.values():
+        v["amount_twd"], v["amount_usd"], v["hold_twd"] = 0, 0, 0
+    if not cand:
+        return
+    if not fx:
+        for c in cand:
+            res[c]["why"].append(f"匯率未取得，無法確認是否達最低下單 {P['min_order_usd']:.0f} 美元：不下單")
+        return
+    keep, alloc = list(cand), {}
+    while keep:
+        total = sum(budget[c] for c in keep)
+        k = cap / total if total > cap else 1
+        alloc = {c: round(budget[c] * k) if k < 1 else budget[c] for c in keep}
+        low = [c for c in keep if to_usd(alloc[c], fx) < P["min_order_usd"]]
+        if not low:
+            break
+        c = low[-1]
+        alone = min(budget[c], round(cap))
+        if to_usd(alone, fx) < P["min_order_usd"]:
+            res[c]["why"].append(f"規則金額 NT${alone:,}（扣 3% 圈存可下單約 US${to_usd(alone, fx):.2f}）"
+                                 f"不足最低下單 {P['min_order_usd']:.0f} 美元：不下單；"
+                                 f"這個買區要資金池約 NT${min_pool(res[c]['level'], fx):,} 才買得到")
+        else:
+            res[c]["why"].append(f"同時有優先順序較高的訊號，美股單次上限 NT${round(cap):,} "
+                                 f"不夠再下一筆 {P['min_order_usd']:.0f} 美元：不下單")
+        keep.remove(c)
+    for c in keep:
+        usd = to_usd(alloc[c], fx)
+        res[c]["amount_twd"], res[c]["amount_usd"] = alloc[c], usd
+        res[c]["hold_twd"] = math.ceil(usd * fx["rate"] * P["hold_mult"])
+
+
 def decide(e, r, z, fx):
     px, ev, why = r["close"], e.get("event", "none"), []
     vlabel, vnum = valuation(e, px) if e.get("role", "buy") == "buy" else ("—", {})
@@ -208,19 +269,17 @@ def main(cfg):
         r = indicators(df)
         z = zones(r)
         st, level, why, vlabel, vnum = decide(e, r, z, fx)
-        pct = {"z1": P["pct_z1"], "z2": P["pct_z2"], "z3": P["pct_z3"]}.get(level, 0)
+        pct = PCT.get(level, 0)
         tgt = z.get("z1", (None, None))[1]
         res[code] = dict(role=e.get("role", "buy"), status=st, level=level, amount_twd=round(pool * pct), why=why,
                          valuation=vlabel, val_now=vnum, zones=z, issues=issues,
                          dist_to_z1_pct=((tgt / r["close"] - 1) * 100 if tgt else None), **r)
-    total = sum(v["amount_twd"] for v in res.values())
     cap = pool * P["run_cap"]
-    if total > cap:
-        k = cap / total
-        for v in res.values():
-            v["amount_twd"] = round(v["amount_twd"] * k)
-    for v in res.values():
-        v["amount_usd"] = round(v["amount_twd"] / fx["rate"], 2) if fx and v["amount_twd"] else 0
+    allocate(res, list(cfg["tickers"]), pool, fx)
+    min_order = dict(usd=P["min_order_usd"], hold_mult=P["hold_mult"], twd=None, pool_needed=None)
+    if fx:
+        min_order.update(twd=math.ceil(P["min_order_usd"] * fx["rate"] * P["hold_mult"]),
+                         pool_needed={lv: min_pool(lv, fx) for lv in ZONES})
     pos = {}
     for code, p in cfg.get("positions", {}).items():
         if code in res:
@@ -235,7 +294,7 @@ def main(cfg):
                "風險偏好" if g["chg20"] <= 0 and s["chg20"] >= 2 else "中性")
         gauge = dict(iaum_chg20=round(g["chg20"], 2), voo_chg20=round(s["chg20"], 2), iaum_trend=g["trend"], tag=tag)
     out = dict(pool_twd=pool, cap_twd=round(cap), total_twd=sum(v["amount_twd"] for v in res.values()),
-               fx=fx, gauge=gauge, positions=pos, params=P, tickers=res)
+               fx=fx, min_order=min_order, gauge=gauge, positions=pos, params=P, tickers=res)
     def rnd(o):
         if isinstance(o, dict):
             return {k: rnd(v) for k, v in o.items()}

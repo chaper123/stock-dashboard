@@ -230,32 +230,90 @@ def run_main(m, monkeypatch, capsys, levels, pool, fx=True):
     return out, {c: (v["amount_twd"], v["amount_usd"]) for c, v in out["tickers"].items()}
 
 
-def test_cap_not_hit(m, monkeypatch, capsys):
-    """兩檔第一買區 20%＋20% 剛好等於 40% 上限，不縮放（10/16 正式執行就是這樣）。"""
+# 測試匯率檔最後一筆 32.315：50 美元要圈存 50 × 32.315 × 1.03 ≈ NT$1,664.2
+def test_min_order_numbers(m):
+    fx = {"rate": 32.315}
+    assert [m.to_usd(t, fx) for t in (516, 1664, 1665, 1800)] == [15.5, 49.99, 50.02, 54.07]
+    assert {lv: m.min_pool(lv, fx) for lv in m.ZONES} == {"z1": 8323, "z2": 4756, "z3": 4162}
+    assert m.to_usd(round(8323 * 0.2), fx) >= 50 > m.to_usd(round(8322 * 0.2), fx)
+
+
+def test_below_min_order_not_bought(m, monkeypatch, capsys):
+    """10/16 正式執行：兩檔第一買區各 NT$516（約 15.5 美元），不足 50 美元，都不下單。"""
     out, a = run_main(m, monkeypatch, capsys, {"GOOGL": "z1", "NVDA": "z1"}, 2580)
-    assert (out["cap_twd"], out["total_twd"]) == (1032, 1032)
-    assert a == {"VOO": (0, 0), "GOOGL": (516, 15.97), "NVDA": (516, 15.97)}
+    assert (out["cap_twd"], out["total_twd"]) == (1032, 0)
+    assert a == {"VOO": (0, 0), "GOOGL": (0, 0), "NVDA": (0, 0)}
+    t = out["tickers"]
+    assert t["GOOGL"]["status"] == "第一買區" and t["GOOGL"]["level"] == "z1"    # 價格位置照實寫
+    assert t["GOOGL"]["why"] == ["規則金額 NT$516（扣 3% 圈存可下單約 US$15.50）不足最低下單 50 美元：不下單；"
+                                 "這個買區要資金池約 NT$8,323 才買得到"]
+    assert out["min_order"] == {"usd": 50.0, "hold_mult": 1.03, "twd": 1665,
+                                "pool_needed": {"z1": 8323, "z2": 4756, "z3": 4162}}
 
 
-def test_cap_scales_three_zone1(m, monkeypatch, capsys):
-    out, a = run_main(m, monkeypatch, capsys, {"VOO": "z1", "GOOGL": "z1", "NVDA": "z1"}, 2580)
-    assert out["total_twd"] == 1032
-    assert a == {"VOO": (344, 10.65), "GOOGL": (344, 10.65), "NVDA": (344, 10.65)}
+def test_min_order_met(m, monkeypatch, capsys):
+    out, a = run_main(m, monkeypatch, capsys, {"GOOGL": "z1"}, 9000)
+    assert a["GOOGL"] == (1800, 54.07) and out["tickers"]["GOOGL"]["hold_twd"] == 1800
+    assert out["tickers"]["GOOGL"]["why"] == [] and out["total_twd"] == 1800
 
 
-def test_cap_scales_single_deep_zone(m, monkeypatch, capsys):
-    out, a = run_main(m, monkeypatch, capsys, {"NVDA": "z3"}, 2580)   # 50% 超過 40%
-    assert a["NVDA"][0] == 1032 and out["total_twd"] == 1032
+def test_single_deep_zone_capped_then_too_small(m, monkeypatch, capsys):
+    """深度買區 50% 先被上限壓到 40%（NT$1,032），仍不足 50 美元。"""
+    out, a = run_main(m, monkeypatch, capsys, {"NVDA": "z3"}, 2580)
+    assert a["NVDA"] == (0, 0) and out["total_twd"] == 0
+    assert "NT$1,032" in out["tickers"]["NVDA"]["why"][0] and "NT$4,162" in out["tickers"]["NVDA"]["why"][0]
 
 
-def test_cap_scales_mixed(m, monkeypatch, capsys):
+def test_single_deep_zone_capped(m, monkeypatch, capsys):
+    out, a = run_main(m, monkeypatch, capsys, {"NVDA": "z3"}, 5000)
+    assert a["NVDA"] == (2000, 60.08) and out["total_twd"] == 2000
+
+
+def test_three_zone1_drop_lowest_priority(m, monkeypatch, capsys):
+    """三檔第一買區各 1,800，合計超過上限 3,600；等比例縮成 1,200 都不足 50 美元，
+    所以拿掉優先順序最低的一檔，其餘兩檔各 1,800 剛好用滿上限。"""
+    out, a = run_main(m, monkeypatch, capsys, {"VOO": "z1", "GOOGL": "z1", "NVDA": "z1"}, 9000)
+    bought = {c for c, (twd, _) in a.items() if twd}
+    assert len(bought) == 2 and all(a[c] == (1800, 54.07) for c in bought) and out["total_twd"] == 3600
+    (dropped,) = set(a) - bought
+    assert out["tickers"][dropped]["why"] == ["同時有優先順序較高的訊號，美股單次上限 NT$3,600 不夠再下一筆 50 美元：不下單"]
+
+
+def test_mixed_scaled_below_min(m, monkeypatch, capsys):
+    """第二買區 3,500＋深度買區 5,000 超過上限 4,000：等比例後第二買區 1,647（49.48 美元）不足，
+    拿掉它；深度買區單獨用滿上限 4,000。"""
     out, a = run_main(m, monkeypatch, capsys, {"VOO": "z2", "GOOGL": "z3"}, 10000)
-    assert (a["VOO"][0], a["GOOGL"][0], out["cap_twd"], out["total_twd"]) == (1647, 2353, 4000, 4000)
+    assert (a["VOO"], a["GOOGL"], out["cap_twd"], out["total_twd"]) == ((0, 0), (4000, 120.17), 4000, 4000)
 
 
-def test_no_fx_no_usd(m, monkeypatch, capsys):
-    out, a = run_main(m, monkeypatch, capsys, {"GOOGL": "z1"}, 2580, fx=False)
-    assert out["fx"] is None and a["GOOGL"] == (516, 0)
+def test_mixed_both_fit(m, monkeypatch, capsys):
+    out, a = run_main(m, monkeypatch, capsys, {"VOO": "z2", "GOOGL": "z3"}, 12000)
+    assert (a["VOO"][0], a["GOOGL"][0], out["total_twd"]) == (1976, 2824, 4800)
+    assert a["VOO"][1] >= 50 and a["GOOGL"][1] >= 50
+
+
+def test_priority_order(m):
+    """優先順序：買區深 → 估值便宜 → 低於第一買區上緣越多 → config 順序。"""
+    def bought(pool):
+        res = {"A": ("z1", "偏便宜", 5.0), "B": ("z2", "偏貴", 0.0), "C": ("z1", "合理", 9.0),
+               "D": ("z1", "合理", 1.0), "E": ("z1", "合理", 1.0)}
+        res = {k: {"level": lv, "valuation": val, "dist_to_z1_pct": d, "amount_twd": 1600, "why": []}
+               for k, (lv, val, d) in res.items()}
+        m.allocate(res, list(res), pool, {"rate": 30.0})      # 每筆 1,600 ≈ 51.78 美元，上限 = 資金池 40%
+        return sorted(k for k, v in res.items() if v["amount_twd"])
+    assert bought(4000) == ["B"]                    # 上限 1,600 只夠一筆：買區最深的 B
+    assert bought(8000) == ["A", "B"]               # 再來是估值最便宜的 A
+    assert bought(12000) == ["A", "B", "C"]         # 同估值時低於第一買區上緣較多的 C
+    assert bought(16000) == ["A", "B", "C", "D"]    # 完全相同時照 config 順序
+    assert bought(10 ** 6) == ["A", "B", "C", "D", "E"]
+
+
+def test_no_fx_no_order(m, monkeypatch, capsys):
+    """匯率未取得就無法確認是否達 50 美元，不下單。"""
+    out, a = run_main(m, monkeypatch, capsys, {"GOOGL": "z1"}, 9000, fx=False)
+    assert out["fx"] is None and a["GOOGL"] == (0, 0) and out["total_twd"] == 0
+    assert out["tickers"]["GOOGL"]["why"] == ["匯率未取得，無法確認是否達最低下單 50 美元：不下單"]
+    assert out["min_order"] == {"usd": 50.0, "hold_mult": 1.03, "twd": None, "pool_needed": None}
 
 
 # ---------- 端到端：一路下跌的合成日線 ----------

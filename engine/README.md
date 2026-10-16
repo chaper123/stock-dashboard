@@ -1,6 +1,8 @@
 # engine
 
-兩個晨報排程用的買點監測程式。檔案從 claude.ai 排程提示詞 v1 **逐字**抽出，邏輯一行都沒改；檔名保留原名，方便和提示詞比對。
+兩個晨報排程用的買點監測程式。檔案從 claude.ai 排程提示詞 v1 **逐字**抽出；檔名保留原名，方便和提示詞比對。
+
+**engine-v1.1（2026-10-16，使用者同意）**：`monitor_us.py` 加上口袋美股的下單限制。每筆最低 50 美元；台幣交割要圈存「委託金額 × 匯率 × 1.03」，所以規則金額換成可下單美元時先扣 3%；不足 50 美元就不下單（使用者選「不足就不買」）。多檔同時有訊號、合計超過 40% 上限時，先照原本等比例縮小，再從優先順序最低的一檔開始拿掉不足 50 美元的（買區越深 → 估值越便宜 → 低於第一買區上緣越多 → config 順序）。買區、估值、匯率濾網與其他規則都沒變；`monitor.py`、`norm.py` 未改。線上 v1 美股排程提示詞同步換成這個版本。
 
 | 檔案 | 來源 | 用途 |
 |---|---|---|
@@ -14,7 +16,7 @@
 
 | 檔案 | bytes | 行數 | SHA-256 |
 |---|---|---|---|
-| `monitor_us.py` | 12348 | 251 | `75947691c28c4a2ecbf44781243541bdea0062b3eaab899c1bd63106343951e3` |
+| `monitor_us.py` | 15877 | 310 | `045d617e4cc19661af7fb4a4104a824370030a25247bd16a4e9556e79d00c84d`（engine-v1.1；v1.0 為 `75947691c28c…`） |
 | `monitor.py` | 8579 | 169 | `8c12675c1c9e78a668bd4ea941a7466300cfe39cb24244ab32b8d4e0173e0149` |
 | `norm.py` | 1126 | 27 | `a74e16b958dff887b37aa72115e301d8d336521232acdc7609faee44dc666fc2` |
 
@@ -52,6 +54,7 @@ python3 engine/run.py tw config.json --full monitor_out.json --rows rows.json --
 | `data_date` | 各檔最後一根日線日期的最大值 |
 | `pool_twd`、`cap_twd`、`total_twd` | 可用資金、本次上限（美股 40%／台股 60%）、規則參考合計 |
 | `fx`、`gauge`、`positions` | 只有美股：匯率濾網、IAUM 市場指標、持倉損益（照 monitor） |
+| `min_order` | 只有美股（v1.1）：`usd` 最低下單 50、`hold_mult` 1.03、`twd` 今天匯率下 50 美元要圈存的台幣、`pool_needed` 各買區單獨出現時資金池至少要多少才買得到（沒有匯率時後兩個是 null） |
 | `idle_reminder` | 只有台股：空手提醒（照 monitor） |
 | `tickers[]` | 依 config 順序，每檔一筆，見下表 |
 
@@ -59,7 +62,7 @@ python3 engine/run.py tw config.json --full monitor_out.json --rows rows.json --
 |---|---|
 | `code`、`role` | 代號；`buy`／`gauge`／`watch`（台股都是 `buy`） |
 | `status`、`level` | monitor 的狀態名稱；等級 `overheat` `wait` `starter` `z1` `z2` `z3` `block` `weak` `gauge` `watch` |
-| `amount_twd`、`amount_usd` | 規則參考金額（已套上限縮放）；`amount_usd` 只有美股 |
+| `amount_twd`、`amount_usd`、`hold_twd` | 規則參考金額（已套上限縮放）；美股另有 `amount_usd` 可下單美元（已扣 3% 圈存，無條件捨去到 0.01）、`hold_twd` 預估圈存台幣（v1.1；不足 50 美元時三者都是 0，原因寫在 `why`） |
 | `price`、`close`、`date` | 判定用的價格（台股有盤中價就用盤中價）、最近收盤與日期 |
 | `dist_to_z1_pct` | 距第一買區上緣 % |
 | `zones` | `starter`（只有台股）、`z1`～`z3`：[下緣, 上緣] |
