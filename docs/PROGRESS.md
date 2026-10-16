@@ -12,7 +12,7 @@
 ## 下一步
 1. 10/19（週一）第一次正式排程時確認：Ubuntu 26 下 fetch 正常、完整抓取耗時、MoneyDJ 多數決與裁判流程在正式環境的表現、09:20 美股晨報不再用到過期日線。
 2. Phase 1 剩第 7 項（SEC 8-K＋新聞 RSS；使用者要先建立存聯絡信箱的 Actions secret）與第 8 項（加權指數日線正式來源、cron-job.org 外部觸發）。
-3. Phase 2 進行中（見下方 Phase 2 清單）：engine 搬家與測試 → 規劃提示詞 v2 → 等使用者同意後才建立試算表、做一次性測試執行、改排程。
+3. **Phase 2 等使用者同意**（[ROUTINE_V2.md](ROUTINE_V2.md) 第 9 節）：① v2 方向與各項決定（含打 tag `engine-v1.0`、估值改成每天讀 repo）② 建立「儀表板資料」試算表 ③ 一次性測試執行並與 v1 同日比對。三項都同意並通過比對後，才改正式排程（建議先美股、後台股）。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）
@@ -93,11 +93,11 @@
   - 既有行為（照實記錄，沒有改）：台股已持有的標的若從第一買區因溢價降一級、或從等待因 boost 升一級，會落在「趨勢起始倉」等級拿 15%（10/16 的 00981A 357 元就是這樣）；價格剛好等於門檻時浮點數會略超過門檻（例如乖離剛好 6% 判成追價區），方向偏保守
 - [x] ③ JSON 精簡輸出：`engine/run.py`（薄包裝，monitor 不改；欄位見 [engine/README.md](../engine/README.md)）。`schema_version` 1、台北時區產生時間、engine 的 SHA-256 與版本、統一的等級（台股從狀態名稱對應）、`--full` 存 monitor 原始輸出、`--rows` 產生「儀表板資料」試算表的列。測試 22 項：包裝後 monitor 輸出與黃金檔逐字相同、精簡 JSON 黃金檔 4 組、金額加總＝合計≤上限、不認得的狀態直接失敗、命令列用法（本機共 179 項通過）
   - 快照補記：market-data 的 CSV 是 CRLF，快照原本被 `eol=lf` 轉成 LF；改設 `-text` 後 17 個資料檔的 git blob id 與 market-data 8a9a1a1 相同（ca8e0ee）
-- [x] ④ `requirements-dev.txt`（pandas 3.0.6、numpy 2.5.4、pytest 9.1.1、tzdata 2026.5，版本固定讓本機與 CI 數字相同；`py -3.12 -m pip install --user -r requirements-dev.txt`）＋`.github/workflows/test.yml`（每次 push、PR 跑 pytest，Python 3.12）
-- [ ] ⑤ docs/ROUTINE_V2.md（v1 → v2 規劃）
-- [ ] ⑥ v2 提示詞草稿（private/routines/*.v2.prompt.md）
-- [ ] ⑦ 使用者同意後才做：建立「儀表板資料」試算表、一次性測試執行並與 v1 比對、更新正式排程
-- 待辦：兩個晨報排程的「備援：舊方法」仍用鉅亨網（WebFetch），要換掉（鉅亨網美股最後一根 K 棒常停在盤中價，見 Phase 1）。
+- [x] ④ `requirements-dev.txt`（pandas 3.0.6、numpy 2.5.4、pytest 9.1.1、tzdata 2026.5，版本固定讓本機與 CI 數字相同；`py -3.12 -m pip install --user -r requirements-dev.txt`）＋`.github/workflows/test.yml`（每次 push、PR 跑 pytest，Python 3.12）。Actions [run 38878767233](https://github.com/chaper123/stock-dashboard/actions/runs/38878767233) 綠燈：Ubuntu 上 179 項通過，黃金檔與 Windows 本機逐字相同
+- [x] ⑤ [docs/ROUTINE_V2.md](ROUTINE_V2.md)：v1 在 10/16 的實際問題、改動總表、engine 版本固定（建議 tag＋SHA-256）、Phase 1 資料對照與新鮮度規則、換掉鉅亨網備援、「儀表板資料」試算表、字數、測試與切換流程、待決定事項
+- [x] ⑥ v2 提示詞草稿：`private/routines/us_morning_report.v2.prompt.md`（23,242 → 11,933 字，−49%）、`tw_etf_morning_report.v2.prompt.md`（19,836 → 13,819 字，−30%）。試算表 ID 先留空，SHA-256 以 run.py 2fd51fc4… 為準（打 tag 前若改 run.py 要同步）
+- [ ] ⑦ 使用者同意後才做：打 tag `engine-v1.0`、建立「儀表板資料」試算表、一次性測試執行並與 v1 比對、更新正式排程（目前停在這一步，排程未動）
+- 待辦：兩個晨報排程的「備援：舊方法」仍用鉅亨網（WebFetch），要換掉（鉅亨網美股最後一根 K 棒常停在盤中價，見 Phase 1）。v2 草稿已改成美股只補最後一根（MoneyDJ）、00411A 用櫃買中心；正式排程切換後才算完成。
 
 ## Phase 3～6
 - [ ] 尚未開始
