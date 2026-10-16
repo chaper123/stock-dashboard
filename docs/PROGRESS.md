@@ -12,7 +12,7 @@
 ## 下一步
 1. 10/19（週一）第一次正式排程時確認：Ubuntu 26 下 fetch 正常、完整抓取耗時、MoneyDJ 多數決與裁判流程在正式環境的表現、09:20 美股晨報不再用到過期日線。
 2. Phase 1 剩第 7 項（SEC 8-K＋新聞 RSS；使用者要先建立存聯絡信箱的 Actions secret）與第 8 項（加權指數日線正式來源、cron-job.org 外部觸發）。
-3. Phase 2：monitor 程式搬進 `engine/`、排程改讀 Phase 1 新資料並換掉鉅亨網備援（每次改排程前先問使用者）。
+3. Phase 2 進行中（見下方 Phase 2 清單）：engine 搬家與測試 → 規劃提示詞 v2 → 等使用者同意後才建立試算表、做一次性測試執行、改排程。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）
@@ -79,6 +79,19 @@
 7. 新聞預篩：SEC 8-K＋Google News RSS 標題（SEC 的 UA 寫法另請使用者決定）。
 8. 加權指數日線改正式來源（另行探測）；cron-job.org 外部觸發可平行處理。
 
-## Phase 2～6
+## Phase 2 排程結構化輸出
+- [x] ① monitor 程式逐字搬進 [`engine/`](../engine/README.md)（monitor_us.py、monitor.py、norm.py，保留原檔名，邏輯未改）。`tools/extract_engine.py` 與另一個用行號切出的方法（sed＋cmp）都確認和提示詞備份逐字相同；RemoteTrigger get 確認線上兩個排程的提示詞與備份一致（只差結尾換行），從線上提示詞抽出的程式碼也與 engine/ 相同。SHA-256：
+  - `monitor_us.py` 75947691c28c4a2ecbf44781243541bdea0062b3eaab899c1bd63106343951e3
+  - `monitor.py` 8c12675c1c9e78a668bd4ea941a7466300cfe39cb24244ab32b8d4e0173e0149
+  - `norm.py` a74e16b958dff887b37aa72115e301d8d336521232acdc7609faee44dc666fc2
+  - 發現：10/16 兩次正式執行，模型都是自己重打程式（run log 顯示開頭 docstring 已被省略），v1 的「照抄」無法保證逐字 → v2 改成從 repo 下載
+- [ ] ② 黃金測試（10/15 收盤快照＋規則邊界案例）
+- [ ] ③ JSON 精簡輸出（engine/run.py）
+- [ ] ④ requirements-dev.txt、CI
+- [ ] ⑤ docs/ROUTINE_V2.md（v1 → v2 規劃）
+- [ ] ⑥ v2 提示詞草稿（private/routines/*.v2.prompt.md）
+- [ ] ⑦ 使用者同意後才做：建立「儀表板資料」試算表、一次性測試執行並與 v1 比對、更新正式排程
+- 待辦：兩個晨報排程的「備援：舊方法」仍用鉅亨網（WebFetch），要換掉（鉅亨網美股最後一根 K 棒常停在盤中價，見 Phase 1）。
+
+## Phase 3～6
 - [ ] 尚未開始
-- 待辦（Phase 2）：兩個晨報排程的「備援：舊方法」仍用鉅亨網（WebFetch），要換掉（鉅亨網美股最後一根 K 棒常停在盤中價，見 Phase 1）。
