@@ -12,7 +12,7 @@
 ## 下一步
 1. 10/19（週一）第一次正式排程時確認：Ubuntu 26 下 fetch 正常、完整抓取耗時、MoneyDJ 多數決與裁判流程在正式環境的表現、09:20 美股晨報不再用到過期日線。
 2. Phase 1 剩第 7 項（SEC 8-K＋新聞 RSS；使用者要先建立存聯絡信箱的 Actions secret）與第 8 項（加權指數日線正式來源、cron-job.org 外部觸發）。
-3. **Phase 2 等使用者同意**（[ROUTINE_V2.md](ROUTINE_V2.md) 第 9 節）：① v2 方向與各項決定（含打 tag `engine-v1.0`、估值改成每天讀 repo）② 建立「儀表板資料」試算表 ③ 一次性測試執行並與 v1 同日比對。三項都同意並通過比對後，才改正式排程（建議先美股、後台股）。
+3. **Phase 2 一次性測試已排定**（使用者 2026-10-16 同意 [ROUTINE_V2.md](ROUTINE_V2.md) 第 9 節的建議）：10/20（二）美股 09:40、台股 10:30 各跑一次 v2 測試版。**10/19 先確認** v1 兩次正式執行正常、repo 資料準時，有問題就先停用測試排程再改期。10/20 跑完後依 ROUTINE_V2 第 8 節比對（引擎回放、config 逐欄、輸出、報告、執行次數），通過才問使用者要不要切換正式排程（建議先美股、後台股）。週一流程另測：美股 10/26、台股 10/27。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）
@@ -96,7 +96,13 @@
 - [x] ④ `requirements-dev.txt`（pandas 3.0.6、numpy 2.5.4、pytest 9.1.1、tzdata 2026.5，版本固定讓本機與 CI 數字相同；`py -3.12 -m pip install --user -r requirements-dev.txt`）＋`.github/workflows/test.yml`（每次 push、PR 跑 pytest，Python 3.12）。Actions [run 38878767233](https://github.com/chaper123/stock-dashboard/actions/runs/38878767233) 綠燈：Ubuntu 上 179 項通過，黃金檔與 Windows 本機逐字相同
 - [x] ⑤ [docs/ROUTINE_V2.md](ROUTINE_V2.md)：v1 在 10/16 的實際問題、改動總表、engine 版本固定（建議 tag＋SHA-256）、Phase 1 資料對照與新鮮度規則、換掉鉅亨網備援、「儀表板資料」試算表、字數、測試與切換流程、待決定事項
 - [x] ⑥ v2 提示詞草稿：`private/routines/us_morning_report.v2.prompt.md`（23,242 → 11,933 字，−49%）、`tw_etf_morning_report.v2.prompt.md`（19,836 → 13,819 字，−30%）。試算表 ID 先留空，SHA-256 以 run.py 2fd51fc4… 為準（打 tag 前若改 run.py 要同步）
-- [ ] ⑦ 使用者同意後才做：打 tag `engine-v1.0`、建立「儀表板資料」試算表、一次性測試執行並與 v1 比對、更新正式排程（目前停在這一步，排程未動）
+- [x] ⑦ 使用者 2026-10-16 同意 ROUTINE_V2 第 9 節的建議（估值每天讀 repo、週一寫回估值快取、保留鉅亨網台股報價為主等）
+  - [x] tag `engine-v1.0`（指向 78b0910）已 push；用 raw 網址下載 monitor_us.py、monitor.py、run.py，SHA-256 全部相符；本機照 v2 草稿的下載指令實際抓了 36 個檔案並跑完 run.py
+  - [x] Google Sheet「投資儀表板資料（排程寫入）」：報告存檔、配置計畫、測試_報告存檔、測試_配置計畫，表頭＝run.py；日期與代號欄設純文字（寫入讀回驗證過）。ID 在 `private/routines/routines.json`
+  - [x] 測試版提示詞 `private/routines/*.v2test.prompt.md`（標題加【v2 測試】、不寫帳本、寫「測試_」分頁、多做 5 項檢查）；兩個一次性測試排程 10/20 09:40、10:30（複製正式排程的環境與連接器，沒有 Cowork 系統提示詞），建立後讀回確認提示詞與檔案逐字相同
+  - [ ] 10/19 確認 v1 正常 → 10/20 測試執行 → 比對
+  - [ ] 週一流程測試（美股 10/26、台股 10/27）
+  - [ ] 使用者同意後切換正式排程（RemoteTrigger update 只換提示詞）
 - 待辦：兩個晨報排程的「備援：舊方法」仍用鉅亨網（WebFetch），要換掉（鉅亨網美股最後一根 K 棒常停在盤中價，見 Phase 1）。v2 草稿已改成美股只補最後一根（MoneyDJ）、00411A 用櫃買中心；正式排程切換後才算完成。
 
 ## Phase 3～6
