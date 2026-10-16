@@ -28,6 +28,7 @@
 ## Phase 1 強化資料（market-data）
 - [x] 來源探測：`probe.py`（標準庫）＋`.github/workflows/probe.yml`（只手動觸發、不 commit）。Actions 上 33/36 通過（[run 38784686621](https://github.com/chaper123/market-data/actions/runs/38784686621)，結果在 job summary）
 - [x] fetch.yml 升級 checkout、setup-python 至 v7；手動跑成功、meta.json 17 項 ok、無錯誤，Node 20 警告消失（[run 38784691731](https://github.com/chaper123/market-data/actions/runs/38784691731)）
+- [x] 修正 fetch.py 略過邏輯（market-data 326e84e）：原本只看 meta 是否今天產生，10/16 02:19 手動執行（美股未收盤）導致當天三次排程都略過、美股晨報用到 10/14 日線。改成核心資料最後日期都到「台北今天的前一個平日」才略過；6 個情境測試通過。11:25 手動重抓後資料已補到 10/15。
 - [ ] 依下方順序實作（等使用者同意）
 - 備註：Actions 提示 `ubuntu-latest` 自 2026-10-19 起改用 Ubuntu 26，之後第一次排程留意是否正常。
 
