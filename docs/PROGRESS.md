@@ -36,7 +36,7 @@
   - [x] ③ 估值（stockanalysis）＋Yahoo 財報日，檢查與上週差距：`valuation.py` → `data/valuation/us.json`、`us_history.csv`（02ea55b）。頁面股價與 repo 收盤核對（本機 6 檔差 ≤0.06%）；隱含預估 EPS 一週變動超過 ±20% 標記；Yahoo 只取財報日（GOOGL 10/28、TSLA 10/21、SPCX 11/03 估計、AAPL 11/02、NVDA 11/17）
   - [x] ④ 行事曆：證交所休市、FOMC、財報日；CPI 標「未取得」：`calendars.py` → `data/calendar/calendar.json`（2f38ace）。證交所 OpenAPI 與 rwd 版 2026 年 27 筆一致，標出「開始交易日」等其實有交易的日子；FOMC 收今年與已公布的 2027 年；明年台股休市表尚未公布（rwd 回 0 筆），公布後自動收錄。美股休市日不在這次範圍
   - [x] ⑤ 法人與融資：T86（關注代號）、BFI82U、MI_MARGN；00411A 用櫃買：`chips.py` → `data/chips/`（daa477f）。每次補齊最近 9 天內缺的交易日（略過休市日，22:00 前不抓當天）；合計＝分項加總核對通過。首次補 6 天約 2 分鐘，之後每天約 15 秒
-  - [ ] ⑥ 主動 ETF 每日持股（統一投信），比對前十大變化
+  - [x] ⑥ 主動 ETF 每日持股（統一投信），比對前十大變化：`holdings.py` → `data/holdings/`（d971152）。每單位淨值與 nav_history（證交所 mis）同日一致、權重加總＝股票市值／淨資產；前十大新進／退出、權重變動 ≥1 個百分點、新增／出清（用假資料測過）。00411A 持美股，資料日晚一天
   - [ ] 台北白天手動觸發 fetch，確認 meta.json 新舊資料集都 ok
 - 備註：Actions 提示 `ubuntu-latest` 自 2026-10-19 起改用 Ubuntu 26，之後第一次排程留意是否正常。
 
