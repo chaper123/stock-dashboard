@@ -1,8 +1,8 @@
 """正式環境回放：快照資料＋正式執行時的 config，結果要和當天排程報告一致。
 
-數字取自 claude.ai 排程的 run log（RemoteTrigger get_run_log）：
-- 台股 ETF 晨報 2026-10-16 10:17（session cse_01KNaeWCHy81cCjc9nCt178z）：用 10/15 收盤日線＋09:46 盤中價
-- 美股晨報 2026-10-16 09:20（session cse_01N1iW3Wb1AM3S8fVcqUAYqZ）：當天 repo 日線過期，只拿匯率濾網比對
+數字取自 claude.ai 排程的 run log（RemoteTrigger get_run_log；執行 ID 只記在 private/）：
+- 台股 ETF 晨報 2026-10-16 10:17：用 10/15 收盤日線＋09:46 盤中價
+- 美股晨報 2026-10-16 09:20：當天 repo 日線過期，只拿匯率濾網比對
 """
 import json
 
