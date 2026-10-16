@@ -12,7 +12,7 @@
 ## 下一步
 1. 使用者把共用帳本「發布到網路」（整份文件、CSV），把連結貼給 Claude。
 2. Claude 從 Pages 網址實測瀏覽器能否直接讀該 CSV（CORS）；不行就改由 Actions 定時抓。驗收後 Phase 0 打 tag v0.1。
-3. Phase 1 第 1～6 項實作中（分支 session，進度見下方勾選）；第 7 項 SEC 之後再做（UA 信箱從 Actions secret 讀）。
+3. Phase 1 第 1～6 項已完成並在 Actions 驗證（見下方勾選）；第 7 項 SEC 之後再做（UA 信箱從 Actions secret 讀）。待決定：ARKX、TSM 鉅亨網盤中價造成的核對衝突要不要處理。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）
@@ -37,7 +37,8 @@
   - [x] ④ 行事曆：證交所休市、FOMC、財報日；CPI 標「未取得」：`calendars.py` → `data/calendar/calendar.json`（2f38ace）。證交所 OpenAPI 與 rwd 版 2026 年 27 筆一致，標出「開始交易日」等其實有交易的日子；FOMC 收今年與已公布的 2027 年；明年台股休市表尚未公布（rwd 回 0 筆），公布後自動收錄。美股休市日不在這次範圍
   - [x] ⑤ 法人與融資：T86（關注代號）、BFI82U、MI_MARGN；00411A 用櫃買：`chips.py` → `data/chips/`（daa477f）。每次補齊最近 9 天內缺的交易日（略過休市日，22:00 前不抓當天）；合計＝分項加總核對通過。首次補 6 天約 2 分鐘，之後每天約 15 秒
   - [x] ⑥ 主動 ETF 每日持股（統一投信），比對前十大變化：`holdings.py` → `data/holdings/`（d971152）。每單位淨值與 nav_history（證交所 mis）同日一致、權重加總＝股票市值／淨資產；前十大新進／退出、權重變動 ≥1 個百分點、新增／出清（用假資料測過）。00411A 持美股，資料日晚一天
-  - [ ] 台北白天手動觸發 fetch，確認 meta.json 新舊資料集都 ok
+  - [x] 台北白天手動觸發 fetch，確認 meta.json 新舊資料集都 ok：10/16 11:57 [run 38848066076](https://github.com/chaper123/market-data/actions/runs/38848066076) 成功，43 項全 ok（原 17＋新 26）、0 stale／fail、無錯誤；新資料已由 bot commit（2c96197）。fetch 步驟首次約 7 分鐘（含法人回補 6 天，原本約 2 分鐘）；`--skip-if-fresh` 只更新淨值（本機 0.8 秒），新資料集保留
+  - ⚠ 待主 session 決定：核對衝突 `us/ARKX`（鉅亨網 10/15 收盤 30.2 vs Yahoo 30.53，−1.08%）與 `macro/TSM`（Yahoo 422.25 vs 鉅亨網 412.27）。兩者都是鉅亨網最後一根 K 棒在台北中午仍是盤中價；`us/` 以鉅亨網為主來源，ARKX 的 10/15 收盤可能是錯的（只影響觀察用的 ARKX）
 - 備註：Actions 提示 `ubuntu-latest` 自 2026-10-19 起改用 Ubuntu 26，之後第一次排程留意是否正常。
 
 ### 探測結果（GitHub Actions，2026-10-16 02:19 台北）
