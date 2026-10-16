@@ -12,7 +12,7 @@
 ## 下一步
 1. 使用者把共用帳本「發布到網路」（整份文件、CSV），把連結貼給 Claude。
 2. Claude 從 Pages 網址實測瀏覽器能否直接讀該 CSV（CORS）；不行就改由 Actions 定時抓。驗收後 Phase 0 打 tag v0.1。
-3. Phase 1 第 1～6 項已完成並在 Actions 驗證（見下方勾選）；第 7 項 SEC 之後再做（UA 信箱從 Actions secret 讀）。待決定：ARKX、TSM 鉅亨網盤中價造成的核對衝突要不要處理。
+3. Phase 1 第 1～6 項已完成並在 Actions 驗證（見下方勾選），美股日線已改用 MoneyDJ；第 7 項 SEC 之後再做（UA 信箱從 Actions secret 讀）。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）
@@ -38,7 +38,12 @@
   - [x] ⑤ 法人與融資：T86（關注代號）、BFI82U、MI_MARGN；00411A 用櫃買：`chips.py` → `data/chips/`（daa477f）。每次補齊最近 9 天內缺的交易日（略過休市日，22:00 前不抓當天）；合計＝分項加總核對通過。首次補 6 天約 2 分鐘，之後每天約 15 秒
   - [x] ⑥ 主動 ETF 每日持股（統一投信），比對前十大變化：`holdings.py` → `data/holdings/`（d971152）。每單位淨值與 nav_history（證交所 mis）同日一致、權重加總＝股票市值／淨資產；前十大新進／退出、權重變動 ≥1 個百分點、新增／出清（用假資料測過）。00411A 持美股，資料日晚一天
   - [x] 台北白天手動觸發 fetch，確認 meta.json 新舊資料集都 ok：10/16 11:57 [run 38848066076](https://github.com/chaper123/market-data/actions/runs/38848066076) 成功，43 項全 ok（原 17＋新 26）、0 stale／fail、無錯誤；新資料已由 bot commit（2c96197）。fetch 步驟首次約 7 分鐘（含法人回補 6 天，原本約 2 分鐘）；`--skip-if-fresh` 只更新淨值（本機 0.8 秒），新資料集保留
-  - ⚠ 待主 session 決定：核對衝突 `us/ARKX`（鉅亨網 10/15 收盤 30.2 vs Yahoo 30.53，−1.08%）與 `macro/TSM`（Yahoo 422.25 vs 鉅亨網 412.27）。兩者都是鉅亨網最後一根 K 棒在台北中午仍是盤中價；`us/` 以鉅亨網為主來源，ARKX 的 10/15 收盤可能是錯的（只影響觀察用的 ARKX）
+- [x] 日線改用 MoneyDJ／官方，最後一根 K 棒多數決（market-data 4a03ee4 探測、f104243 修正）。起因：鉅亨網美股最後一根停在盤中價（ARKX 10/15 30.20、官方 30.53；TSM 412.27、官方 422.25）
+  - 探測（Actions [run 38851301997](https://github.com/chaper123/market-data/actions/runs/38851301997)，6/6）：Nasdaq 官方 historical、MoneyDJ 美股日線（約 300 根）、MoneyDJ 台股日線、櫃買個股日成交都連得到
+  - 歷史總檢查（對照 Nasdaq 官方；00411A 對照櫃買）：收盤差 >0.5% 的 K 棒，鉅亨網 VOO 5、IAUM 8、ARKK 8、ARKQ 8、ARKX 9、TSM 9 根（最大 3%，近 30 天 ARKX、TSM 的 10/02、10/15 都錯），其餘 0；Yahoo 只有 SPCX 2026-06-16 一根（+4.75%）；MoneyDJ 11 檔各 300 根全部 0；00411A 四個來源 34 根都一致。鉅亨網的美股成交量也偏少（VOO 中位數少約 9%，一成的日子不到官方一半）。明細在共用筆記 `daily-source-audit-2026-10-16.md`
+  - 新做法：`us/` 改 MoneyDJ 為主、Yahoo 核對，鉅亨網移除；最後一根兩家一致才採用，不一致或缺一家時問 Nasdaq 官方，至少一家與官方一致才採用（K 棒用官方值），仍無法判定就先不收那一根。meta 新增 `last_bar_source`、`last_bar_referee`、`last_bar_votes`、`history_mismatch`。`tw/00411A` 改櫃買官方為主、MoneyDJ 核對（量的單位維持張）；`macro/TSM` 改 MoneyDJ 核對並同樣多數決。CSV 格式與路徑不變，美股保留最近一年（252 列）
+  - 驗證：10/16 12:44 [run 38852198147](https://github.com/chaper123/market-data/actions/runs/38852198147) 成功，43 項全 ok、核對衝突 0、無錯誤，ARKX 10/15＝30.53。修正後 repo 歷史中被改正的 K 棒：VOO 5、IAUM 8、ARKK 8、ARKQ 8、ARKX 9 根（收盤差 >0.5%）；幾乎每根的成交量也改成官方值。裁判流程只用假資料測過，正式環境尚未觸發
+  - 注意：成交量全面換成官方值，排程裡用到量能的判斷（例如量比）可能和以前略有不同
 - 備註：Actions 提示 `ubuntu-latest` 自 2026-10-19 起改用 Ubuntu 26，之後第一次排程留意是否正常。
 
 ### 探測結果（GitHub Actions，2026-10-16 02:19 台北）
@@ -76,3 +81,4 @@
 
 ## Phase 2～6
 - [ ] 尚未開始
+- 待辦（Phase 2）：兩個晨報排程的「備援：舊方法」仍用鉅亨網（WebFetch），要換掉（鉅亨網美股最後一根 K 棒常停在盤中價，見 Phase 1）。
