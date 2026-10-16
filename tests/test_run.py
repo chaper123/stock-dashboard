@@ -63,12 +63,16 @@ def test_levels_cover_every_status(run):
 def test_compact_us_values(run):
     _, c = build(run, "us_20261015_repo_val")
     t = {x["code"]: x for x in c["tickers"]}
-    assert (t["GOOGL"]["level"], t["GOOGL"]["amount_twd"], t["GOOGL"]["amount_usd"]) == ("z1", 516, 15.97)
+    # 價格在第一買區，但 NT$516 扣 3% 圈存只能下約 15.5 美元，不足最低 50 美元，不下單
+    assert (t["GOOGL"]["level"], t["GOOGL"]["amount_twd"], t["GOOGL"]["amount_usd"], t["GOOGL"]["hold_twd"]) == (
+        "z1", 0, 0, 0)
+    assert "不足最低下單 50 美元" in t["GOOGL"]["why"][0]
+    assert c["min_order"]["twd"] == 1665 and c["min_order"]["pool_needed"]["z1"] == 8323
     assert (t["NVDA"]["status"], t["NVDA"]["level"], t["NVDA"]["event"]) == ("暫停", "block", "block")
     assert (t["SPCX"]["level"], t["SPCX"]["event"]) == ("wait", "boost")
     assert (t["IAUM"]["level"], t["ARKK"]["level"]) == ("gauge", "watch")
     assert t["GOOGL"]["zones"]["z1"] == [340.57, 349.27]
-    assert c["fx"]["rate"] == 32.315 and (c["pool_twd"], c["cap_twd"], c["total_twd"]) == (2580, 1032, 516)
+    assert c["fx"]["rate"] == 32.315 and (c["pool_twd"], c["cap_twd"], c["total_twd"]) == (2580, 1032, 0)
 
 
 def test_compact_tw_values(run):

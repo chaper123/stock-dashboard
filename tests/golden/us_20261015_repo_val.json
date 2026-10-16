@@ -1,13 +1,23 @@
 {
  "pool_twd": 2580,
  "cap_twd": 1032,
- "total_twd": 516,
+ "total_twd": 0,
  "fx": {
   "date": "2026-10-15",
   "rate": 32.315,
   "mean": 31.877,
   "dev_pct": 1.38,
   "rows": 267
+ },
+ "min_order": {
+  "usd": 50.0,
+  "hold_mult": 1.03,
+  "twd": 1665,
+  "pool_needed": {
+   "z1": 8323,
+   "z2": 4756,
+   "z3": 4162
+  }
  },
  "gauge": {
   "iaum_chg20": -3.95,
@@ -58,7 +68,9 @@
    18,
    24,
    30
-  ]
+  ],
+  "min_order_usd": 50.0,
+  "hold_mult": 1.03
  },
  "tickers": {
   "VOO": {
@@ -122,14 +134,17 @@
     ]
    ],
    "trend": "多頭",
-   "amount_usd": 0
+   "amount_usd": 0,
+   "hold_twd": 0
   },
   "GOOGL": {
    "role": "buy",
    "status": "第一買區",
    "level": "z1",
-   "amount_twd": 516,
-   "why": [],
+   "amount_twd": 0,
+   "why": [
+    "規則金額 NT$516（扣 3% 圈存可下單約 US$15.50）不足最低下單 50 美元：不下單；這個買區要資金池約 NT$8,323 才買得到"
+   ],
    "valuation": "合理",
    "val_now": {
     "fwd_pe": 26.2,
@@ -184,7 +199,8 @@
     ]
    ],
    "trend": "多頭",
-   "amount_usd": 15.97
+   "amount_usd": 0,
+   "hold_twd": 0
   },
   "NVDA": {
    "role": "buy",
@@ -248,7 +264,8 @@
     ]
    ],
    "trend": "整理",
-   "amount_usd": 0
+   "amount_usd": 0,
+   "hold_twd": 0
   },
   "TSLA": {
    "role": "buy",
@@ -312,7 +329,8 @@
     ]
    ],
    "trend": "整理",
-   "amount_usd": 0
+   "amount_usd": 0,
+   "hold_twd": 0
   },
   "SPCX": {
    "role": "buy",
@@ -373,7 +391,8 @@
     ]
    ],
    "trend": "多頭(無MA200)",
-   "amount_usd": 0
+   "amount_usd": 0,
+   "hold_twd": 0
   },
   "AAPL": {
    "role": "buy",
@@ -435,7 +454,8 @@
     ]
    ],
    "trend": "多頭",
-   "amount_usd": 0
+   "amount_usd": 0,
+   "hold_twd": 0
   },
   "IAUM": {
    "role": "gauge",
@@ -494,7 +514,8 @@
     ]
    ],
    "trend": "空頭",
-   "amount_usd": 0
+   "amount_usd": 0,
+   "hold_twd": 0
   },
   "ARKK": {
    "role": "watch",
@@ -553,7 +574,8 @@
     ]
    ],
    "trend": "整理",
-   "amount_usd": 0
+   "amount_usd": 0,
+   "hold_twd": 0
   },
   "ARKQ": {
    "role": "watch",
@@ -612,7 +634,8 @@
     ]
    ],
    "trend": "空頭",
-   "amount_usd": 0
+   "amount_usd": 0,
+   "hold_twd": 0
   },
   "ARKX": {
    "role": "watch",
@@ -671,7 +694,8 @@
     ]
    ],
    "trend": "整理",
-   "amount_usd": 0
+   "amount_usd": 0,
+   "hold_twd": 0
   }
  }
 }
