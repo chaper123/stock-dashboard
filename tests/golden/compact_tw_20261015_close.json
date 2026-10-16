@@ -1,0 +1,136 @@
+{
+ "schema_version": 1,
+ "generated_at": "2026-10-16T09:21:00+08:00",
+ "market": "tw",
+ "engine": {
+  "monitor": "monitor.py",
+  "sha256": "8c12675c1c9e78a668bd4ea941a7466300cfe39cb24244ab32b8d4e0173e0149",
+  "ref": "golden"
+ },
+ "data_date": "2026-10-15",
+ "pool_twd": 9600,
+ "cap_twd": 5760,
+ "total_twd": 2400,
+ "idle_reminder": {
+  "days": 31,
+  "pool": 9600,
+  "alert": false
+ },
+ "tickers": [
+  {
+   "code": "009816",
+   "role": "buy",
+   "status": "第一買區",
+   "level": "z1",
+   "amount_twd": 2400,
+   "price": 16.19,
+   "close": 16.19,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 2.7795,
+   "zones": {
+    "starter": [
+     16.52,
+     17.18
+    ],
+    "z1": [
+     16.4,
+     16.64
+    ],
+    "z2": [
+     15.52,
+     15.76
+    ],
+    "z3": [
+     14.8,
+     15.04
+    ]
+   },
+   "trend": "整理",
+   "rsi": 45.5695,
+   "why": [],
+   "issues": [],
+   "bias": -2.0154,
+   "held": true,
+   "premium": null,
+   "intraday": null,
+   "event": "none"
+  },
+  {
+   "code": "00981A",
+   "role": "buy",
+   "status": "等待回檔",
+   "level": "wait",
+   "amount_twd": 0,
+   "price": 29.4,
+   "close": 29.4,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 5.5782,
+   "zones": {
+    "starter": [
+     30.63,
+     31.86
+    ],
+    "z1": [
+     30.22,
+     31.04
+    ],
+    "z2": [
+     28.9,
+     29.72
+    ],
+    "z3": [
+     27.26,
+     28.08
+    ]
+   },
+   "trend": "整理",
+   "rsi": 41.5443,
+   "why": [
+    "事件層：情緒錯殺且隔夜已修復，升一級",
+    "最近溢價2.00% ≥ 2.0%：禁買"
+   ],
+   "issues": [],
+   "bias": -4.0157,
+   "held": true,
+   "premium": 2.0,
+   "intraday": null,
+   "event": "boost"
+  },
+  {
+   "code": "00411A",
+   "role": "buy",
+   "status": "暫停",
+   "level": "block",
+   "amount_twd": 0,
+   "price": 10.1,
+   "close": 10.1,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 5.3465,
+   "zones": {
+    "starter": [
+     10.52,
+     10.94
+    ],
+    "z1": [
+     10.41,
+     10.64
+    ],
+    "z2": [
+     9.35,
+     9.57
+    ]
+   },
+   "trend": "整理(無MA60)",
+   "rsi": 47.0758,
+   "why": [
+    "重大負面事件（由事件層判定）"
+   ],
+   "issues": [],
+   "bias": -4.0152,
+   "held": false,
+   "premium": 4.47,
+   "intraday": null,
+   "event": "block"
+  }
+ ]
+}

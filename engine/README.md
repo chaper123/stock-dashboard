@@ -27,4 +27,46 @@
 
 ## 執行
 
-和排程一樣：`python3 engine/monitor_us.py config.json`、`python3 engine/monitor.py config.json`（config 格式見各檔開頭的說明）。需要 pandas、numpy；`norm.py` 在 Windows 需要 tzdata。
+和排程一樣：`python3 engine/monitor_us.py config.json`、`python3 engine/monitor.py config.json`（config 格式見各檔開頭的說明）。需要 pandas、numpy；`norm.py`、`run.py` 在 Windows 需要 tzdata。
+
+## run.py：精簡 JSON
+
+薄包裝，不改 monitor：以模組載入 monitor、呼叫 `main(cfg)`、把印出的 JSON 轉成精簡格式（測試確認包裝後 monitor 的輸出與直接執行逐字相同）。
+
+```bash
+python3 engine/run.py us config.json --full monitor_out.json --rows rows.json --ref v0.2.0 > signals.json
+python3 engine/run.py tw config.json --full monitor_out.json --rows rows.json --ref v0.2.0 > signals.json
+```
+
+- stdout：精簡 JSON 一行（美股約 4.5 千字）。`--full`：monitor 原始輸出（報告表格照舊用它）。`--rows`：試算表的列。`--ref`：排程下載的 engine 版本。
+- 遇到不認得的狀態名稱、或美股的 level 與狀態對不上就直接失敗（代表 monitor 被改過，run.py 要同步更新）。
+
+精簡 JSON（`schema_version` 1）：
+
+| 欄位 | 說明 |
+|---|---|
+| `schema_version` | 1；欄位有不相容的變動才加一 |
+| `generated_at` | 產生時間，台北時區 ISO 8601（例如 `2026-10-16T09:21:05+08:00`） |
+| `market` | `us`／`tw` |
+| `engine` | `monitor`（檔名）、`sha256`（執行時算的）、`ref`（`--ref`，沒給是 null） |
+| `data_date` | 各檔最後一根日線日期的最大值 |
+| `pool_twd`、`cap_twd`、`total_twd` | 可用資金、本次上限（美股 40%／台股 60%）、規則參考合計 |
+| `fx`、`gauge`、`positions` | 只有美股：匯率濾網、IAUM 市場指標、持倉損益（照 monitor） |
+| `idle_reminder` | 只有台股：空手提醒（照 monitor） |
+| `tickers[]` | 依 config 順序，每檔一筆，見下表 |
+
+| `tickers[]` 欄位 | 說明 |
+|---|---|
+| `code`、`role` | 代號；`buy`／`gauge`／`watch`（台股都是 `buy`） |
+| `status`、`level` | monitor 的狀態名稱；等級 `overheat` `wait` `starter` `z1` `z2` `z3` `block` `weak` `gauge` `watch` |
+| `amount_twd`、`amount_usd` | 規則參考金額（已套上限縮放）；`amount_usd` 只有美股 |
+| `price`、`close`、`date` | 判定用的價格（台股有盤中價就用盤中價）、最近收盤與日期 |
+| `dist_to_z1_pct` | 距第一買區上緣 % |
+| `zones` | `starter`（只有台股）、`z1`～`z3`：[下緣, 上緣] |
+| `trend`、`rsi`、`bias` | 趨勢、RSI14、乖離（美股對 MA50；台股用判定價對 MA20） |
+| `why`、`issues` | 降級／禁買原因、資料檢查 |
+| `event` | config 的事件旗標 |
+| 美股：`chg1`、`valuation`、`val_now` | 前一日漲跌 %、估值分級、換算後的估值 |
+| 台股：`held`、`premium`、`intraday` | config 的持有、溢價、盤中價 |
+
+`--rows` 的內容：`archive_header`／`archive_row`（報告存檔一列，最後一格「報告全文」由排程填）、`plan_header`／`plan_rows`（配置計畫每檔一列）。欄位見 `run.py` 的 `ARCHIVE_HEADER`、`PLAN_HEADER`；「儀表板資料」試算表建立前仍可調整。浮點數四捨五入到小數 4 位。

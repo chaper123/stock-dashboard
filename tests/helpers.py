@@ -1,9 +1,13 @@
 """測試共用：路徑、黃金測試案例、用子行程執行 engine（和排程一樣是 python monitor.py config.json）。"""
+import contextlib
+import datetime as dt
 import importlib.util
+import json
 import os
 import pathlib
 import subprocess
 import sys
+from zoneinfo import ZoneInfo
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENGINE = ROOT / "engine"
@@ -39,3 +43,20 @@ def load_module(filename, name=None):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+# 精簡 JSON 的黃金檔用固定的產生時間與版本
+COMPACT_NOW = dt.datetime(2026, 10, 16, 9, 21, tzinfo=ZoneInfo("Asia/Taipei"))
+COMPACT_REF = "golden"
+
+
+def compact_case(name):
+    """engine/run.py 對案例的精簡 JSON（縮排版，給黃金檔比對）。"""
+    run = load_module("run.py", "engine_run")
+    script, config = CASES[name]
+    market = "us" if script == "monitor_us.py" else "tw"
+    cfg = json.loads((FIX / config).read_text())
+    with contextlib.chdir(FIX):
+        text = run.run_monitor(market, cfg)
+    c = run.compact(market, json.loads(text), cfg, COMPACT_NOW, COMPACT_REF)
+    return json.dumps(c, ensure_ascii=False, indent=1) + "\n"

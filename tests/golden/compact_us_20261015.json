@@ -1,0 +1,418 @@
+{
+ "schema_version": 1,
+ "generated_at": "2026-10-16T09:21:00+08:00",
+ "market": "us",
+ "engine": {
+  "monitor": "monitor_us.py",
+  "sha256": "75947691c28c4a2ecbf44781243541bdea0062b3eaab899c1bd63106343951e3",
+  "ref": "golden"
+ },
+ "data_date": "2026-10-15",
+ "pool_twd": 2580,
+ "cap_twd": 1032,
+ "total_twd": 1032,
+ "fx": {
+  "date": "2026-10-15",
+  "rate": 32.315,
+  "mean": 31.877,
+  "dev_pct": 1.38,
+  "rows": 267
+ },
+ "gauge": {
+  "iaum_chg20": -3.95,
+  "voo_chg20": 1.2,
+  "iaum_trend": "空頭",
+  "tag": "中性"
+ },
+ "positions": {
+  "GOOGL": {
+   "shares": 0.1826,
+   "cost_usd": 62.1,
+   "cost_px": 340.09,
+   "close": 349.22,
+   "mv_usd": 63.77,
+   "pnl_usd": 1.67,
+   "pnl_pct": 2.69
+  },
+  "VOO": {
+   "shares": 0.1262,
+   "cost_usd": 82.4,
+   "cost_px": 652.93,
+   "close": 709.43,
+   "mv_usd": 89.53,
+   "pnl_usd": 7.13,
+   "pnl_pct": 8.65
+  }
+ },
+ "tickers": [
+  {
+   "code": "VOO",
+   "role": "buy",
+   "status": "等待回檔",
+   "level": "wait",
+   "amount_twd": 0,
+   "price": 709.43,
+   "close": 709.43,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 0.0465,
+   "zones": {
+    "z1": [
+     703.68,
+     709.76
+    ],
+    "z2": [
+     663.3,
+     669.37
+    ],
+    "z3": [
+     604.63,
+     610.7
+    ]
+   },
+   "trend": "多頭",
+   "rsi": 51.5132,
+   "why": [
+    "估值偏貴：降一級"
+   ],
+   "issues": [],
+   "amount_usd": 0,
+   "chg1": 0.2827,
+   "bias": 0.3836,
+   "valuation": "偏貴",
+   "val_now": {
+    "pe": 26.8
+   },
+   "event": "none"
+  },
+  {
+   "code": "GOOGL",
+   "role": "buy",
+   "status": "第一買區",
+   "level": "z1",
+   "amount_twd": 516,
+   "price": 349.22,
+   "close": 349.22,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 0.0143,
+   "zones": {
+    "z1": [
+     340.57,
+     349.27
+    ],
+    "z2": [
+     331.87,
+     340.57
+    ],
+    "z3": [
+     319.02,
+     327.72
+    ]
+   },
+   "trend": "多頭",
+   "rsi": 52.8026,
+   "why": [],
+   "issues": [],
+   "amount_usd": 15.97,
+   "chg1": 0.4545,
+   "bias": 1.2456,
+   "valuation": "合理",
+   "val_now": {
+    "fwd_pe": 25.9,
+    "peg": 1.96
+   },
+   "event": "none"
+  },
+  {
+   "code": "NVDA",
+   "role": "buy",
+   "status": "第一買區",
+   "level": "z1",
+   "amount_twd": 516,
+   "price": 217.23,
+   "close": 217.23,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 4.1201,
+   "zones": {
+    "z1": [
+     220.17,
+     226.18
+    ],
+    "z2": [
+     199.83,
+     205.85
+    ],
+    "z3": [
+     187.8,
+     193.82
+    ]
+   },
+   "trend": "整理",
+   "rsi": 40.1728,
+   "why": [],
+   "issues": [],
+   "amount_usd": 15.97,
+   "chg1": -1.8391,
+   "bias": -2.6633,
+   "valuation": "偏便宜",
+   "val_now": {
+    "fwd_pe": 18.2,
+    "peg": 0.36
+   },
+   "event": "none"
+  },
+  {
+   "code": "TSLA",
+   "role": "buy",
+   "status": "等待回檔",
+   "level": "wait",
+   "amount_twd": 0,
+   "price": 362.44,
+   "close": 362.44,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 0.5187,
+   "zones": {
+    "z1": [
+     353.19,
+     364.32
+    ],
+    "z2": [
+     342.06,
+     353.19
+    ],
+    "z3": [
+     330.93,
+     342.06
+    ]
+   },
+   "trend": "整理",
+   "rsi": 46.4514,
+   "why": [
+    "估值明顯偏貴：禁買"
+   ],
+   "issues": [],
+   "amount_usd": 0,
+   "chg1": -1.2855,
+   "bias": 1.0262,
+   "valuation": "明顯偏貴",
+   "val_now": {
+    "fwd_pe": 187.4,
+    "peg": 9.99
+   },
+   "event": "none"
+  },
+  {
+   "code": "SPCX",
+   "role": "buy",
+   "status": "等待回檔",
+   "level": "wait",
+   "amount_twd": 0,
+   "price": 148.62,
+   "close": 148.62,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 1.7023,
+   "zones": {
+    "z1": [
+     143.9,
+     151.15
+    ],
+    "z2": [
+     126.77,
+     134.01
+    ]
+   },
+   "trend": "多頭(無MA200)",
+   "rsi": 45.9524,
+   "why": [
+    "估值明顯偏貴：禁買"
+   ],
+   "issues": [],
+   "amount_usd": 0,
+   "chg1": -2.3265,
+   "bias": 0.7437,
+   "valuation": "明顯偏貴",
+   "val_now": {
+    "fwd_pe": 93.7,
+    "peg": null
+   },
+   "event": "none"
+  },
+  {
+   "code": "AAPL",
+   "role": "buy",
+   "status": "等待回檔",
+   "level": "wait",
+   "amount_twd": 0,
+   "price": 342.0,
+   "close": 342.0,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": -3.9766,
+   "zones": {
+    "z1": [
+     321.75,
+     328.4
+    ],
+    "z2": [
+     288.79,
+     295.44
+    ],
+    "z3": [
+     275.49,
+     282.14
+    ]
+   },
+   "trend": "多頭",
+   "rsi": 60.5799,
+   "why": [],
+   "issues": [],
+   "amount_usd": 0,
+   "chg1": -0.2799,
+   "bias": 5.2054,
+   "valuation": "明顯偏貴",
+   "val_now": {
+    "fwd_pe": 36.8,
+    "peg": 3.31
+   },
+   "event": "none"
+  },
+  {
+   "code": "IAUM",
+   "role": "gauge",
+   "status": "市場指標",
+   "level": "gauge",
+   "amount_twd": 0,
+   "price": 41.6,
+   "close": 41.6,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 4.6154,
+   "zones": {
+    "z1": [
+     42.85,
+     43.52
+    ],
+    "z2": [
+     42.17,
+     42.85
+    ],
+    "z3": [
+     41.5,
+     42.17
+    ]
+   },
+   "trend": "空頭",
+   "rsi": 46.0869,
+   "why": [],
+   "issues": [],
+   "amount_usd": 0,
+   "chg1": 1.836,
+   "bias": -3.6662,
+   "valuation": "—",
+   "val_now": {},
+   "event": "none"
+  },
+  {
+   "code": "ARKK",
+   "role": "watch",
+   "status": "觀察（不給金額）",
+   "level": "watch",
+   "amount_twd": 0,
+   "price": 85.69,
+   "close": 85.69,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 1.5521,
+   "zones": {
+    "z1": [
+     84.47,
+     87.02
+    ],
+    "z2": [
+     76.87,
+     79.42
+    ],
+    "z3": [
+     71.77,
+     74.32
+    ]
+   },
+   "trend": "整理",
+   "rsi": 45.7413,
+   "why": [],
+   "issues": [],
+   "amount_usd": 0,
+   "chg1": 1.4323,
+   "bias": -0.0616,
+   "valuation": "—",
+   "val_now": {},
+   "event": "none"
+  },
+  {
+   "code": "ARKQ",
+   "role": "watch",
+   "status": "觀察（不給金額）",
+   "level": "watch",
+   "amount_twd": 0,
+   "price": 115.68,
+   "close": 115.68,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 7.9184,
+   "zones": {
+    "z1": [
+     122.14,
+     124.84
+    ],
+    "z2": [
+     119.44,
+     122.14
+    ],
+    "z3": [
+     116.73,
+     119.44
+    ]
+   },
+   "trend": "空頭",
+   "rsi": 34.724,
+   "why": [],
+   "issues": [],
+   "amount_usd": 0,
+   "chg1": -0.1381,
+   "bias": -6.3257,
+   "valuation": "—",
+   "val_now": {},
+   "event": "none"
+  },
+  {
+   "code": "ARKX",
+   "role": "watch",
+   "status": "觀察（不給金額）",
+   "level": "watch",
+   "amount_twd": 0,
+   "price": 30.53,
+   "close": 30.53,
+   "date": "2026-10-15",
+   "dist_to_z1_pct": 7.9594,
+   "zones": {
+    "z1": [
+     32.29,
+     32.96
+    ],
+    "z2": [
+     31.62,
+     32.29
+    ],
+    "z3": [
+     30.92,
+     31.58
+    ]
+   },
+   "trend": "整理",
+   "rsi": 33.3147,
+   "why": [],
+   "issues": [],
+   "amount_usd": 0,
+   "chg1": 0.0164,
+   "bias": -6.4131,
+   "valuation": "—",
+   "val_now": {},
+   "event": "none"
+  }
+ ]
+}
