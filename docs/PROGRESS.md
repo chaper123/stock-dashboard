@@ -10,9 +10,9 @@
 - 行情資料：https://github.com/chaper123/market-data（本機 `C:\market-data`）
 
 ## 下一步
-1. 使用者把共用帳本「發布到網路」（整份文件、CSV），把連結貼給 Claude。
-2. Claude 從 Pages 網址實測瀏覽器能否直接讀該 CSV（CORS）；不行就改由 Actions 定時抓。驗收後 Phase 0 打 tag v0.1。
-3. Phase 1 第 1～6 項已完成並在 Actions 驗證（見下方勾選），美股日線已改用 MoneyDJ；第 7 項 SEC 之後再做（UA 信箱從 Actions secret 讀）。
+1. 10/19（週一）第一次正式排程時確認：Ubuntu 26 下 fetch 正常、完整抓取耗時、MoneyDJ 多數決與裁判流程在正式環境的表現、09:20 美股晨報不再用到過期日線。
+2. Phase 1 剩第 7 項（SEC 8-K＋新聞 RSS；使用者要先建立存聯絡信箱的 Actions secret）與第 8 項（加權指數日線正式來源、cron-job.org 外部觸發）。
+3. Phase 2：monitor 程式搬進 `engine/`、排程改讀 Phase 1 新資料並換掉鉅亨網備援（每次改排程前先問使用者）。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）
@@ -23,7 +23,7 @@
 - [x] GitHub 登入、建立公開 repo、push（commit 用 noreply 信箱）
 - [x] Pages 部署測試頁；線上確認讀得到 market-data meta.json（Actions 已升到最新主版本）
 - [x] clone market-data 到 `C:\market-data`
-- [ ] 驗證 Google Sheet 發布的 CSV 能被瀏覽器直接讀
+- [x] 驗證 Google Sheet 發布的 CSV 能被瀏覽器直接讀：四個分頁從 Pages 網址都讀得到（見 [DATA_SOURCES.md](DATA_SOURCES.md)）。Phase 0 完成，tag v0.1
 
 ## Phase 1 強化資料（market-data）
 - [x] 來源探測：`probe.py`（標準庫）＋`.github/workflows/probe.yml`（只手動觸發、不 commit）。Actions 上 33/36 通過（[run 38784686621](https://github.com/chaper123/market-data/actions/runs/38784686621)，結果在 job summary）
