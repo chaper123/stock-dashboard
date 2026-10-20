@@ -80,7 +80,7 @@ def compact(market, full, cfg, now, ref=None):
                  zones={k: v["zones"][k] for k in ZONE_KEYS if k in v["zones"]},
                  trend=v["trend"], rsi=v["rsi"], why=v["why"], issues=v["issues"])
         if us:
-            t.update(amount_usd=v["amount_usd"], chg1=v["chg1"], bias=v["bias50"],
+            t.update(amount_usd=v["amount_usd"], hold_twd=v["hold_twd"], chg1=v["chg1"], bias=v["bias50"],
                      valuation=v["valuation"], val_now=v["val_now"], event=conf[code].get("event", "none"))
         else:
             e = conf[code]
@@ -93,7 +93,7 @@ def compact(market, full, cfg, now, ref=None):
                data_date=max(t["date"] for t in tickers))
     if us:
         out.update(pool_twd=full["pool_twd"], cap_twd=full["cap_twd"], total_twd=full["total_twd"],
-                   fx=full["fx"], gauge=full["gauge"], positions=full["positions"])
+                   fx=full["fx"], min_order=full["min_order"], gauge=full["gauge"], positions=full["positions"])
     else:
         out.update(pool_twd=full["pool"], cap_twd=round(full["pool"] * full["params"]["run_cap"]),
                    total_twd=full["total_suggest"], idle_reminder=full["idle_reminder"])
