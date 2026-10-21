@@ -141,6 +141,7 @@ repo 還沒有、v2 先這樣處理（之後可在 market-data 補，另開任�
    - UI 儲存時平台重新產生了環境設定（與貼上的內容無關）：Cowork 系統提示詞 69,214 → 84,970 字（仍有 SendUserMessage 一節，但多了寫死的「Today's date: Tuesday, October 20, 2026」）、allowed_tools 50 → 35（移除 memory、claude-code-remote、remote-devices 憑證工具，v2 都沒用到）、auto mode 規則清空（10/20 測試排程本來就是空的，照樣能寫試算表）、新增 append_system_prompt。10/21 第一次執行要確認報告日期與送出。
    - 台股之後同樣用手動貼上。
 6. **切換後**：第一週每天把正式執行的 config 在本機回放一次，確認與排程輸出一致；有問題就把提示詞改回 v1（一樣先問）。
+   - 美股 10/21（第一次 v2 正式執行，09:21 開始，420 秒）：報告日期 10/21；存檔「報告全文」就是完整報告（先寫 report.md、存檔後才把「見推播訊息」換成寫入結果，修正 A 照做）；`報告存檔`!A2:J2、`配置計畫`!A2:R11；engine-v1.1 的 monitor_us.py、run.py SHA-256 OK；十檔日線來自 repo、多數決一致，沒用備援（B、C 沒觸發）；依規則用 market-data 75799f1 的 `valuation/us.json` 重建 config，本機回放精簡 JSON 與存檔**逐欄相同**；WebFetch 5、WebSearch 7，權限拒絕 1（GateGuard）。結果全部「等待回檔」、金額 0：VOO 估值偏貴降級、GOOGL 與 NVDA 因台銀即期賣出 32.68 比半年均值高 2.44% 降級（匯率濾網第一次觸發）、SPCX 估值禁買。
 7. 測試排程與「測試_」分頁在切換後由使用者決定是否刪除。
 
 建議先切美股（改動多、收益大：程式碼 1.1 萬字、估值與匯率的 WebFetch），台股晚一到兩個交易日。
