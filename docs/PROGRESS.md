@@ -15,7 +15,12 @@
 3. **market-data 兩個問題已修正（2026-10-20，d0181b4、5bc223c）**：① 美股最後一根只有 MoneyDJ 一票（Yahoo、Nasdaq 都還沒有）時先收，meta 標 `last_bar_single_source=true`、`cross_check_ok=null`、`single_source_days`；後面的排程不算「已完整」、會再完整抓取補核對（一致就清除，不一致請 Nasdaq 裁判、必要時改正；超過 10 天停止追蹤），us/ 與 macro/TSM 都適用。② DXY、黃金、原油不收週末列，只在美東 17:10～18:00 收當天（18:00 晚盤後 Yahoo 的當天 K 棒是未完成資料，過了美東午夜才恢復），其餘時間只到前一天；重新產生後 10/19 WTI＝103.66（+2.2%，與報導一致），最近 30 天 WTI 漲跌方向與 FRED 現貨 29/29 一致、DXY 與鉅亨網最大差 0.075%。測試 26 項（`tests/`）通過；Actions [run 39390278213](https://github.com/chaper123/market-data/actions/runs/39390278213) 43 項全 ok、無錯誤。**待決定**：排程實際延遲 2.5～5 小時（10/20 在台北 08:17～14:37 才跑），很少落在美東 17:10～18:00，所以晨報時期貨三項通常只到前一天（v2 會標「未取得」），台北中午後才補上當天；同一天早上也會因此每次都做完整抓取。**使用者決定（10/20）**：用 cron-job.org 在美東 17:15（週一～五，時區 America/New_York）以 workflow_dispatch 準時觸發 fetch，讓期貨在 17:10～18:00 的時段收到當天收盤，晨報時就是最新一天；不採用「接受期貨晚一天」。帳號與 GitHub fine-grained token（只限 market-data、Actions 讀寫）由使用者自己建立，token 不經過 Claude。**已完成（10/20 16:46）**：測試觸發 [run 39395787753](https://github.com/chaper123/market-data/actions/runs/39395787753) 成功（3 分鐘、43 項全 ok、無核對衝突）；token 2027-10-20 到期，失敗通知寄到使用者的轉寄信箱。第一次正式觸發是 10/21 台北 05:15：10/21 早上要確認 Actions 有那次 workflow_dispatch、macro 的 DXY／黃金／原油到 10/20，以及 09:20 美股晨報讀到當天期貨。**10/21 確認**：05:15:09 workflow_dispatch 成功（4 分鐘）；09:21 晨報讀到的 market-data（75799f1）DXY／黃金／原油最後一列都是 10/20、量完整，v2 報告的總經段落用的就是 10/20（WTI 98.18、−5.29%）。v2 建議：`last_bar_single_source` 為 true 時在資料備註寫出 last_bar_votes（目前 v2 不會提到單一來源）。
 4. Phase 1 剩第 7 項（SEC 8-K＋新聞 RSS；使用者要先建立存聯絡信箱的 Actions secret）與第 8 項的加權指數日線正式來源（cron-job.org 外部觸發已於 10/20 完成）。
 5. **Phase 3（跨市場配置器）等台股 v2 切換穩定後才開始**（使用者 2026-10-21 決定）。開始時先列預設參數給使用者確認，再寫程式，先用影子模式。
-6. GitHub Actions 10/19、10/20 的 runner 仍是 ubuntu-24.04，Ubuntu 26 還沒輪到，之後第一次要再留意。
+6. **新聞改三層架構（使用者 2026-10-22 決定）**：起因是 10/22 美股晨報新聞只有 9 次搜尋，CNBC 讀不到、多是二手網站，NVDA／AAPL／Fed 幾乎沒查；reuters.com 直接讀回 401，但 Google News RSS 一天有約 100 則 Reuters 標題。
+   - ① market-data `news.py`（交給 phase-1-market-data）：Google News RSS（Reuters、AP、CNBC、Bloomberg、WSJ、中央社、經濟日報等，標來源等級與相關標的）、Fed 新聞稿，以及證交所 MIS 盤中快照（取代台股晨報用鉅亨網讀盤中價）。由 cron-job.org 觸發：新聞約台北 08:20，盤中快照約 10:05。SEC 8-K 等使用者建 secret 再加。
+   - ② 新排程「新聞與社群晨報」（約台北 08:40）：讀標題清單、查證重點、補社群，按標的寫事實、來源等級、偏多或偏空、建議事件旗標，寫入「儀表板資料」試算表的新聞分頁。先用測試模式。
+   - ③ 兩個晨報改讀新聞分頁、拿掉各自的大範圍搜尋（新聞排程沒跑完時退回 2～3 個精簡搜尋）；要等 ② 測試通過，併入提示詞修改批次，由使用者手動貼上。
+   - 永豐金 Shioaji API 暫不採用：要另外在永豐金開戶、只有台灣市場、IP 白名單無法配合 GitHub Actions。需要分鐘 K 或委買委賣時再評估（只開「行情／資料」權限）。
+7. GitHub Actions 10/19、10/20 的 runner 仍是 ubuntu-24.04，Ubuntu 26 還沒輪到，之後第一次要再留意。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）
