@@ -22,22 +22,26 @@
 
 ## 3. 輸入
 
-### 3.1 第一層要提供的檔案（約定；第一層上線後以 market-data README 為準，提示詞再對齊）
+### 3.1 第一層的檔案（2026-10-22 上線，10/23 對齊實際格式）
 
-`data/news/headlines.json`：
+第一層照本節原約定輸出（market-data README「新聞標題格式」），台北 08:20 由 cron-job.org 觸發（10/23 08:20 正常）。
 
-```json
-{"generated_at_taipei": "2026-10-23 08:21", "window_hours": 36,
- "feeds": [{"name": "Google News：Reuters NVDA", "ok": true, "count": 12}],
- "errors": [],
- "items": [{"id": "（網址的雜湊）", "published_utc": "2026-10-22T21:05:00Z", "published_taipei": "2026-10-23 05:05",
-            "source": "Reuters", "tier": 2, "lang": "en", "title": "…", "link": "https://news.google.com/rss/articles/…",
-            "symbols": ["NVDA"], "topics": ["export_controls"]}]}
-```
+`data/news/headlines.json`（最近 72 小時，約 1,100 則、0.7 MB，只能用程式篩選）：
 
-第二層會用到的欄位：`generated_at_taipei`（新鮮度）、`items[].published_taipei`、`source`、`tier`（1 官方、2 主要媒體、3 第一手發言、4 其他）、`title`、`link`、`symbols`（美股代號、台股代號或 `2330` 等成分股）、`topics`（fed、tariff、export_controls、china、taiwan、oil、war、cpi、jobs 等）、`feeds[].ok`、`errors`。沒有 `symbols` 的也要保留，第二層用標題關鍵字補分類。
+- 最上層：`generated_at_taipei`、`window_hours`（72）、`status`、`tiers`、`feeds`（34 個查詢，`name`、`ok`、`count`）、`errors`、`stats`（`by_tier`、`by_symbol`、`by_topic`）、`sec_8k`（目前「未啟用」，等 Actions secret）。
+- `items[]`：`id`、`published_utc`、`published_taipei`、`source`、`source_url`、`tier`（1 官方、2 主要媒體、3 第一手發言、4 其他）、`lang`、`title`、`link`、`symbols`、`topics`、`also`（同標題合併掉的其他來源）、`queries` 等。
+- `symbols` 只看標題：美股代號、台股 ETF 代號、台積電同時標 `2330` 與 `TSM`、兩檔主動 ETF 前十大的台股代號（例如 2383）。沒有 symbols 的也保留。
+- `topics`：fed、tariff、export_controls、china、taiwan、oil、war、cpi、jobs、earnings、antitrust、merger。
 
-Fed 新聞稿（例如 `data/news/fed.json`：`items[].date`、`title`、`link`、`type`），以及 meta.json 裡 `news/*` 的 status 與 last。
+`data/news/fed.json`（最近 7 天）：`items[]` 的 `date`、`title`、`link`、`type`（press／speech）、`published_taipei`。
+
+`meta.json`：`news/headlines`（`status`、`last`＝產生時間、`items`、`feeds_ok`、`errors`）、`news/fed`（`status`、`last`、`checked_at_taipei`）。
+
+對應規則（10/23 用當天標題試跑：時間窗 10/22 08:40～10/23 08:40 共 662 則；各標的 34～96 則，Tier 2 約佔一半）：
+
+- 2330／TSM → 009816 與 00981A；00981A 前十大的其他台股代號 → 00981A。
+- `holdings/00411A.json` 的美股代號帶「 US」字尾（`NVDA US`），比對前要去掉；00411A 只收直接提到它或前五大持股的 Tier 1～2 重大事件。
+- 沒有 symbols 的用 topics：總經類（fed、tariff、export_controls、china、taiwan、oil、war、cpi、jobs）歸「總經」。
 
 ### 3.2 其他 repo 資料
 
@@ -120,6 +124,9 @@ Fed 新聞稿（例如 `data/news/fed.json`：`items[].date`、`title`、`link`�
 
 - 前提：第一層的 `headlines.json` 已在 repo 上線並穩定一天；試算表加好「測試_新聞」分頁（表頭＝第 5.1 節）；使用者同意建立測試排程。
 - 測試期（使用者 2026-10-22 決定）：連續 3 個平日、**其中一定要有一個週一**（測週末的時間窗：上週五 08:40 到週一 08:40），例如週五～下週二或週一～週三。一個多日測試排程（平日 08:40），用正式晨報的環境與連接器，只寫「測試_新聞」，3 次後停用（停用也要先問使用者）。
+- 建議日期：10/26（一）～10/28（三）08:40（第一層 10/22 上線，到時已穩定數天；10/26 是週一，時間窗從 10/23（五）08:40 起）。
+- 建議建立方式：使用者在 claude.ai 建立排程（和正式晨報同樣的環境、含 Cowork 系統提示詞），貼上 `news_morning.v1test.prompt.md`、時間設平日 08:40、連接器保留 Google Sheets 與 Gmail；10/28 跑完後停用。用 API 建立的排程不帶 Cowork 系統提示詞，之後也只能從 UI 修改（見 ROUTINE_V2 第 8 節第 5 步），所以不建議。
+- 試算表「測試_新聞」分頁：第一列表頭＝第 5.1 節 16 欄，日期與代號欄設純文字（009816 的前導 0）。
 - 比較（每天，和同一天兩個晨報實際查到的消息比）：
   - 各標的相關消息數、來源等級分布、已查證比例。
   - 晨報有提到、新聞排程沒有的重大事件（漏報），以及反過來的。
