@@ -22,6 +22,7 @@
 - 所有輸出都是依自訂規則的訊號，不是投資建議；不下單、不碰券商帳戶。
 
 ## 環境
-- Windows、PowerShell 5.1；Python 3.12、Git、GitHub CLI（winget 安裝）；沒有 Node，網站是純靜態。
-- Python 一律用 `py -3.12` 呼叫（`python` 會被 Windows 應用程式執行別名導到 Store）。
+- Windows、PowerShell 5.1；Python 3.14（本機開發）與 3.12（保留對照）、Git、GitHub CLI（winget 安裝）；沒有 Node，網站是純靜態。CI 用 3.12、3.13（排程雲端環境）、3.14 三個版本跑測試。
+- Python 一律用 `py -3.14` 呼叫（`python` 會被 Windows 應用程式執行別名導到 Store）。3.12 在 Windows 已沒有安全更新安裝檔，所以 2026-10-25 起本機改用 3.14。
+- 在 Claude 裡用 `pip install --user` 裝的套件會被放進 Claude 的套件快取（`AppData\Local\Packages\Claude_…\LocalCache\Roaming\Python`），在 Claude 以外的終端機可能看不到。
 - 新安裝的工具若找不到，先刷新 PATH：`$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')`

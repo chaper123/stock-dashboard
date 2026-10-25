@@ -21,7 +21,7 @@
 | `monitor.py` | 8579 | 169 | `8c12675c1c9e78a668bd4ea941a7466300cfe39cb24244ab32b8d4e0173e0149` |
 | `norm.py` | 1126 | 27 | `a74e16b958dff887b37aa72115e301d8d336521232acdc7609faee44dc666fc2` |
 
-本機重新核對：`py -3.12 tools/extract_engine.py`（需要 private/ 的提示詞備份）。
+本機重新核對：`py -3.14 tools/extract_engine.py`（需要 private/ 的提示詞備份）。
 
 ## 修改規則
 

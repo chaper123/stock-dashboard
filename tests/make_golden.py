@@ -1,6 +1,6 @@
 """重新產生黃金測試的預期輸出（tests/golden/*.json：monitor 原始輸出，以及 engine/run.py 的精簡 JSON）。
 
-用法：py -3.12 tests/make_golden.py
+用法：py -3.14 tests/make_golden.py
 只在 engine 經使用者同意修改、或新增案例時執行；產生後用 git diff 檢查差異並寫進 commit 說明。
 """
 import sys

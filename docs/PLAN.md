@@ -38,7 +38,7 @@ GitHub Pages（本 repo 的 site/）：純靜態網站，不需 Node
 |---|---|
 | D1 | 帳本只有交易數字，可公開被看到。repo 公開（免費 Pages）；網站直接讀 Google Sheet「發布到網路」的 CSV，不做登入或加密。若瀏覽器讀不到（CORS），改由 Actions 定時抓 CSV 存進 repo。market-data 仍只放行情數據。 |
 | D2 | 專案放 `C:\stock-dashboard`（「文件」在 Google Drive 備份清單內，避免同步 .git）。market-data clone 到 `C:\market-data`。 |
-| D3 | winget 安裝 Python 3.12、Git、GitHub CLI；不需要 Node。 |
+| D3 | winget 安裝 Python 3.12、Git、GitHub CLI；不需要 Node。2026-10-25 本機開發改用 Python 3.14（3.12 在 Windows 已沒有安全更新安裝檔；測試 191＋45 項在 3.14 全部通過），CI 跑 3.12／3.13／3.14。 |
 | D4 | 配置器參數 Phase 3 先給預設值，影子模式 1～2 週後再決定是否取代原金額。 |
 | D5 | 2026-10-25 參考社群的「六角色交易團隊」（偵察、新聞、情緒、圖表、風控、最終決策）：不為每個角色各開一個排程，而是由程式和排程接力完成。偵察與圖表由 engine 負責，新聞與情緒由新聞晨報負責，風控與最終決策由 allocator 負責；每天只有 3 個 AI 排程（新聞、美股、台股）。不加停損和目標價（使用者是長期價值投資；失效條件維持「空頭排列不接刀」與 block 事件）。三個點子等台股 v2 穩定後再做：Phase 3 風控三種結論、網站決策鏈頁面、情緒來源擴充。 |
 

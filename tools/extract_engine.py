@@ -1,8 +1,8 @@
 """從排程提示詞備份逐字抽出 monitor 程式到 engine/，或核對兩者是否逐字相同。
 
 用法：
-  py -3.12 tools/extract_engine.py          核對（預設）：engine/*.py 與提示詞裡的程式碼區塊逐字比對，印出 SHA-256
-  py -3.12 tools/extract_engine.py --write  抽出：把提示詞裡的程式碼區塊原樣寫進 engine/
+  py -3.14 tools/extract_engine.py          核對（預設）：engine/*.py 與提示詞裡的程式碼區塊逐字比對，印出 SHA-256
+  py -3.14 tools/extract_engine.py --write  抽出：把提示詞裡的程式碼區塊原樣寫進 engine/
 
 提示詞備份在 private/routines/*.v1.prompt.md（不進 git），所以這支只在本機執行。
 程式碼區塊的認法：```python 開頭的區塊，前一個非空白行寫著「<檔名>.py（照抄，不要修改）」。
