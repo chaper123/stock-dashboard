@@ -25,3 +25,6 @@ Thumbs.db
 # 暫存
 tmp/
 *.log
+
+# 網站本機開發用的測試資料（從儀表板試算表抄的，不進 git）
+site/dev-data/
