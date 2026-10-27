@@ -138,7 +138,7 @@
 - [x] 報告歷史：依產生日期分組、可篩台股／美股，點開才轉換（最新一篇預設打開）。marked（gfm、breaks）→ DOMPurify（`RETURN_DOM_FRAGMENT`；另外擋 img／影音／style／表單元素；連結一律開新分頁、`noopener noreferrer`）；函式庫沒載入時退回純文字。表格可左右捲動；表格下一行沒空行的說明（GFM 會變成只有第一格的列）搬回表格後當段落。XSS 測試（`?dev` 測試檔：img onerror、script、javascript: 連結、onclick）：都沒有執行、沒有發出圖片請求
 - [x] K 線買點圖：一次一檔（上方台股／美股代號切換，網址 `#/charts/代號`；預設第一檔在買區的標的）。Lightweight Charts 5.2.1（只在這頁用 SRI 載入）：日 K（紅漲綠跌）、美股 MA50／MA200、台股 MA20／MA60、最新晨報的買區色帶（越深越濃；台股已持有不畫起始倉區；自動縮放把買區算進去）與上緣虛線、交易紀錄成交箭頭、台股今天的盤中價虛線；游標所在日的開高低收、最近 20 日數據表；切換深淺色會重畫。讀不到晨報存檔時仍可畫 K 線（沒有買區）
 - [x] 決策鏈（D5 六站，每站一張卡、點開看依據）：偵察（兩市場進買區的標的與規則參考合計）、新聞（新聞分頁最新一組：事件依事件 ID 合併、建議旗標、Tier 1 件數，另列晨報採用的 event 旗標；資料日不是今天會標出）、情緒（恐懼貪婪、台指 VIX、同學風向與社群列）、圖表（可買標的趨勢分布、空頭排列不接刀、RSI／乖離，連到 K 線）；風控與最終計畫是虛線卡「Phase 3 配置器上線後提供」。新聞以純文字放進頁面、網址只接受 http/https（`?dev` 測試：javascript: 網址不會變成連結、`<img onerror>` 只顯示成文字）
-- [ ] PWA（manifest＋service worker，離線顯示上次成功的資料）
+- [x] PWA：`manifest.webmanifest`（可加到主畫面，含可遮罩圖示；圖示由 `tools/make_icons.py` 產生）＋`sw.js`：網站本身先連網、失敗用快取；CDN 函式庫先用快取（安裝時預先存）；資料（market-data、Google Sheet）先連網 8 秒，成功就存一份並記時間，失敗回快取並加 `x-sw-offline`，頁面上方顯示「顯示上次成功讀取的資料（時間）」。本機實測：停掉伺服器後重新整理，今日計畫照常顯示；資料網址連不上時 8 秒後回快取內容與時間。**新增或改名 site/ 的檔案時，要更新 `sw.js` 的 `SHELL_FILES` 並把 `VERSION` 改成新日期**
 - 本機開發：`py -3.14 -m http.server 8765 --directory site`，網址加 `?dev` 改讀 `site/dev-data/`（從儀表板試算表抄的測試資料、含 XSS 測試字串，不進 git；只在 localhost 有效）。
 
 ## Phase 3、5、6
