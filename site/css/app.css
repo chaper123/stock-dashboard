@@ -216,12 +216,18 @@ main { max-width: 1040px; margin: 0 auto; padding: 16px 16px 24px; outline: none
 .tk-name { font-size: .8rem; color: var(--ink-2); }
 .tk-amt { text-align: right; }
 .tk-amt .a { font-weight: 700; font-size: 1.1rem; }
-.zones { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 10px 0 6px; }
-.zones.four { grid-template-columns: repeat(2, 1fr); }
-@media (min-width: 420px) { .zones.four { grid-template-columns: repeat(4, 1fr); } }
-.zone { border-radius: 6px; padding: 4px 6px; font-size: .78rem; background: var(--surface-2); color: var(--ink-2); }
-.zone b { display: block; font-size: .72rem; font-weight: 500; }
-.zone span { font-variant-numeric: tabular-nums; color: var(--ink); }
+/* 手機：一區一列（名稱左、範圍右）；寬一點才並排 */
+.zones { display: grid; grid-template-columns: 1fr; gap: 4px; margin: 10px 0 6px; }
+.zone { border-radius: 6px; padding: 4px 8px; font-size: .85rem; background: var(--surface-2); color: var(--ink-2);
+  display: flex; justify-content: space-between; gap: 8px; }
+.zone b { font-size: .8rem; font-weight: 500; }
+.zone span { font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+@media (min-width: 1000px) {
+  .zones { grid-template-columns: repeat(3, 1fr); }
+  .zones.four { grid-template-columns: repeat(4, 1fr); }
+  .zone { display: block; font-size: .78rem; }
+  .zone b { display: block; font-size: .72rem; }
+}
 .zone.on { outline: 2px solid var(--accent); outline-offset: -2px; }
 .zone.z-z1 b { color: var(--z1-ink); } .zone.z-z2 b { color: var(--z2-ink); } .zone.z-z3 b, .zone.z-starter b { color: var(--starter-ink); }
 .zone.z-z3 b { color: var(--accent); }
@@ -234,6 +240,7 @@ table { border-collapse: collapse; width: 100%; font-size: .88rem; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--ink-2); font-weight: 600; font-size: .8rem; white-space: nowrap; }
 td.r, th.r { text-align: right; }
+table.nowrap td { white-space: nowrap; }
 
 /* 持倉卡 */
 .pos { border-bottom: 1px solid var(--line); padding: 10px 0; }

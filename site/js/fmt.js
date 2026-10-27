@@ -126,6 +126,7 @@ export function distText(d) {
   return d > 0 ? `低於上緣 ${pct(d, 1, false)}` : `高於上緣 ${pct(-d, 1, false)}`;
 }
 
+// 買區一律兩位小數，上下緣對齊好比較
 export function zoneText(z) {
-  return Array.isArray(z) && z.length === 2 ? `${price(z[0])}～${price(z[1])}` : "—";
+  return Array.isArray(z) && z.length === 2 ? `${nf(2).format(z[0])}～${nf(2).format(z[1])}` : "—";
 }
