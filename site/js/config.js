@@ -6,8 +6,10 @@ const sheetCsv = (pub, gid) =>
 
 // 共用帳本（2026-10-16 發布）
 const LEDGER_PUB = "2PACX-1vTkKjwqp4RAA2kJ6YPKCHVZCdv8fkUJOS8_S4elsyFQB6nnLs1_oA5S_CHJXbKNc7yJiYlmu0tRcAnH";
-// 「投資儀表板資料（排程寫入）」：使用者發布後把 2PACX-… 填進來；null 時網站顯示「尚未發布」
-const DASH_PUB = null;
+// 「投資儀表板資料（排程寫入）」（2026-10-27 發布；null 時網站顯示「尚未發布」）
+const DASH_PUB = "2PACX-1vRhvnwZeDHTngUJNE92xxFi2cBvrZrBsiCAtrefaDzMfaR268oMF5wmC5b0E77T0yqR6fPEx71PAvlh";
+// 新聞晨報測試期間寫「測試_新聞」（gid 4）；正式「新聞」分頁建立後改成它的 gid
+const NEWS_GID = 4;
 
 // 本機開發：localhost 加 ?dev 時改讀 site/dev-data/（不進 git）。只在本機有效，線上網址不能被參數換掉
 const DEV = ["localhost", "127.0.0.1"].includes(location.hostname) && new URLSearchParams(location.search).has("dev");
@@ -20,8 +22,7 @@ export const SOURCES = {
   },
   dash: {
     archive: DEV ? "dev-data/archive.csv" : DASH_PUB && sheetCsv(DASH_PUB, 0),
-    // 新聞晨報測試期間寫「測試_新聞」（gid 4）；正式「新聞」分頁建立後換成它的 gid
-    news: DEV ? "dev-data/news.csv" : DASH_PUB && sheetCsv(DASH_PUB, 4),
+    news: DEV ? "dev-data/news.csv" : DASH_PUB && sheetCsv(DASH_PUB, NEWS_GID),
   },
   market: "https://raw.githubusercontent.com/chaper123/market-data/main/data/",
 };
