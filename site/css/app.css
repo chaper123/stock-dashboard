@@ -253,7 +253,8 @@ table.nowrap td { white-space: nowrap; }
 /* 篩選鈕 */
 .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
 .chip { border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); border-radius: 999px;
-  padding: 4px 12px; cursor: pointer; min-height: 34px; font-size: .88rem; }
+  padding: 4px 12px; cursor: pointer; min-height: 34px; font-size: .88rem; text-decoration: none;
+  display: inline-flex; align-items: center; }
 .chip[aria-pressed="true"] { background: var(--ink); color: var(--plane); border-color: var(--ink); }
 
 /* 報告 */
@@ -275,6 +276,9 @@ table.nowrap td { white-space: nowrap; }
 .date-head { font-size: .9rem; color: var(--ink-2); margin: 18px 0 8px; font-weight: 600; }
 
 /* K 線 */
+.chip-row { display: flex; gap: 10px; align-items: baseline; }
+.chip-row > .tiny { flex: 0 0 2.5em; }
+.chip-row .chips { margin: 3px 0; }
 .chart-box { position: relative; height: 380px; margin-top: 8px; }
 @media (min-width: 700px) { .chart-box { height: 480px; } }
 .chart-legend { font-size: .82rem; color: var(--ink-2); display: flex; gap: 4px 12px; flex-wrap: wrap; margin-top: 6px; }

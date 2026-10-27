@@ -208,7 +208,8 @@ export const loadDaily = (market, code) => once(`daily:${market}:${code}`, async
   const src = `${code} 日線`;
   const bars = [];
   for (const r of parseCSV(await fetchText(md(path), src))) {
-    const [time, volume, open, high, low, close] = [r[0], ...r.slice(1, 6).map(Number)];
+    // Yahoo 的歷史價有浮點雜訊（686.2899780273438），四捨五入到 4 位
+    const [time, volume, open, high, low, close] = [r[0], ...r.slice(1, 6).map((x) => Math.round(Number(x) * 1e4) / 1e4)];
     if (/^\d{4}-\d{2}-\d{2}$/.test(time) && [open, high, low, close].every(Number.isFinite)) {
       bars.push({ time, open, high, low, close, volume });
     }
