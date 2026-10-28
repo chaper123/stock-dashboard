@@ -1,5 +1,5 @@
-// 恐懼貪婪半圓儀表（參考口袋晨報的樣式）：五段色帶、指針、分數、與前一日比較。
-// 分段照 CNN：0–25 極度恐懼、25–45 恐懼、45–55 中性、55–75 貪婪、75–100 極度貪婪。
+// 恐懼貪婪半圓儀表（參考口袋晨報的樣式）：五段色帶、指針、分數、與前一次比較。
+// 分段照 CNN：0–25 極度恐懼、25–45 恐懼、45–55 中性、55–75 貪婪、75–100 極度貪婪；口袋晨報的指數也用同一組色帶，評等文字照來源。
 import { el, isNum } from "./fmt.js";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -28,12 +28,15 @@ function band(v0, v1) {
 
 const bandOf = (v) => BANDS.find(([a, b]) => v >= a && v < b) || BANDS.at(-1);
 
-// fg：market-data 的 cnn_fear_greed.json
-export function fearGreedGauge(fg) {
-  const v = Math.max(0, Math.min(100, fg.score));
-  const label = FG_ZH[fg.rating] || bandOf(v)[2];
+// market-data 的 cnn_fear_greed.json → 儀表的讀數
+export const cnnReading = (fg) => ({ name: "CNN 恐懼貪婪", score: fg.score, label: FG_ZH[fg.rating], previous: fg.previous_close, prevLabel: "前一日" });
+
+// g：{ name, score, label（評等文字，沒有就用色帶名稱）, previous, prevLabel }
+export function fearGreedGauge(g) {
+  const v = Math.max(0, Math.min(100, g.score));
+  const label = g.label || bandOf(v)[2];
   const svg = node("svg", { viewBox: "0 0 300 192", class: "fg-gauge", role: "img",
-    "aria-label": `CNN 恐懼貪婪 ${v.toFixed(0)}（${label}）` });
+    "aria-label": `${g.name || "恐懼貪婪"} ${v.toFixed(0)}（${label}）` });
   for (const [a, b, name, color] of BANDS) {
     const p = node("path", { d: band(a, b), fill: color, class: "fg-band" });
     p.append(node("title", {}, `${name} ${a}～${b}`));
@@ -59,17 +62,34 @@ export function fearGreedGauge(fg) {
   svg.append(node("circle", { cx: CX, cy: CY, r: 7, class: "fg-hub" }));
   svg.append(node("text", { x: CX, y: CY + 38, class: "fg-value" }, v.toFixed(0)));
 
-  const prev = fg.previous_close;
   let change = null;
-  if (isNum(prev)) {
+  if (isNum(g.previous)) {
     // 用顯示出來的整數算差，避免「27 → 34（+6）」對不起來
-    const a = Math.round(prev), b = Math.round(fg.score), d = b - a;
-    const fear = fg.score < 50;
+    const a = Math.round(g.previous), b = Math.round(g.score), d = b - a;
+    const fear = g.score < 50;
     const mood = d === 0 ? "持平" : d < 0 ? (fear ? "更害怕" : "貪婪降溫") : (fear ? "恐懼減輕" : "更貪婪");
-    change = `前一日 ${a} 分 → ${b} 分（${d > 0 ? "+" : d < 0 ? "−" : "±"}${Math.abs(d)} 分，${mood}）`;
+    change = `${g.prevLabel || "前一次"} ${a} 分 → ${b} 分（${d > 0 ? "+" : d < 0 ? "−" : "±"}${Math.abs(d)} 分，${mood}）`;
   }
   return el("div", { class: "fg" },
     svg,
     el("div", { class: "fg-label" }, el("i", { class: "fg-dot", style: { background: bandOf(v)[3] } }), label),
     change && el("div", { class: "fg-change" }, change));
+}
+
+// 一個儀表區塊：標題列＋儀表（沒有讀數時顯示原因）
+export function gaugeBlock(title, meta, reading, missingText, ...extra) {
+  return el("div", { class: "fg-block" },
+    el("div", { class: "spread" }, el("strong", {}, title), meta && el("span", { class: "tiny" }, meta)),
+    reading && isNum(reading.score) ? fearGreedGauge(reading) : el("div", { class: "fg-missing" }, missingText),
+    ...extra);
+}
+
+// 口袋晨報的恐懼貪婪（js/news.js 的 pocketReading）
+export function pocketBlock(pocket, newsError) {
+  const title = "口袋晨報恐懼貪婪";
+  if (newsError) return gaugeBlock(title, null, null, `讀不到新聞分頁：${newsError}`);
+  if (!pocket) return gaugeBlock(title, null, null, "還沒有資料：新聞晨報開始把口袋晨報的分數寫進試算表後就會顯示。");
+  if (pocket.missing) return gaugeBlock(title, null, null, `今天沒有分數：${pocket.missing}`);
+  const meta = [pocket.sentAt && `口袋晨報 ${pocket.sentAt}`, pocket.dataDate && `資料日 ${pocket.dataDate}`].filter(Boolean).join("・");
+  return gaugeBlock(title, meta, pocket, null);
 }

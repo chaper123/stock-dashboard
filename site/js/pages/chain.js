@@ -97,7 +97,7 @@ async function news(runsP) {
 
 async function sentiment() {
   const v = await loadNewsView().catch(() => null);
-  const parts = await sentimentParts(v ? v.crowdRows : null);
+  const parts = await sentimentParts(v);
   return {
     concl: [el("div", {}, `${parts.join("・")}。`), el("div", { class: "tiny" }, "情緒只當參考層，不能單獨改變買區判定。")],
     body: null,

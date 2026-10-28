@@ -3,7 +3,7 @@
 // - CDN 函式庫（網址有固定版本）：先用快取
 // - 資料（market-data、Google Sheet）：先連網（8 秒逾時），成功就存一份並記下時間；失敗時回快取，
 //   加上 x-sw-offline 標頭，頁面據此顯示「顯示上次成功讀取的資料」
-const VERSION = "2026-10-28-3";
+const VERSION = "2026-10-28-4";
 const SHELL = `shell-${VERSION}`;
 const LIBS = "libs-v1";
 const DATA = "data-v1";

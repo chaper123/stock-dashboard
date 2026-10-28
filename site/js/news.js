@@ -130,6 +130,27 @@ export async function loadNewsView() {
     flagged: events.filter((e) => e.flag !== "none"),
     summaryRow: rows.find((r) => r.category === "摘要"),
     crowdRows: rows.filter((r) => r.category === "情緒" && CROWD.includes(r.symbol)),
+    pocket: pocketReading(rows),
+  };
+}
+
+// 口袋晨報的恐懼貪婪：新聞晨報寫一列（類別「情緒」、標的「口袋恐懼貪婪」），
+// 事實例「口袋恐懼貪婪 26 分「恐懼」（前一交易日 28 分；資料日 10/27）」，取不到時寫「未取得（原因）」。
+// 沒有這一列回傳 null；有列但沒有分數回傳 { missing }。
+export function pocketReading(rows) {
+  const r = rows.find((x) => x.symbol === "口袋恐懼貪婪")
+    || rows.find((x) => x.category === "情緒" && /口袋/.test(x.source) && /恐懼貪婪/.test(x.fact));
+  if (!r) return null;
+  const num = (re) => {
+    const m = re.exec(r.fact || "");
+    return m ? Number(m[1]) : null;
+  };
+  const score = num(/恐懼貪婪\s*(\d+(?:\.\d+)?)\s*分/) ?? num(/(\d+(?:\.\d+)?)\s*分/);
+  if (score == null || score < 0 || score > 100) return { missing: r.fact || "未取得" };
+  return {
+    name: "口袋恐懼貪婪", score, label: /「(.+?)」/.exec(r.fact)?.[1] || null,
+    previous: num(/前一交易日\s*(\d+(?:\.\d+)?)\s*分/), prevLabel: "前一交易日",
+    dataDate: /資料日\s*(\d{1,2}\/\d{1,2})/.exec(r.fact)?.[1] || null, sentAt: r.eventTime,
   };
 }
 
@@ -139,7 +160,8 @@ function crowdShort(fact) {
   const m = /(\d+)\s*分「(.+?)」/.exec(fact || "");
   return m ? `${m[1]} ${m[2]}` : (fact || "未取得").replace(/（.*?）/g, "");
 }
-export async function sentimentParts(crowdRows) {
+// view：loadNewsView() 的結果（讀不到新聞分頁時給 null，只顯示 market-data 的兩項）
+export async function sentimentParts(view) {
   const [fg, vix] = await Promise.allSettled([loadFearGreed(), loadVix()]);
   const parts = [];
   parts.push(fg.status === "fulfilled"
@@ -149,8 +171,9 @@ export async function sentimentParts(crowdRows) {
     const last = vix.value.at(-1);
     parts.push(`台指 VIX ${last.value.toFixed(2)}（${shortDate(last.date)}）`);
   } else parts.push("台指 VIX 讀不到");
-  if (crowdRows) {
-    const by = new Map(crowdRows.map((r) => [r.symbol, r]));
+  if (view?.pocket && !view.pocket.missing) parts.push(`口袋恐懼貪婪 ${view.pocket.score.toFixed(0)}（${view.pocket.label || "—"}）`);
+  if (view) {
+    const by = new Map(view.crowdRows.map((r) => [r.symbol, r]));
     parts.push(`同學風向 ${CROWD.map((c) => `${c} ${by.has(c) ? crowdShort(by.get(c).fact) : "未取得"}`).join("、")}`);
   }
   return parts;

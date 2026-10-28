@@ -1,6 +1,6 @@
 // 總覽：今天的一句話、資金池、總資產、台美比重、情緒、資料健康。
 import {
-  loadSettings, loadArchive, latestRun, oneLiner, loadMeta, loadFearGreed, loadFearGreedHistory, loadVix,
+  loadSettings, loadArchive, latestRun, oneLiner, loadMeta, loadFearGreed, loadFearGreedHistory, loadVix, loadNews,
 } from "../data.js";
 import { loadPortfolio } from "../portfolio.js";
 import {
@@ -8,7 +8,8 @@ import {
 } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { MARKET_LABEL } from "../config.js";
-import { fearGreedGauge } from "../gauge.js";
+import { cnnReading, gaugeBlock, pocketBlock } from "../gauge.js";
+import { pocketReading } from "../news.js";
 
 export async function render(root) {
   root.append(pageHeader("總覽", `台北時間 ${taipeiToday()}`));
@@ -115,17 +116,18 @@ function sparkline(values, label) {
 }
 
 async function sentimentCard() {
-  const [fg, hist, vix] = await Promise.allSettled([loadFearGreed(), loadFearGreedHistory(), loadVix()]);
+  const [fg, hist, vix, news] = await Promise.allSettled([loadFearGreed(), loadFearGreedHistory(), loadVix(), loadNews()]);
   const parts = [];
+  let cnn;
   if (fg.status === "fulfilled") {
     const f = fg.value;
     const h = hist.status === "fulfilled" ? hist.value.slice(-60) : [];
-    parts.push(el("div", {},
-      el("div", { class: "spread" }, el("strong", {}, "CNN 恐懼貪婪（美股）"), el("span", { class: "tiny" }, `更新 ${taipeiTime(f.time_utc)}`)),
-      isNum(f.score) ? fearGreedGauge(f) : el("p", { class: "muted" }, "沒有分數"),
+    cnn = gaugeBlock("CNN 恐懼貪婪（美股）", `更新 ${taipeiTime(f.time_utc)}`, cnnReading(f), "沒有分數",
       el("div", { class: "small muted", style: { textAlign: "center" } }, `一週前 ${fmt1(f.previous_1_week)}・一個月前 ${fmt1(f.previous_1_month)}・一年前 ${fmt1(f.previous_1_year)}`),
-      h.length > 1 && sparkline(h.map((x) => x.value), `恐懼貪婪近 ${h.length} 個交易日：${shortDate(h[0].date)} ${fmt1(h[0].value)} → ${shortDate(h.at(-1).date)} ${fmt1(h.at(-1).value)}`)));
-  } else parts.push(notice("err", `讀不到 CNN 恐懼貪婪：${fg.reason.message}`));
+      h.length > 1 && sparkline(h.map((x) => x.value), `CNN 恐懼貪婪近 ${h.length} 個交易日：${shortDate(h[0].date)} ${fmt1(h[0].value)} → ${shortDate(h.at(-1).date)} ${fmt1(h.at(-1).value)}`));
+  } else cnn = notice("err", `讀不到 CNN 恐懼貪婪：${fg.reason.message}`);
+  const pocket = news.status === "fulfilled" ? pocketBlock(pocketReading(news.value.rows)) : pocketBlock(null, news.reason.message);
+  parts.push(el("div", { class: "fg-pair" }, cnn, pocket));
   if (vix.status === "fulfilled") {
     const v = vix.value, last = v.at(-1), prev = v.at(-2);
     const s = v.slice(-60);
