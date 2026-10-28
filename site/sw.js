@@ -3,7 +3,7 @@
 // - CDN 函式庫（網址有固定版本）：先用快取
 // - 資料（market-data、Google Sheet）：先連網（8 秒逾時），成功就存一份並記下時間；失敗時回快取，
 //   加上 x-sw-offline 標頭，頁面據此顯示「顯示上次成功讀取的資料」
-const VERSION = "2026-10-28-2";
+const VERSION = "2026-10-28-3";
 const SHELL = `shell-${VERSION}`;
 const LIBS = "libs-v1";
 const DATA = "data-v1";
@@ -59,7 +59,11 @@ self.addEventListener("fetch", (event) => {
 async function shell(req) {
   const cache = await caches.open(SHELL);
   try {
-    const res = await fetch(req);
+    // 每次都向伺服器確認（GitHub Pages 給 max-age=600，不確認的話部署後最多 10 分鐘還是舊檔）
+    const fresh = req.mode === "navigate"
+      ? new Request(req.url, { cache: "no-cache", credentials: "same-origin" })
+      : new Request(req, { cache: "no-cache" });
+    const res = await fetch(fresh);
     if (res.ok && res.type === "basic") cache.put(req, res.clone());
     return res;
   } catch (e) {
