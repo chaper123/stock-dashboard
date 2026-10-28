@@ -78,8 +78,9 @@ export function fearGreedGauge(g) {
 
 // 一個儀表區塊：標題列＋儀表（沒有讀數時顯示原因）
 export function gaugeBlock(title, meta, reading, missingText, ...extra) {
+  // 標題下一行固定留給時間（沒有也留空），兩個儀表並排時才會對齊
   return el("div", { class: "fg-block" },
-    el("div", { class: "spread" }, el("strong", {}, title), meta && el("span", { class: "tiny" }, meta)),
+    el("div", { class: "fg-head" }, el("strong", {}, title), el("div", { class: "tiny" }, meta || " ")),
     reading && isNum(reading.score) ? fearGreedGauge(reading) : el("div", { class: "fg-missing" }, missingText),
     ...extra);
 }

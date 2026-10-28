@@ -25,7 +25,7 @@ async function view() {
     highlightsCard(v),
     el("section", { class: "card sent-grid" },
       el("div", { class: "fg-pair" },
-        fg ? gaugeBlock("CNN 恐懼貪婪（美股）", null, cnnReading(fg), "沒有分數") : notice("err", "讀不到 CNN 恐懼貪婪"),
+        fg ? gaugeBlock("CNN 恐懼貪婪（美股）", `更新 ${taipeiTime(fg.time_utc)}`, cnnReading(fg), "沒有分數") : notice("err", "讀不到 CNN 恐懼貪婪"),
         pocketBlock(v.pocket)),
       el("div", { class: "sent-line" }, el("strong", {}, "情緒　"), sentiment.join("・"),
         el("div", { class: "tiny" }, "情緒只當參考，不單獨改變買區判定。"))),
