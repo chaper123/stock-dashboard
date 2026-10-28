@@ -1,7 +1,9 @@
 // 新聞：先看今天的重點與旗標，情緒一行，明細卡片依重要性排序（none 收起、Tier 4 另外收起）。
 // 新聞內容一律以純文字放進頁面，原文網址只接受 http/https（extLink）。
 import { loadNewsView, sentimentParts, firstSentence, TIER_LABEL } from "../news.js";
-import { el, taipeiTime, shortDate, taipeiToday, extLink, LEVELS } from "../fmt.js";
+import { loadFearGreed } from "../data.js";
+import { fearGreedGauge } from "../gauge.js";
+import { el, taipeiTime, shortDate, taipeiToday, extLink, LEVELS, isNum } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
 
 export async function render(root) {
@@ -15,14 +17,16 @@ async function view() {
   const stale = v.dataDate !== taipeiToday();
   const main = v.events.filter((e) => e.tier !== 4);
   const minor = v.events.filter((e) => e.tier === 4);
-  const sentiment = await sentimentParts(v.crowdRows);
+  const [sentiment, fg] = await Promise.all([sentimentParts(v.crowdRows), loadFearGreed().catch(() => null)]);
   return [
     el("p", { class: "small muted row" }, `新聞晨報 ${taipeiTime(v.generatedAt)}・資料日 ${shortDate(v.dataDate)}・目前讀測試分頁`,
       stale && el("span", { class: "badge b-warn" }, "⚠ 不是今天的")),
     v.ctx.missing.length > 0 && notice("warn", `讀不到${v.ctx.missing.join("、")}，「持有／在買區」的標示可能不完整。`),
     highlightsCard(v),
-    el("section", { class: "card sent-line" }, el("strong", {}, "情緒　"), sentiment.join("・"),
-      el("div", { class: "tiny" }, "情緒只當參考，不單獨改變買區判定。")),
+    el("section", { class: "card sent-grid" },
+      fg && isNum(fg.score) ? fearGreedGauge(fg) : null,
+      el("div", { class: "sent-line" }, el("strong", {}, "情緒　"), sentiment.join("・"),
+        el("div", { class: "tiny" }, "儀表是 CNN 恐懼貪婪（美股）。情緒只當參考，不單獨改變買區判定。"))),
     card(`明細（${main.length} 件，依重要性排序）`,
       el("p", { class: "tiny" }, "旗標不是 none 的會展開；其他點一下看全文、理由與原文。"),
       main.map((e) => evCard(e, v.ctx))),

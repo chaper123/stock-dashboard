@@ -8,6 +8,7 @@ import {
 } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { MARKET_LABEL } from "../config.js";
+import { fearGreedGauge } from "../gauge.js";
 
 export async function render(root) {
   root.append(pageHeader("總覽", `台北時間 ${taipeiToday()}`));
@@ -94,8 +95,6 @@ async function splitTile() {
       el("span", {}, el("i", { style: { background: "var(--ma1)" } }), `美股 ${twd(us.mvTwd)}（${pct(usP, 1, false)}）`)));
 }
 
-const FG_ZH = { "extreme fear": "極度恐懼", fear: "恐懼", neutral: "中性", greed: "貪婪", "extreme greed": "極度貪婪" };
-
 function sparkline(values, label) {
   if (values.length < 2) return null;
   const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
@@ -122,13 +121,9 @@ async function sentimentCard() {
     const f = fg.value;
     const h = hist.status === "fulfilled" ? hist.value.slice(-60) : [];
     parts.push(el("div", {},
-      el("div", { class: "spread" }, el("strong", {}, "CNN 恐懼貪婪"), el("span", { class: "tiny" }, `更新 ${taipeiTime(f.time_utc)}`)),
-      el("div", { class: "row" }, el("span", { class: "tile" }, el("span", { class: "value" }, isNum(f.score) ? f.score.toFixed(0) : "—")),
-        el("span", {}, FG_ZH[f.rating] || f.rating || "")),
-      el("div", { class: "meter", role: "img", "aria-label": `0 到 100，目前 ${f.score}` },
-        el("span", { class: "pin", style: { left: `${Math.max(0, Math.min(100, f.score))}%` } })),
-      el("div", { class: "meter-scale" }, el("span", {}, "0 極度恐懼"), el("span", {}, "50"), el("span", {}, "極度貪婪 100")),
-      el("div", { class: "small muted" }, `前一日 ${fmt1(f.previous_close)}・一週前 ${fmt1(f.previous_1_week)}・一個月前 ${fmt1(f.previous_1_month)}`),
+      el("div", { class: "spread" }, el("strong", {}, "CNN 恐懼貪婪（美股）"), el("span", { class: "tiny" }, `更新 ${taipeiTime(f.time_utc)}`)),
+      isNum(f.score) ? fearGreedGauge(f) : el("p", { class: "muted" }, "沒有分數"),
+      el("div", { class: "small muted", style: { textAlign: "center" } }, `一週前 ${fmt1(f.previous_1_week)}・一個月前 ${fmt1(f.previous_1_month)}・一年前 ${fmt1(f.previous_1_year)}`),
       h.length > 1 && sparkline(h.map((x) => x.value), `恐懼貪婪近 ${h.length} 個交易日：${shortDate(h[0].date)} ${fmt1(h[0].value)} → ${shortDate(h.at(-1).date)} ${fmt1(h.at(-1).value)}`)));
   } else parts.push(notice("err", `讀不到 CNN 恐懼貪婪：${fg.reason.message}`));
   if (vix.status === "fulfilled") {
