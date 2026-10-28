@@ -8,8 +8,9 @@ const sheetCsv = (pub, gid) =>
 const LEDGER_PUB = "2PACX-1vTkKjwqp4RAA2kJ6YPKCHVZCdv8fkUJOS8_S4elsyFQB6nnLs1_oA5S_CHJXbKNc7yJiYlmu0tRcAnH";
 // 「投資儀表板資料（排程寫入）」（2026-10-27 發布；null 時網站顯示「尚未發布」）
 const DASH_PUB = "2PACX-1vRhvnwZeDHTngUJNE92xxFi2cBvrZrBsiCAtrefaDzMfaR268oMF5wmC5b0E77T0yqR6fPEx71PAvlh";
-// 新聞晨報測試期間寫「測試_新聞」（gid 4）；正式「新聞」分頁建立後改成它的 gid
-const NEWS_GID = 4;
+// 新聞：正式「新聞」分頁（gid 5，2026-10-28 建立）與「測試_新聞」（gid 4）都讀，取資料日較新的，同一天以正式為準。
+// 切換當天正式分頁還空著也不會空白；正式版穩定後把測試那一項拿掉
+const NEWS_TABS = [[5, "新聞"], [4, "測試_新聞"]];
 
 // 本機開發：localhost 加 ?dev 時改讀 site/dev-data/（不進 git）。只在本機有效，線上網址不能被參數換掉
 const DEV = ["localhost", "127.0.0.1"].includes(location.hostname) && new URLSearchParams(location.search).has("dev");
@@ -22,7 +23,8 @@ export const SOURCES = {
   },
   dash: {
     archive: DEV ? "dev-data/archive.csv" : DASH_PUB && sheetCsv(DASH_PUB, 0),
-    news: DEV ? "dev-data/news.csv" : DASH_PUB && sheetCsv(DASH_PUB, NEWS_GID),
+    news: DEV ? [{ url: "dev-data/news.csv", label: "本機測試" }]
+      : DASH_PUB && NEWS_TABS.map(([gid, label]) => ({ url: sheetCsv(DASH_PUB, gid), label })),
   },
   market: "https://raw.githubusercontent.com/chaper123/market-data/main/data/",
 };

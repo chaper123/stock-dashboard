@@ -89,7 +89,7 @@ async function news(runsP) {
       adoptedLine,
       el("div", { class: "row small" }, el("a", { href: "#/news" }, `看新聞明細（${v.events.length} 件）→`),
         stale && el("span", { class: "badge b-warn" }, `⚠ 資料日 ${shortDate(v.dataDate)}`),
-        el("span", { class: "tiny" }, `新聞晨報 ${taipeiTime(v.generatedAt)}`)),
+        el("span", { class: "tiny" }, `新聞晨報 ${taipeiTime(v.generatedAt)}（${v.label}）`)),
     ],
     body: null,
   };

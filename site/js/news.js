@@ -145,7 +145,8 @@ export function pocketReading(rows) {
     const m = re.exec(r.fact || "");
     return m ? Number(m[1]) : null;
   };
-  const score = num(/恐懼貪婪\s*(\d+(?:\.\d+)?)\s*分/) ?? num(/(\d+(?:\.\d+)?)\s*分/);
+  // 只認「恐懼貪婪 N 分」（NEWS_ROUTINE 5.1 的固定字樣）；「未取得（原因）」裡的數字不能當分數
+  const score = /^未取得/.test(r.fact || "") ? null : num(/恐懼貪婪\s*(\d+(?:\.\d+)?)\s*分/);
   if (score == null || score < 0 || score > 100) return { missing: r.fact || "未取得" };
   return {
     name: "口袋恐懼貪婪", score, label: /「(.+?)」/.exec(r.fact)?.[1] || null,

@@ -168,32 +168,47 @@ export function oneLiner(report) {
   return m ? m[1].replace(/\*\*/g, "").trim() : null;
 }
 
-export const loadNews = () => once("news", async () => {
-  const src = "儀表板「新聞」";
-  if (!SOURCES.dash.news) throw new DataError(src, NOT_PUBLISHED);
-  const rows = parseTable(await fetchText(SOURCES.dash.news, src, true)).map((r) => ({
-    generatedAt: col(r, "產生時間"),
-    dataDate: col(r, "資料日"),
-    category: col(r, "類別"),
-    market: col(r, "市場"),
-    symbol: col(r, "標的"),
-    eventId: col(r, "事件ID"),
-    eventTime: col(r, "事件時間"),
-    source: col(r, "來源"),
-    tier: num(col(r, "等級")),
-    verify: col(r, "查證"),
-    url: col(r, "原文網址"),
-    fact: col(r, "事實"),
-    impact: col(r, "影響"),
-    flag: col(r, "建議旗標") || "none",
-    reason: col(r, "理由"),
-    related: col(r, "其他相關標的"),
-  })).filter((r) => r.generatedAt && r.dataDate);
+// 新聞分頁的一列 → 物件
+const newsRow = (r) => ({
+  generatedAt: col(r, "產生時間"),
+  dataDate: col(r, "資料日"),
+  category: col(r, "類別"),
+  market: col(r, "市場"),
+  symbol: col(r, "標的"),
+  eventId: col(r, "事件ID"),
+  eventTime: col(r, "事件時間"),
+  source: col(r, "來源"),
+  tier: num(col(r, "等級")),
+  verify: col(r, "查證"),
+  url: col(r, "原文網址"),
+  fact: col(r, "事實"),
+  impact: col(r, "影響"),
+  flag: col(r, "建議旗標") || "none",
+  reason: col(r, "理由"),
+  related: col(r, "其他相關標的"),
+});
+
+// 最新資料日裡產生時間最新的那一組（同一天重跑會多一組列）
+function latestNewsGroup(rows) {
   if (!rows.length) return { dataDate: null, generatedAt: null, rows: [] };
-  // 最新資料日裡產生時間最新的那一組
   const dataDate = rows.reduce((m, r) => (r.dataDate > m ? r.dataDate : m), "");
   const generatedAt = rows.filter((r) => r.dataDate === dataDate).reduce((m, r) => (r.generatedAt > m ? r.generatedAt : m), "");
   return { dataDate, generatedAt, rows: rows.filter((r) => r.dataDate === dataDate && r.generatedAt === generatedAt) };
+}
+
+// 正式與測試分頁都讀，取資料日較新的（同一天以清單前面的正式分頁為準）；label 是採用的分頁名稱
+export const loadNews = () => once("news", async () => {
+  const tabs = SOURCES.dash.news;
+  if (!tabs) throw new DataError("儀表板「新聞」", NOT_PUBLISHED);
+  const results = await Promise.allSettled(tabs.map(async (t) => latestNewsGroup(
+    parseTable(await fetchText(t.url, `儀表板「${t.label}」`, true)).map(newsRow).filter((r) => r.generatedAt && r.dataDate))));
+  let best = null;
+  results.forEach((r, i) => {
+    if (r.status === "fulfilled" && r.value.rows.length && (!best || r.value.dataDate > best.dataDate)) best = { ...r.value, label: tabs[i].label };
+  });
+  if (best) return best;
+  if (results.every((r) => r.status === "rejected")) throw results[0].reason;
+  return { dataDate: null, generatedAt: null, rows: [], label: tabs[0].label };
 });
 
 // ── market-data ───────────────────────────────────────

@@ -19,7 +19,7 @@ async function view() {
   const minor = v.events.filter((e) => e.tier === 4);
   const [sentiment, fg] = await Promise.all([sentimentParts(v), loadFearGreed().catch(() => null)]);
   return [
-    el("p", { class: "small muted row" }, `新聞晨報 ${taipeiTime(v.generatedAt)}・資料日 ${shortDate(v.dataDate)}・目前讀測試分頁`,
+    el("p", { class: "small muted row" }, `新聞晨報 ${taipeiTime(v.generatedAt)}・資料日 ${shortDate(v.dataDate)}・讀「${v.label}」分頁`,
       stale && el("span", { class: "badge b-warn" }, "⚠ 不是今天的")),
     v.ctx.missing.length > 0 && notice("warn", `讀不到${v.ctx.missing.join("、")}，「持有／在買區」的標示可能不完整。`),
     highlightsCard(v),

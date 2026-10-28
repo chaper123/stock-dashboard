@@ -38,7 +38,8 @@ https://docs.google.com/spreadsheets/d/e/2PACX-1vRhvnwZeDHTngUJNE92xxFi2cBvrZrBs
 | 配置計畫 | 1 | 每檔 1 列（同一份精簡 JSON 攤平） | 目前不用 |
 | 測試_報告存檔 | 2 | v2 測試期間的存檔 | 不用 |
 | 測試_配置計畫 | 3 | 同上 | 不用 |
-| 測試_新聞 | 4 | 新聞晨報 16 欄（見 NEWS_ROUTINE 5.1） | 決策鏈的新聞與情緒站；正式「新聞」分頁建立後，把 `site/js/config.js` 的 `NEWS_GID` 換成新的 gid |
+| 測試_新聞 | 4 | 新聞晨報測試版 16 欄（見 NEWS_ROUTINE 5.1） | 正式分頁沒有較新的資料時退回讀這裡 |
+| 新聞 | 5 | 新聞晨報正式版 16 欄（2026-10-28 建立，隨整份文件發布） | 新聞頁、決策鏈的新聞與情緒站、口袋恐懼貪婪儀表。`site/js/config.js` 的 `NEWS_TABS` 同時讀 gid 5 與 4，取資料日較新的、同一天以正式為準；正式版穩定後拿掉 gid 4 |
 
 實測（2026-10-27）：五個分頁都回 200、`text/csv; charset=utf-8`、`Access-Control-Allow-Origin: *`。
 
