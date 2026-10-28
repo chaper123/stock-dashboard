@@ -9,7 +9,7 @@
 | `monitor_us.py` | 美股晨報提示詞「# monitor_us.py（照抄，不要修改）」 | 美股買區與訊號（10 檔，可用資金 40% 上限） |
 | `monitor.py` | 台股 ETF 晨報提示詞「# monitor.py（照抄，不要修改）」 | 台股 ETF 買區與訊號（3 檔，60% 上限） |
 | `norm.py` | 美股晨報提示詞「norm.py（照抄，不要修改）」 | 鉅亨網日線轉 CSV（只在 v1 的備援舊方法用到） |
-| `news_select.py` | 2026-10-23 新寫（不是從提示詞抽出） | 新聞晨報的候選清單：照固定規則篩時間窗、對應標的、排序，標出必寫事項（前一日大幅變動、財報、休市、Fed）。規則見 [docs/NEWS_ROUTINE.md](../docs/NEWS_ROUTINE.md)，測試在 `tests/test_news_select.py`；不影響 monitor 與 engine 的 tag |
+| `news_select.py` | 2026-10-23 新寫（不是從提示詞抽出），10-28 正式版加重要性 | 新聞晨報的候選清單：照固定規則篩時間窗、對應標的、排序，標出必寫事項（前一日大幅變動、財報、休市、Fed）；讀晨報精簡 JSON 判斷持有與買區、列出今晚／明早的財報與 FOMC、過濾雜訊與 Tier 4、排出「今日重點」的建議順序。規則見 [docs/NEWS_ROUTINE.md](../docs/NEWS_ROUTINE.md)，測試在 `tests/test_news_select.py`；不影響 monitor 與 engine 的 tag |
 
 ## 版本核對
 

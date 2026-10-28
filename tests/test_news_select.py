@@ -124,4 +124,104 @@ def test_cli_brief_and_out(data, tmp_path):
     text = p.stdout.decode("utf-8")
     assert "【必寫事項】" in text and "【NVDA】" in text and "big_move" in text
     full = json.loads(out_file.read_text(encoding="utf-8"))
-    assert set(full) == {"window", "inputs", "missing", "counts", "candidates", "must_cover", "closure_hints"}
+    assert set(full) == {"window", "inputs", "missing", "focus", "counts", "filtered", "candidates", "must_cover",
+                         "agenda", "highlight_slots", "closure_hints"}
+    assert full["focus"]["loaded"] is False and "未取得" in text  # 沒給 --compact：不加權
+
+
+def compact_files(tmp_path):
+    us = {"market": "us", "data_date": "2026-10-22", "positions": {"GOOGL": {"shares": 0.18}},
+          "tickers": [{"code": "GOOGL", "role": "buy", "level": "z3"}, {"code": "NVDA", "role": "buy", "level": "z1"},
+                      {"code": "VOO", "role": "buy", "level": "wait"}, {"code": "IAUM", "role": "gauge", "level": "gauge"}]}
+    tw = {"market": "tw", "data_date": "2026-10-22",
+          "tickers": [{"code": "009816", "role": "buy", "level": "z1", "held": True},
+                      {"code": "00411A", "role": "buy", "level": "wait", "held": False}]}
+    paths = []
+    for name, c in (("us_compact.json", us), ("tw_compact.json", tw)):
+        (tmp_path / name).write_text(json.dumps(c), encoding="utf-8")
+        paths.append(tmp_path / name)
+    return paths
+
+
+def test_focus_weights_from_compact(data, tmp_path):
+    out = ns.select(data, NOW, compact=compact_files(tmp_path))
+    f = out["focus"]
+    assert f["held"] == ["009816", "GOOGL"] and f["zones"] == {"009816": "z1", "GOOGL": "z3", "NVDA": "z1"}
+    w = {t: c["weight"] for t, c in out["counts"].items()}
+    assert (w["GOOGL"], w["009816"], w["NVDA"], w["總經"], w["TSLA"], w["VOO"]) == (4, 4, 2, 1, 0, 0)
+
+
+def test_agenda_and_earnings_timing(data, tmp_path):
+    cal = json.loads((data / "calendar.json").read_text(encoding="utf-8"))
+    cal["earnings"]["symbols"]["GOOGL"]["dates"] = ["2026-10-23"]   # 今晚美股盤後才公布
+    cal["earnings"]["symbols"]["AAPL"] = {"dates": ["2026-10-30"], "is_estimate": False}
+    cal["fomc"] = [{"start": "2026-10-22", "end": "2026-10-23"}]
+    (data / "calendar.json").write_text(json.dumps(cal), encoding="utf-8")
+    out = ns.select(data, NOW, compact=compact_files(tmp_path))
+    ag = {a["symbol"]: a for a in out["agenda"]}
+    assert set(ag) == {"GOOGL", "FOMC"}                              # AAPL 10/30 不在今晚／明早
+    assert ag["GOOGL"]["when_taipei"] == "2026-10-24 04:00" and ag["FOMC"]["when_taipei"] == "2026-10-24 02:00"
+    assert ag["GOOGL"]["weight"] == 4 and "持有" in ag["GOOGL"]["focus"]
+    kinds = [(m["type"], m["target"]) for m in out["must_cover"]]
+    assert ("earnings", "GOOGL") not in kinds and ("earnings", "TSLA") in kinds  # 還沒公布的不是必寫
+
+
+def test_noise_and_tier4_filtered(data):
+    h = json.loads((data / "headlines.json").read_text(encoding="utf-8"))
+    h["items"] += [
+        item(20, "2026-10-22 22:00", "Apple introduces the new 14-inch MacBook Pro with M6", tier=1, source="Apple",
+             symbols=["AAPL"]),
+        item(21, "2026-10-22 22:10", "Apple faces EU antitrust fine over App Store", symbols=["AAPL"]),
+        item(22, "2026-10-22 22:20", "Louisiana residents sue to unwind SpaceX tax deal", source="AP News",
+             symbols=["SPCX"]),
+        item(23, "2026-10-22 22:30", "Oracle expands chip supply deal with Nvidia", symbols=["NVDA"])]
+    (data / "headlines.json").write_text(json.dumps(h), encoding="utf-8")
+    out = ns.select(data, NOW)
+    ids = {t: [c["id"] for c in lst] for t, lst in out["candidates"].items()}
+    assert ids["AAPL"] == ["id21"] and "id22" not in ids["SPCX"] and "id23" in ids["NVDA"]
+    assert "id5" not in ids["SPCX"]                                   # Tier 4 部落格：SPCX 已有 Tier 2 消息
+    assert out["filtered"]["AAPL"]["noise"] == 1 and out["filtered"]["SPCX"] == {"noise": 1, "tier4": 1}
+    assert all("noise" not in c for lst in out["candidates"].values() for c in lst)
+
+
+def test_time_suspect_skipped(data):
+    h = json.loads((data / "headlines.json").read_text(encoding="utf-8"))
+    flagged = item(30, "2026-10-22 18:00", "台股收盤下跌529點", source="經濟日報", symbols=["2330"])
+    flagged["time_suspect"] = True
+    batch = [item(40 + i, "2026-10-22 17:00", f"經濟日報舊文 {i} 台積電", source="經濟日報", symbols=["2330"])
+             for i in range(5)]
+    h["items"] += [flagged] + batch
+    (data / "headlines.json").write_text(json.dumps(h), encoding="utf-8")
+    out = ns.select(data, NOW)
+    got = {c["id"] for c in out["candidates"]["009816"]}
+    assert "id30" not in got and not got & {f"id{40 + i}" for i in range(5)}  # 第一層沒做時間檢查：同來源批次也略過
+    assert out["inputs"]["time_suspect_skipped"] == 6
+    h["stats"] = {"time_check": {"detected": 0}}                    # 第一層做過檢查：只看 time_suspect
+    (data / "headlines.json").write_text(json.dumps(h), encoding="utf-8")
+    out = ns.select(data, NOW)
+    assert out["inputs"]["time_suspect_skipped"] == 1
+
+
+def test_highlight_slots_order(data, tmp_path):
+    cal = json.loads((data / "calendar.json").read_text(encoding="utf-8"))
+    cal["earnings"]["symbols"]["GOOGL"]["dates"] = ["2026-10-23"]
+    cal["fomc"] = [{"start": "2026-10-22", "end": "2026-10-23"}]
+    (data / "calendar.json").write_text(json.dumps(cal), encoding="utf-8")
+    slots = ns.select(data, NOW, compact=compact_files(tmp_path))["highlight_slots"]
+    order = [(s["priority"], s["kind"], s.get("id") or s["type"]) for s in slots]
+    assert order[0] == (1, "agenda", "earnings")                      # 持有＋深度買區的 GOOGL 財報在最前面
+    assert (2, "agenda", "fomc") in order
+    assert order.index((2, "agenda", "fomc")) < order.index((3, "must_cover", "big_move"))  # FOMC 在總經大幅變動之前
+    tsmc = [s for s in slots if s.get("id") == "id3"]
+    assert len(tsmc) == 1 and set(tsmc[0]["targets"]) == {"009816", "00981A"}  # 同一件事只出現一次
+    assert all(s["recompute"] for s in slots)
+
+
+def test_cli_with_compact(data, tmp_path):
+    us, tw = compact_files(tmp_path)
+    p = subprocess.run([sys.executable, str(ENGINE / "news_select.py"), "--data", str(data),
+                        "--now", "2026-10-23T08:40+08:00", "--compact", str(us), "--compact", str(tw), "--brief"],
+                       capture_output=True)
+    assert p.returncode == 0, p.stderr.decode("utf-8", "replace")
+    text = p.stdout.decode("utf-8")
+    assert "【持有與買區】" in text and "GOOGL 深度買區" in text and "【重點順序建議】" in text
