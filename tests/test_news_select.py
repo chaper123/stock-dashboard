@@ -210,8 +210,11 @@ def test_highlight_slots_order(data, tmp_path):
     slots = ns.select(data, NOW, compact=compact_files(tmp_path))["highlight_slots"]
     order = [(s["priority"], s["kind"], s.get("id") or s["type"]) for s in slots]
     assert order[0] == (1, "agenda", "earnings")                      # 持有＋深度買區的 GOOGL 財報在最前面
-    assert (2, "agenda", "fomc") in order
-    assert order.index((2, "agenda", "fomc")) < order.index((3, "must_cover", "big_move"))  # FOMC 在總經大幅變動之前
+    fomc = next(s for s in slots if s["type"] == "fomc")
+    assert fomc["priority"] == 1 and fomc["weight"] == 3              # 有持有或買區時，今晚的 FOMC 影響所有部位
+    nvda = [i for i, s in enumerate(slots) if s["kind"] == "news" and s["weight"] == 2]
+    assert all(slots.index(fomc) < i for i in nvda)                   # 排在只有買區（NVDA）的消息之前
+    assert slots.index(fomc) < order.index((3, "must_cover", "big_move"))  # 也在總經大幅變動之前
     tsmc = [s for s in slots if s.get("id") == "id3"]
     assert len(tsmc) == 1 and set(tsmc[0]["targets"]) == {"009816", "00981A"}  # 同一件事只出現一次
     assert all(s["recompute"] for s in slots)

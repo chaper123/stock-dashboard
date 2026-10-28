@@ -198,9 +198,11 @@ def agenda(cal, now, focus, top411):
 
     def add(kind, symbol, when, targets, note):
         if now < when <= horizon:
+            # FOMC、CPI 影響所有部位：有持有或買區時權重 3（排在持有＋買區之後、只有一項的之前）
+            w = 3 if targets == ["總經"] and (focus["held"] or focus["zones"]) else weight(targets, focus)
             out.append({"type": kind, "symbol": symbol, "when_taipei": when.strftime("%Y-%m-%d %H:%M"),
-                        "targets": targets, "weight": weight(targets, focus), "focus": focus_note(targets, focus),
-                        "note": note})
+                        "targets": targets, "weight": w, "focus": focus_note(targets, focus) or
+                        ("影響所有持有與買區標的" if w == 3 else ""), "note": note})
     for s, e in ((cal.get("earnings") or {}).get("symbols") or {}).items():
         for d in e.get("dates") or []:
             when = dt.datetime.combine(dt.date.fromisoformat(d), dt.time(16, 0), NY).astimezone(TPE)
@@ -221,8 +223,9 @@ def agenda(cal, now, focus, top411):
 
 
 def highlight_slots(must, agenda_items, candidates, focus, n=8):
-    """「今日重點」的建議順序：先是持有或買區標的（排程事件、必寫事項、Tier 1～2 消息），
-    其次是總經的排程事件（FOMC、CPI、Fed），最後是其他必寫事項（總經大幅變動等）。模型照順序挑最多 3 條。"""
+    """「今日重點」的建議順序：先是持有或買區標的（排程事件、必寫事項、Tier 1～2 消息；今晚的 FOMC、CPI
+    算影響所有部位，排在持有＋買區之後），其次是 Fed 新聞稿，最後是其他必寫事項（總經大幅變動等）。
+    模型照順序挑最多 3 條。"""
     slots = []
     for a in agenda_items:
         p = 1 if a["weight"] >= 2 else 2
