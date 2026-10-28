@@ -3,7 +3,7 @@
 // - CDN 函式庫（網址有固定版本）：先用快取
 // - 資料（market-data、Google Sheet）：先連網（8 秒逾時），成功就存一份並記下時間；失敗時回快取，
 //   加上 x-sw-offline 標頭，頁面據此顯示「顯示上次成功讀取的資料」
-const VERSION = "2026-10-27";
+const VERSION = "2026-10-28";
 const SHELL = `shell-${VERSION}`;
 const LIBS = "libs-v1";
 const DATA = "data-v1";
@@ -11,8 +11,8 @@ const NET_TIMEOUT_MS = 8000;
 
 const SHELL_FILES = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
-  "js/app.js", "js/config.js", "js/csv.js", "js/data.js", "js/fmt.js", "js/portfolio.js", "js/ui.js",
-  "js/pages/overview.js", "js/pages/plan.js", "js/pages/holdings.js", "js/pages/reports.js",
+  "js/app.js", "js/config.js", "js/csv.js", "js/data.js", "js/fmt.js", "js/news.js", "js/portfolio.js", "js/ui.js",
+  "js/pages/overview.js", "js/pages/plan.js", "js/pages/holdings.js", "js/pages/news.js", "js/pages/reports.js",
   "js/pages/charts.js", "js/pages/chain.js",
   "icons/icon.svg", "icons/icon-192.png",
 ];

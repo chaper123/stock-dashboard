@@ -1,8 +1,9 @@
 // 決策鏈（PLAN D5）：偵察 → 新聞 → 情緒 → 圖表 → 風控 → 最終計畫，每站一張卡、點開看依據。
 // 風控與最終計畫由 Phase 3 配置器（allocator）負責，上線前先留位置。新聞內容一律以純文字放進頁面。
-import { loadArchive, latestRun, loadNews, loadFearGreed, loadVix } from "../data.js";
+import { loadArchive, latestRun } from "../data.js";
+import { loadNewsView, sentimentParts } from "../news.js";
 import {
-  el, twd, price, pct, taipeiTime, shortDate, taipeiToday, badge, distText, extLink, LEVELS, isNum,
+  el, twd, price, pct, taipeiTime, shortDate, taipeiToday, badge, distText, LEVELS, isNum,
 } from "../fmt.js";
 import { slot, pageHeader, notice } from "../ui.js";
 import { MARKET_LABEL } from "../config.js";
@@ -67,92 +68,40 @@ async function scout(runsP) {
   };
 }
 
-const FLAG_ZH = { none: "none", block: "block（暫停）", boost: "boost（加碼候選）" };
-
+// 新聞站：今天的重點與旗標（明細在新聞頁）
 async function news(runsP) {
-  const [nR, rR] = await Promise.allSettled([loadNews(), runsP]);
-  const out = [];
-  // 晨報最後採用的事件旗標（engine 的 event）
-  if (rR.status === "fulfilled") {
-    const flags = ["tw", "us"].flatMap((m) => buyTickers(rR.value[m]).filter((t) => t.event && t.event !== "none").map((t) => `${t.code} ${t.event}`));
-    out.push(el("div", { class: "small" }, `晨報採用的事件旗標：${flags.length ? flags.join("、") : "全部 none"}`));
-  }
-  if (nR.status === "rejected") {
-    return { concl: [...out, notice("err", `讀不到新聞分頁：${nR.reason.message}`)], body: null };
-  }
-  const { dataDate, generatedAt, rows } = nR.value;
-  if (!rows.length) return { concl: [...out, el("div", { class: "muted" }, "新聞分頁還沒有資料。")], body: null };
-  const events = groupEvents(rows.filter((r) => !["摘要", "情緒", "社群"].includes(r.category)));
-  const flagged = events.filter((e) => e.flag !== "none");
-  const tier1 = events.filter((e) => e.tier === 1);
-  const stale = dataDate !== taipeiToday();
-  const summary = rows.find((r) => r.category === "摘要");
-  const concl = [
-    el("div", { class: "row" },
-      el("span", {}, `${events.length} 件事件；建議旗標 ${flagged.length ? flagged.map((e) => `${e.symbols.join("、")} ${FLAG_ZH[e.flag] || e.flag}`).join("；") : "全部 none"}；官方（Tier 1）${tier1.length} 件。`),
-      stale && el("span", { class: "badge b-warn" }, `⚠ 資料日 ${shortDate(dataDate)}`)),
-    ...out,
-    el("div", { class: "tiny" }, `新聞晨報 ${taipeiTime(generatedAt)}（目前讀測試分頁；建議旗標只是建議，晨報依自己的規則決定）`),
-  ];
-  const body = el("div", {},
-    summary && el("p", { class: "small muted" }, summary.fact),
-    events.map(newsEvent));
-  return { concl, body };
-}
-
-// 同一事件影響幾個標的就有幾列：合併成一件
-function groupEvents(rows) {
-  const map = new Map();
-  for (const r of rows) {
-    const key = r.eventId || `${r.symbol}-${r.fact}`;
-    if (!map.has(key)) map.set(key, { ...r, symbols: [], flags: new Set() });
-    const e = map.get(key);
-    e.symbols.push(r.symbol);
-    e.flags.add(r.flag);
-  }
-  return [...map.values()].map((e) => ({ ...e, flag: [...e.flags].find((f) => f !== "none") || "none" }))
-    .sort((a, b) => (a.tier ?? 9) - (b.tier ?? 9));
-}
-
-function newsEvent(e) {
-  return el("div", { class: "news-ev" },
-    el("div", { class: "meta" },
-      [e.symbols.join("、"), e.category, e.eventTime, e.source, e.tier ? `Tier ${e.tier}` : null, e.verify].filter(Boolean).join("・")),
-    el("div", {}, e.fact),
-    el("div", { class: "meta" },
-      `影響 ${e.impact || "—"}・旗標 ${FLAG_ZH[e.flag] || e.flag}`, e.reason ? `・${e.reason}` : "",
-      e.url ? ["・", extLink(e.url, "原文")] : null));
-}
-
-const FG_ZH = { "extreme fear": "極度恐懼", fear: "恐懼", neutral: "中性", greed: "貪婪", "extreme greed": "極度貪婪" };
-
-async function sentiment() {
-  const [fg, vix, nR] = await Promise.allSettled([loadFearGreed(), loadVix(), loadNews()]);
-  const bits = [];
-  if (fg.status === "fulfilled") bits.push(`恐懼貪婪 ${isNum(fg.value.score) ? fg.value.score.toFixed(0) : "—"}（${FG_ZH[fg.value.rating] || fg.value.rating}）`);
-  else bits.push("恐懼貪婪讀不到");
-  if (vix.status === "fulfilled") {
-    const last = vix.value.at(-1);
-    bits.push(`台指 VIX ${last.value.toFixed(2)}（${shortDate(last.date)}）`);
-  } else bits.push("台指 VIX 讀不到");
-  const social = nR.status === "fulfilled" ? nR.value.rows.filter((r) => ["情緒", "社群"].includes(r.category)) : [];
-  const crowd = social.filter((r) => r.source.includes("同學風向"));
-  if (crowd.length) bits.push(`同學風向 ${crowd.map((r) => `${r.symbol} ${crowdShort(r.fact)}`).join("、")}`);
-  const body = social.length
-    ? el("div", {}, social.map((r) => el("div", { class: "news-ev" },
-      el("div", { class: "meta" }, [r.symbol, r.category, r.source, r.eventTime].filter(Boolean).join("・")),
-      el("div", {}, r.fact),
-      r.url && el("div", { class: "meta" }, extLink(r.url, "來源")))))
-    : nR.status === "rejected" ? notice("err", `讀不到新聞分頁：${nR.reason.message}`) : null;
+  const [vR, rR] = await Promise.allSettled([loadNewsView(), runsP]);
+  const adopted = rR.status === "fulfilled"
+    ? ["tw", "us"].flatMap((m) => buyTickers(rR.value[m]).filter((t) => t.event && t.event !== "none").map((t) => `${t.code} ${t.event}`))
+    : null;
+  const adoptedLine = adopted && el("div", { class: "small muted" }, `晨報採用的事件旗標：${adopted.length ? adopted.join("、") : "全部 none"}`);
+  if (vR.status === "rejected") return { concl: [notice("err", `讀不到新聞分頁：${vR.reason.message}`), adoptedLine], body: null };
+  const v = vR.value;
+  if (!v.rows.length) return { concl: [el("div", { class: "muted" }, "新聞分頁還沒有資料。"), adoptedLine], body: null };
+  const stale = v.dataDate !== taipeiToday();
   return {
-    concl: [el("div", {}, `${bits.join("・")}。`), el("div", { class: "tiny" }, "情緒只當參考層，不能單獨改變買區判定。")],
-    body,
+    concl: [
+      el("ol", { class: "chain-hl" }, v.highlights.items.map((h) => el("li", {},
+        el("strong", {}, h.codes.join("、")), "　", h.text))),
+      el("div", { class: "small" }, v.flagged.length
+        ? `⚠ 建議旗標：${v.flagged.map((e) => `${e.codes.join("、")} ${e.flag}`).join("；")}`
+        : "✓ 旗標全部正常"),
+      adoptedLine,
+      el("div", { class: "row small" }, el("a", { href: "#/news" }, `看新聞明細（${v.events.length} 件）→`),
+        stale && el("span", { class: "badge b-warn" }, `⚠ 資料日 ${shortDate(v.dataDate)}`),
+        el("span", { class: "tiny" }, `新聞晨報 ${taipeiTime(v.generatedAt)}`)),
+    ],
+    body: null,
   };
 }
-// 「同學風向 46 分「中立」（更新 10/27 07:00）」→「46 中立」；樣本不足照原文
-function crowdShort(fact) {
-  const m = /(\d+)\s*分「(.+?)」/.exec(fact || "");
-  return m ? `${m[1]} ${m[2]}` : (fact || "").replace(/（.*?）/g, "");
+
+async function sentiment() {
+  const v = await loadNewsView().catch(() => null);
+  const parts = await sentimentParts(v ? v.crowdRows : null);
+  return {
+    concl: [el("div", {}, `${parts.join("・")}。`), el("div", { class: "tiny" }, "情緒只當參考層，不能單獨改變買區判定。")],
+    body: null,
+  };
 }
 
 async function chart(runsP) {
