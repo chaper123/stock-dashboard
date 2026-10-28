@@ -350,3 +350,8 @@ table.nowrap td { white-space: nowrap; }
 details.card.more > summary { padding: 0; }
 .chain-hl { margin: 0 0 6px; padding-left: 20px; }
 .chain-hl li { margin: 4px 0; }
+
+/* K 線副圖（RSI、KDJ）打開時加高 */
+.chart-box.with-ind { height: 600px; }
+@media (min-width: 700px) { .chart-box.with-ind { height: 760px; } }
+.ind-read { display: block; color: var(--ink-2); }
