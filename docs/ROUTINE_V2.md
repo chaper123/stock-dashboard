@@ -256,10 +256,10 @@ repo 還沒有、v2 先這樣處理（之後可在 market-data 補，另開任�
 
 使用者決定：兩個晨報改讀新聞分頁（v2.1）和新聞正式版同一批切換；不貼提示詞給使用者，改用 API。正式晨報是介面建立的，用 API 改提示詞會被拒（第 8 節第 5 步），所以兩個晨報改成**用 API 新建 v2.1 排程**，測試後啟用新的、停用舊的；新聞晨報是 API 建立的，直接改。
 
-- 準備好的檔案（`private/routines/`，不進 git）：`us_morning_report.v2.1.prompt.md`（13,923 字）、`tw_etf_morning_report.v2.1.prompt.md`（15,363 字）、`news_morning.v2.prompt.md`（9,681 字），三份一次性測試版 `*.v2.1test.prompt.md`、`news_morning.v2test.prompt.md`；`switch_v21/` 底下每一步的 RemoteTrigger body、`STEPS.md`（步驟、驗證、退回）、`manifest.json`（每份提示詞的字數與 SHA-256 前 12 碼）、`tools/`（產生腳本）。
+- 準備好的檔案（`private/routines/`，不進 git）：`us_morning_report.v2.1.prompt.md`（13,923 字）、`tw_etf_morning_report.v2.1.prompt.md`（15,363 字）、`news_morning.v2.prompt.md`（10,104 字，10/28 加上「口袋恐懼貪婪」列），三份一次性測試版 `*.v2.1test.prompt.md`、`news_morning.v2test.prompt.md`；`switch_v21/` 底下每一步的 RemoteTrigger body、`STEPS.md`（步驟、驗證、退回）、`manifest.json`（每份提示詞的字數與 SHA-256 前 12 碼）、`tools/`（產生腳本）。
 - v2.1 的改動：消息面改讀「新聞」分頁（只讀當天產生時間最新的那組列；重點列可引用；建議旗標照自己的 block／boost 定義採用或推翻並寫理由；Tier 4 或僅標題不能單獨改旗標）；拿掉各自的新聞搜尋、Truth Social、X、CMoney；恐懼貪婪、台指 VIX 讀新聞分頁（沒有才讀 repo）；新聞分頁沒有今天的資料就退回兩次精簡搜尋並註明。累積的小修改：配置計畫從 rows.json 一次寫入、最後一根單一來源時資料備註寫 last_bar_votes。台股另外：盤中價改以 repo `intraday.json`（MIS，10/28 起有買賣中間價備援）為主、鉅亨網與 nav_raw 為備援（**這項原列待決定，切換時一併請使用者核准**）；保留今日台股盤中反應；Gmail 只做帳本核對，配額錯誤時後段重試。
 - 環境：新晨報照抄正式排程的 session_context（Opus 5.5、35 個工具、Cowork 系統提示詞 84,970 字與 append 5,011 字在 `job_config.ccr.session_context` 裡，API 新建時照帶）、11 個連接器、權限模式 auto、tags；正式版完成通知照舊（email、push 開）。新聞晨報沿用它現在的環境（沒有 Cowork 系統提示詞），正式版完成通知關（推播只在條件成立時由 PushNotification 送）。
-- 測試日（交易日 10:30 以後）：① 新聞測試版 update＋run（寫測試_新聞）→ ② 新建美股 v2.1（停用、測試版提示詞）＋run → ③ 新建台股 v2.1＋run（兩個都讀測試_新聞、只寫測試_ 分頁、帳本只讀）。三個測試都一定送 SendUserMessage 與 PushNotification，**請使用者確認手機有收到三則推播**（確認 API 建立的排程推得到手機）。驗證：寫入列、回放與當天正式晨報相同（event 旗標不同要有理由）、新晨報讀回 enabled=false。
+- 測試日（交易日 10:30 以後）：① 新聞測試版 update＋run（寫測試_新聞）→ ② 新建美股 v2.1（停用、測試版提示詞）＋run → ③ 新建台股 v2.1＋run（兩個都讀測試_新聞、只寫測試_ 分頁、帳本只讀）。三個測試都一定送 SendUserMessage 與 PushNotification，**請使用者確認手機有收到三則推播**（確認 API 建立的排程推得到手機）。驗證：「測試_新聞」有一列「口袋恐懼貪婪」（字樣照 NEWS_ROUTINE 第 5.1 節，或「未取得（原因）」），而且網站情緒區的口袋儀表能顯示它（Phase 4 用測試_新聞的資料確認解析）；寫入列、回放與當天正式晨報相同（event 旗標不同要有理由）、新晨報讀回 enabled=false。
 - 切換（測試通過、使用者同意後，同一天 10:30 以後到隔天 08:40 前一次做完）：新聞改正式版（平日 08:40、啟用）→ 停用舊美股、舊台股（API 被拒就請使用者在 claude.ai 關掉）→ 啟用新美股、新台股 → list 讀回。先停舊的再開新的，**新舊晨報不會同一天都跑**。
 - 第一天：08:40 新聞 → 09:20 美股 v2.1 → 10:17 台股 v2.1；比對新聞分頁的重點列、晨報資料備註的新聞分頁列數、回放，並確認舊排程沒有新的執行。
 - 退回：新晨報有問題就停用新的、重新啟用舊的；新聞正式版有問題時晨報會自動退回精簡搜尋，必要時停用新聞。
