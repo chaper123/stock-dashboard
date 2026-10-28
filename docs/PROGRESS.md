@@ -56,6 +56,10 @@
 - 備註：Actions 提示 `ubuntu-latest` 自 2026-10-19 起改用 Ubuntu 26，之後第一次排程留意是否正常。
 - [x] 10/19（週一）第一次正式排程：07:04 完整抓取（194 秒）、43 項 ok、無錯誤，美股十檔 last 10/16（MoneyDJ 多數決）；runner 仍是 ubuntu-24.04。09:20 美股晨報十檔都用 repo 日線，沒有再用到過期資料
 - 10/20 裁判流程第一次在正式環境觸發：08:17、09:11 美股 10/19 只有 MoneyDJ 一票、Nasdaq 無資料 → 先不收；10:13 MoneyDJ 與 Yahoo 一致後收錄（和 v2 測試用 MoneyDJ 補的值逐字相同）。見「下一步」3
+- [x] 長週期資料（回測用，2026-10-28，market-data 026043d、1e569a1，bot 發布 bf19289；使用者同意「先回測」）：`longterm.py` → `data/longterm/`，只手動觸發 `longterm.yml`（沒加進排程、cron-job.org 也沒設），meta 只更新 `longterm/*`（fetch.yml 推送時排除並保留）。說明與探測紀錄在 market-data README「長週期資料」
+  - 國發會景氣對策信號 `tw_business_cycle.csv`（month,score,light,release_est,release_actual,score_first，無表頭）：1984-01～2026-08 共 512 個月，最新 2026-08 41 分紅燈（9/29 發布），9 月資料估計 10/30 前發布。來源 data.gov.tw 資料集 6099 zip（政府資料開放授權條款第 1 版，需標示國發會）；國發會查詢系統 JSON 本機核對 512 個月完全一致，但對 GitHub 機房回 403，Actions 上只用 zip。歷史實際發布日查不到：`release_est`＝次月 30 日、遇週末順延（2025-10～2026-09 實際都在 27～30 日，偏保守）。數值是回溯修正後的值，新聞初值對照常差 ±1 分（2025-09 35→34、2026-02 40→41、2026-04 39→40）；從 2026-08 起記錄初值 `score_first`，要每月跑一次才記得到
+  - 巴菲特指標 `buffett_indicator.csv`（quarter,equities_bn,gdp_bn,ratio_pct,trend_pct,dev_sigma,dev_sigma_expanding,release,release_basis，無表頭）：FRED NCBEILQ027S（Fed Z.1 非金融企業股權市值）÷ GDP，1951Q4～2026Q2 共 299 季，最新 255.05%、對數線性趨勢 147.5%、偏離 +1.67σ（只用當時以前資料的擴張視窗也是 +1.67σ）。季資料，Z.1 約季末後 10 週（1996Q2 起 121 季用實際發布日，中位數 71 天；更早用季末＋90 天估計），下一期約 2026 年 12 月。FRED 標 public domain，需註明 Fed／BEA 與 FRED 出處；也是最新修正值（初值要用 ALFRED，需金鑰）。全期間趨勢用到未來資料，回測請用 `dev_sigma_expanding`
+  - 測試 67 項通過；Actions [run 40677300329](https://github.com/chaper123/market-data/actions/runs/40677300329) 成功、meta 48 項全 ok。**待使用者決定**：要不要加進定期抓取（景氣燈號每月跑一次才能持續記初值）
 
 ### 探測結果（GitHub Actions，2026-10-16 02:19 台北）
 | 資料 | 來源 | 結果 | 備註 |
