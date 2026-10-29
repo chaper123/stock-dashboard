@@ -43,5 +43,7 @@ export const NAMES = {
 
 // K 線頁與盤中區塊追蹤的標的（2026-10-30 轉型：00411A 移出；美股 VOO、GOOGL 持有，其餘只追蹤）
 export const TRACK = { tw: ["009816", "00981A"], us: ["VOO", "GOOGL", "NVDA", "TSLA", "SPCX", "AAPL"] };
+// 已移出追蹤的代號（新聞資料裡還可能出現，網站的篩選清單不列）
+export const DROPPED = new Set(["00411A"]);
 
 export const MARKET_LABEL = { us: "美股", tw: "台股" };

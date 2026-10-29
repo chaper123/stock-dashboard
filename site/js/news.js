@@ -1,28 +1,28 @@
-// 新聞整理：把新聞分頁（一件事件影響幾個標的就有幾列）合併成事件、依重要性排序、挑出「今天的重點」。
-// 新聞頁與決策鏈共用。內容一律以純文字放進頁面（呼叫端用 el()），網址只接受 http/https。
-import { loadNews, loadArchive, latestRun, loadHoldings, loadFearGreed, loadVix } from "./data.js";
-import { LEVELS, isNum, shortDate } from "./fmt.js";
+// 新聞整理：把新聞分頁（一件事件影響幾個標的就有幾列）合併成事件、依重要性排序、分區、挑出「今天的重點」。
+// 新聞頁與總覽共用。內容一律以純文字放進頁面（呼叫端用 el()），網址只接受 http/https。
+// 2026-10-30 轉型：不再看晨報買區，「相關」只看帳本持有的代號。
+import { loadNews, loadHoldings, loadFearGreed, loadVix } from "./data.js";
+import { isNum, shortDate } from "./fmt.js";
 
 export const TIER_LABEL = { 1: "官方", 2: "主要媒體", 3: "第一手發言", 4: "其他" };
 const NOT_CODES = new Set(["總經", "市場", "全部", ""]);
-const CROWD = ["2330", "009816", "00981A", "00411A"];
-const HIDE_IN_CARDS = new Set(["摘要", "重點", "情緒"]);
+const CROWD = ["2330", "009816", "00981A"];
+// 不當成事件卡的列：摘要、重點、今日一句另外顯示；情緒列放在情緒區
+const HIDE_IN_CARDS = new Set(["摘要", "重點", "今日一句", "情緒"]);
+
+// 新聞頁的分區（PIVOT 第 4 節），依序；事件影響持有的代號就放「持股相關」，其他依類別欄
+export const SECTIONS = ["持股相關", "產業與供應鏈", "總經與政策", "地緣", "市場話題"];
+const SECTION_OF_CATEGORY = { 公司: "產業與供應鏈", 產業: "產業與供應鏈", 總經: "總經與政策", 政策: "總經與政策",
+  地緣: "地緣", 話題: "市場話題", 社群: "市場話題" };
+export const sectionOf = (e) => (e.relevant.length ? "持股相關" : SECTION_OF_CATEGORY[e.category] || "產業與供應鏈");
 
 const splitCodes = (s) => (s || "").split(/[,、，\s]+/).map((x) => x.trim()).filter(Boolean);
 
-// 持有（帳本持倉）與在買區（最新晨報）的代號；讀不到就當成空的
+// 持有的代號（帳本持倉）；讀不到就當成空的
 async function loadContext() {
-  const [h, a] = await Promise.allSettled([loadHoldings(), loadArchive()]);
-  const held = new Set(h.status === "fulfilled" ? h.value.map((x) => x.code) : []);
-  const zone = new Map();
-  if (a.status === "fulfilled") {
-    for (const m of ["tw", "us"]) {
-      const run = latestRun(a.value, m);
-      for (const t of run?.json.tickers || []) if (LEVELS[t.level]?.inZone && t.role === "buy") zone.set(t.code, t);
-    }
-  }
-  const missing = [h.status === "rejected" && "帳本持倉", a.status === "rejected" && "晨報存檔"].filter(Boolean);
-  return { held, zone, missing };
+  const h = await loadHoldings().then((v) => ({ v }), (e) => ({ e }));
+  const held = new Set(h.v ? h.v.map((x) => x.code) : []);
+  return { held, missing: h.e ? ["帳本持倉"] : [] };
 }
 
 function groupEvents(rows, ctx) {
@@ -40,7 +40,7 @@ function groupEvents(rows, ctx) {
     const flag = [...e.flags].find((f) => f !== "none") || "none";
     const tier = e.tiers.length ? Math.min(...e.tiers) : null;
     const codes = e.symbols.filter((c) => !NOT_CODES.has(c));
-    const relevant = codes.filter((c) => ctx.held.has(c) || ctx.zone.has(c));
+    const relevant = codes.filter((c) => ctx.held.has(c));
     const related = [...e.related].filter((c) => !e.symbols.includes(c));
     const ev = { ...e, flag, tier, codes, relevant, related, mustWrite: /必寫/.test(e.reason || "") };
     ev.score = score(ev);
@@ -48,7 +48,7 @@ function groupEvents(rows, ctx) {
   }).sort((a, b) => b.score - a.score || (b.eventTime || "").localeCompare(a.eventTime || ""));
 }
 
-// 重要性：非 none 旗標 ＞ 影響持有或在買區 ＞ 必寫事項 ＞ 等級 ＞ 查證狀態
+// 重要性：非 none 旗標 ＞ 影響持有 ＞ 必寫事項 ＞ 等級 ＞ 查證狀態
 function score(e) {
   let s = 0;
   if (e.flag !== "none") s += 1000;
@@ -73,8 +73,7 @@ export function firstSentence(text, max = 70) {
 function whyPicked(e, ctx) {
   const bits = [];
   if (e.flag !== "none") bits.push(`旗標 ${e.flag}`);
-  if (e.relevant.some((c) => ctx.held.has(c))) bits.push("持有");
-  if (e.relevant.some((c) => ctx.zone.has(c))) bits.push("在買區");
+  if (e.relevant.length) bits.push("持有");
   if (e.mustWrite) bits.push("必寫事項");
   if (e.tier) bits.push(`Tier ${e.tier} ${TIER_LABEL[e.tier] || ""}`.trim());
   if (e.verify) bits.push(e.verify);
@@ -107,7 +106,7 @@ function pickHighlights(rows, events, ctx) {
     e.relevant.forEach((c) => covered.add(c));
   };
   b1.forEach(take);
-  // 留一格給必寫事項；持有／買區的先挑涵蓋不同代號的，剩下的格子最後再補
+  // 留一格給必寫事項；持有的先挑涵蓋不同代號的，剩下的格子最後再補
   const reserve = b3.some((e) => !picked.includes(e)) ? 1 : 0;
   for (const e of b2) {
     if (picked.length >= 3 - reserve) break;
@@ -131,6 +130,7 @@ export async function loadNewsView() {
     summaryRow: rows.find((r) => r.category === "摘要"),
     crowdRows: rows.filter((r) => r.category === "情緒" && CROWD.includes(r.symbol)),
     pocket: pocketReading(rows),
+    todayLine: rows.find((r) => r.category === "今日一句")?.fact || null,
   };
 }
 

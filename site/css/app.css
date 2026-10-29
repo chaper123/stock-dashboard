@@ -334,16 +334,6 @@ table.nowrap td { white-space: nowrap; }
 .flag-alert { margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: .9rem;
   border: 1px solid color-mix(in srgb, var(--crit) 55%, transparent); background: color-mix(in srgb, var(--crit) 10%, var(--surface)); }
 .flag-alert > div { margin-top: 6px; }
-.ev { border: 1px solid var(--ring); border-radius: 10px; margin: 8px 0; background: var(--surface); }
-.ev.flagged { border-color: color-mix(in srgb, var(--crit) 60%, transparent); }
-.ev > summary { list-style: none; cursor: pointer; padding: 10px 30px 10px 12px; position: relative; }
-.ev > summary::-webkit-details-marker { display: none; }
-.ev > summary::after { content: "▸"; position: absolute; right: 12px; top: 10px; color: var(--muted); }
-.ev[open] > summary::after { content: "▾"; }
-.ev[open] > summary { border-bottom: 1px dashed var(--line); }
-.ev-title { margin-top: 6px; font-size: .95rem; }
-.ev-body { padding: 4px 12px 10px; font-size: .9rem; }
-.ev-body p { margin: 6px 0; }
 .tag.up { color: var(--up); } .tag.down { color: var(--down); }
 .linkish { background: none; border: 0; padding: 0; margin-top: 2px; color: var(--accent); cursor: pointer; font-size: .82rem; }
 .sent-line { font-size: .9rem; }
@@ -355,3 +345,17 @@ details.card.more > summary { padding: 0; }
 .chart-box.with-ind { height: 600px; }
 @media (min-width: 700px) { .chart-box.with-ind { height: 760px; } }
 .ind-read { display: block; color: var(--ink-2); }
+
+/* 新聞：一則一行（點開看明細） */
+.ev1 { border-top: 1px solid var(--line); }
+.ev1:first-of-type { border-top: 0; }
+.ev1 > summary { list-style: none; cursor: pointer; display: flex; gap: 6px; align-items: center; min-height: 44px; padding: 6px 0; }
+.ev1 > summary::-webkit-details-marker { display: none; }
+.ev1 .codes { flex: none; display: flex; gap: 4px; align-items: center; }
+.ev1 .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .92rem; }
+.ev1[open] .t { white-space: normal; }
+.ev1 .warn-mark { flex: none; color: var(--warn); }
+.ev1.minor .t { color: var(--ink-2); }
+.ev1.flagged > summary .t { font-weight: 600; }
+.ev1 .body { padding: 0 0 10px; font-size: .9rem; }
+.ev1 .body p { margin: 6px 0; }
