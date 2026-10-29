@@ -50,7 +50,7 @@ async function summaryCard() {
         inZone.map((t) => el("span", {}, `${t.code} `, badge(t.level, t.status)))));
   });
   return card("今天的一句話", el("div", { class: "stack" }, items),
-    el("p", { class: "small" }, el("a", { href: "#/plan" }, "看今日計畫 →"), "　", el("a", { href: "#/reports" }, "看報告全文 →")));
+    el("p", { class: "small" }, el("a", { href: "#/reports" }, "看報告全文 →")));
 }
 
 async function poolTile() {

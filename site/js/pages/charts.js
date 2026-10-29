@@ -1,19 +1,13 @@
-// K 線買點圖：日 K、均線（美股 MA50／MA200、台股 MA20／MA60）、最新三個買區色帶、交易紀錄的成交標記。
-// 一次顯示一檔，上方切換；Lightweight Charts 只在這頁才載入。
-import { loadArchive, latestRun, loadDaily, loadTrades, loadIntraday, DataError } from "../data.js";
-import { el, price, shares, shortDate, zoneText, badge, distText } from "../fmt.js";
+// K 線：日 K、均線（美股 MA50／MA200、台股 MA20／MA60）、交易紀錄的成交標記，RSI14／KDJ 副圖（預設收起）。
+// 一次顯示一檔，上方切換；Lightweight Charts 只在這頁才載入。2026-10-30 轉型後拿掉買區色帶（PIVOT 第 7 節）。
+import { loadDaily, loadTrades, loadIntraday, DataError } from "../data.js";
+import { el, price, shares } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
-import { MA, NAMES, MARKET_LABEL } from "../config.js";
+import { MA, NAMES, MARKET_LABEL, TRACK } from "../config.js";
 
 const LW_URL = "https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js";
 const LW_SRI = "sha384-KkYqTZlM13Zya6fVUF3IGCBOQ1ehFeJVVgxaVvD/0MebineF9EI8Jkd3NnWNChqN";
 const VISIBLE_BARS = 130; // 預設顯示約半年，均線用全部資料算
-
-// 讀不到晨報存檔時的備用清單（沒有買區）
-const FALLBACK = {
-  us: ["VOO", "GOOGL", "NVDA", "TSLA", "SPCX", "AAPL", "IAUM", "ARKK", "ARKQ", "ARKX"],
-  tw: ["009816", "00981A", "00411A"],
-};
 
 let lwPromise = null;
 function loadLW() {
@@ -35,25 +29,14 @@ function loadLW() {
 }
 
 export async function render(root, { arg, alive }) {
-  root.append(pageHeader("K 線買點圖", "日 K＋均線，色帶是最新一次晨報的買區，箭頭是交易紀錄的成交；下方副圖是 RSI14 與 KDJ。"));
+  root.append(pageHeader("K 線", "日 K＋均線，箭頭是交易紀錄的成交；RSI14／KDJ 副圖可以打開。"));
   slot(root, () => view(arg, alive));
 }
 
 async function view(arg, alive) {
-  let archive = null, archiveError = null;
-  try {
-    archive = await loadArchive();
-  } catch (e) {
-    archiveError = e;
-  }
-  const lists = {};
-  for (const m of ["tw", "us"]) {
-    const run = archive && latestRun(archive, m);
-    lists[m] = run ? run.json.tickers.map((t) => ({ ...t, market: m, run })) : FALLBACK[m].map((code) => ({ code, market: m }));
-  }
+  const lists = { tw: TRACK.tw.map((code) => ({ code, market: "tw" })), us: TRACK.us.map((code) => ({ code, market: "us" })) };
   const all = [...lists.tw, ...lists.us];
-  const pick = all.find((t) => t.code === arg)
-    || all.find((t) => ["z3", "z2", "z1", "starter"].includes(t.level) && t.role === "buy") || all[0];
+  const pick = all.find((t) => t.code === arg) || all[0];
 
   const chips = ["tw", "us"].map((m) => el("div", { class: "chip-row" },
     el("span", { class: "tiny" }, MARKET_LABEL[m]),
@@ -65,22 +48,15 @@ async function view(arg, alive) {
   const ohlc = el("div", { class: "ohlc" });
   const legend = el("div", { class: "chart-legend" });
   const table = el("div");
-  const head = el("div", { class: "spread" },
-    el("div", { class: "row" }, el("strong", { class: "tk-code" }, pick.code), el("span", { class: "tk-name" }, NAMES[pick.code] || ""),
-      pick.level && badge(pick.level, pick.status)),
-    pick.run && el("span", { class: "tiny" }, `買區：${MARKET_LABEL[pick.market]}晨報 ${shortDate(pick.run.dataDate)}`));
+  const head = el("div", { class: "row" }, el("strong", { class: "tk-code" }, pick.code), el("span", { class: "tk-name" }, NAMES[pick.code] || ""));
 
-  // 副圖開關（記在這個瀏覽器）
-  let showInd = store(IND_KEY) !== "off";
+  // 副圖開關（預設收起，記在這個瀏覽器）
+  let showInd = store(IND_KEY) === "on";
   const toggle = el("button", { class: "chip", type: "button", "aria-pressed": String(showInd) }, "RSI／KDJ 副圖");
   box.classList.toggle("with-ind", showInd);
   const note = el("p", { class: "tiny" },
-    "RSI14 和晨報引擎同一算法（日收盤，Wilder 平滑），虛線是規則用到的門檻（還要搭配乖離，只當標示）。",
-    "KDJ(9,3,3) 只是參考，不是買點規則的一部分；買點以晨報引擎為準。");
-  const section = card(null, head, el("div", { class: "row", style: { marginTop: "6px" } }, toggle), ohlc, box, legend,
-    pick.zones && el("div", { class: "small muted" }, `距第一買區上緣：${distText(pick.dist_to_z1_pct)}`),
-    note, table);
-  const warn = archiveError && notice("warn", `讀不到晨報存檔（${archiveError.message}），圖上沒有買區。`);
+    "RSI14（日收盤，Wilder 平滑）與 KDJ(9,3,3) 只是參考，不是配置紀律的一部分。");
+  const section = card(null, head, el("div", { class: "row", style: { marginTop: "6px" } }, toggle), ohlc, box, legend, note, table);
 
   // 資料與函式庫都到齊才畫；其中一項失敗就在圖的位置顯示原因
   const [LW, bars, tradesR, intraR] = await Promise.all([
@@ -115,7 +91,7 @@ async function view(arg, alive) {
       redraw();
     });
   }, 0);
-  return [warn, el("div", { class: "card" }, chips), section,
+  return [el("div", { class: "card" }, chips), section,
     tradesR.e && notice("warn", `讀不到交易紀錄（${tradesR.e.message}），圖上沒有成交標記。`)];
 }
 
@@ -170,11 +146,6 @@ export function kdj(bars, n = 9) {
   return out;
 }
 
-// 引擎的 RSI 門檻（engine 的 P，網站只標示、不改）：台股追價區 RSI>75、起始倉 RSI≤70；美股追價區 RSI>70
-const RSI_RULES = {
-  tw: [[75, "追價區 >75"], [70, "起始倉 ≤70"]],
-  us: [[70, "追價區 >70"]],
-};
 
 function sma(bars, n) {
   const out = [];
@@ -187,54 +158,9 @@ function sma(bars, n) {
   return out;
 }
 
-// 買區色帶：畫在 K 棒後面；自動縮放把買區也算進去，深度買區離現價遠也看得到
-class ZoneBands {
-  constructor(bands) {
-    this.bands = bands;
-    this.series = null;
-  }
-  attached({ series }) {
-    this.series = series;
-  }
-  detached() {
-    this.series = null;
-  }
-  updateAllViews() {}
-  autoscaleInfo() {
-    if (!this.bands.length) return null;
-    return { priceRange: { minValue: Math.min(...this.bands.map((b) => b.lo)), maxValue: Math.max(...this.bands.map((b) => b.hi)) } };
-  }
-  paneViews() {
-    const self = this;
-    return [{
-      zOrder: () => "bottom",
-      renderer: () => ({
-        draw() {},
-        drawBackground(target) {
-          if (!self.series) return;
-          target.useBitmapCoordinateSpace(({ context, bitmapSize, verticalPixelRatio }) => {
-            for (const b of self.bands) {
-              const y1 = self.series.priceToCoordinate(b.hi), y2 = self.series.priceToCoordinate(b.lo);
-              if (y1 == null || y2 == null) continue;
-              const top = Math.round(Math.min(y1, y2) * verticalPixelRatio);
-              const h = Math.max(1, Math.round(Math.abs(y2 - y1) * verticalPixelRatio));
-              context.fillStyle = b.fill;
-              context.fillRect(0, top, bitmapSize.width, h);
-            }
-          });
-        },
-      }),
-    }];
-  }
-}
-
-const ZONES = [["starter", "起始倉區"], ["z1", "第一買區"], ["z2", "第二買區"], ["z3", "深度買區"]];
-const ZONE_ALPHA = { starter: 0.08, z1: 0.12, z2: 0.26, z3: 0.42 };
-
 function draw({ LW, bars, pick, trades, intraday, box, ohlc, legend, table, rsi, kdj: kd, showInd }) {
   const css = getComputedStyle(document.documentElement);
   const v = (name) => css.getPropertyValue(name).trim();
-  const band = v("--band");
   const [n1, n2] = MA[pick.market];
   const chart = LW.createChart(box, {
     autoSize: true,
@@ -256,15 +182,6 @@ function draw({ LW, bars, pick, trades, intraday, box, ohlc, legend, table, rsi,
   chart.addSeries(LW.LineSeries, { ...lineOpts, color: v("--ma1") }).setData(ma1);
   if (ma2.length) chart.addSeries(LW.LineSeries, { ...lineOpts, color: v("--ma2") }).setData(ma2);
 
-  // 買區：色帶＋上緣虛線（台股已持有時不畫起始倉區）
-  const zones = ZONES.filter(([k]) => pick.zones?.[k] && !(k === "starter" && pick.held));
-  candles.attachPrimitive(new ZoneBands(zones.map(([k]) => ({
-    lo: pick.zones[k][0], hi: pick.zones[k][1], fill: `rgba(${band}, ${ZONE_ALPHA[k]})`,
-  }))));
-  for (const [k, label] of zones) {
-    candles.createPriceLine({ price: pick.zones[k][1], color: `rgba(${band}, .9)`, lineWidth: 1,
-      lineStyle: LW.LineStyle.Dashed, axisLabelVisible: false, title: label });
-  }
   if (intraday?.is_today && Number.isFinite(intraday.price)) {
     candles.createPriceLine({ price: intraday.price, color: v("--ink-2"), lineWidth: 1, lineStyle: LW.LineStyle.Dotted,
       axisLabelVisible: true, title: `盤中 ${(intraday.time || "").slice(11, 16)}` });
@@ -279,7 +196,7 @@ function draw({ LW, bars, pick, trades, intraday, box, ohlc, legend, table, rsi,
   });
   if (marks.length) LW.createSeriesMarkers(candles, marks);
 
-  if (showInd) drawIndicators(LW, chart, v, pick.market, rsi, kd);
+  if (showInd) drawIndicators(LW, chart, v, rsi, kd);
 
   chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, bars.length - VISIBLE_BARS), to: bars.length + 3 });
 
@@ -308,8 +225,6 @@ function draw({ LW, bars, pick, trades, intraday, box, ohlc, legend, table, rsi,
   legend.replaceChildren(...[
     el("span", {}, el("i", { class: "sw", style: { background: v("--ma1") } }), `MA${n1} ${fmtMa(ma1)}`),
     el("span", {}, el("i", { class: "sw", style: { background: v("--ma2") } }), `MA${n2} ${fmtMa(ma2)}`),
-    ...zones.map(([k, label]) => el("span", {}, el("i", { class: "bx", style: { background: `rgba(${band}, ${ZONE_ALPHA[k] + 0.2})` } }),
-      `${label} ${zoneText(pick.zones[k])}`)),
     marks.length ? el("span", {}, el("span", { style: { color: v("--marker") } }, "▲ "), `成交 ${marks.length} 筆`) : null,
   ].filter(Boolean));
 
@@ -334,8 +249,8 @@ function indText(r, k) {
   return `RSI14 ${fmt1(r)}　K ${fmt1(k?.k)}　D ${fmt1(k?.d)}　J ${fmt1(k?.j)}`;
 }
 
-// 副圖：RSI14（至少 0～100，70／30 參考線＋規則門檻虛線）與 KDJ（80／20 參考線）
-function drawIndicators(LW, chart, v, market, rsi, kd) {
+// 副圖：RSI14（至少 0～100，70／30 參考線）與 KDJ（80／20 參考線）
+function drawIndicators(LW, chart, v, rsi, kd) {
   const lineOpts = { lineWidth: 2, priceLineVisible: false, crosshairMarkerVisible: false, lastValueVisible: true,
     priceFormat: { type: "price", precision: 1, minMove: 0.1 } };
   const atLeast = (lo, hi) => (orig) => {
@@ -350,8 +265,7 @@ function drawIndicators(LW, chart, v, market, rsi, kd) {
   rsiS.setData([...rsi].map(([time, value]) => ({ time, value })));
   const refColor = v("--muted");
   ref(rsiS, 30, "30", refColor, LW.LineStyle.Solid);
-  if (!RSI_RULES[market].some(([x]) => x === 70)) ref(rsiS, 70, "70", refColor, LW.LineStyle.Solid);
-  for (const [x, label] of RSI_RULES[market]) ref(rsiS, x, label, v("--marker"), LW.LineStyle.Dashed);
+  ref(rsiS, 70, "70", refColor, LW.LineStyle.Solid);
 
   const data = [...kd];
   const kS = chart.addSeries(LW.LineSeries, { ...lineOpts, color: v("--ma1"), title: "K", autoscaleInfoProvider: atLeast(0, 100) }, 2);

@@ -37,8 +37,11 @@ export const MA = { us: [50, 200], tw: [20, 60] };
 // 代號中文名稱（只用來顯示）
 export const NAMES = {
   VOO: "先鋒標普500 ETF", GOOGL: "Alphabet", NVDA: "輝達", TSLA: "特斯拉", SPCX: "SpaceX", AAPL: "蘋果",
-  IAUM: "黃金 ETF（市場指標）", ARKK: "ARK 創新", ARKQ: "ARK 自動化", ARKX: "ARK 太空",
-  "009816": "凱基台灣TOP50", "00981A": "主動統一台股增長", "00411A": "主動統一前沿科技",
+  "009816": "凱基台灣TOP50", "00981A": "主動統一台股增長",
+  "0056": "元大高股息", "00878": "國泰永續高股息", "00919": "群益台灣精選高息",
 };
+
+// K 線頁與盤中區塊追蹤的標的（2026-10-30 轉型：00411A 移出；美股 VOO、GOOGL 持有，其餘只追蹤）
+export const TRACK = { tw: ["009816", "00981A"], us: ["VOO", "GOOGL", "NVDA", "TSLA", "SPCX", "AAPL"] };
 
 export const MARKET_LABEL = { us: "美股", tw: "台股" };
