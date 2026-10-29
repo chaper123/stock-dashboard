@@ -235,6 +235,8 @@ export const loadDaily = (market, code) => once(`daily:${market}:${code}`, async
 });
 
 export const loadIntraday = () => once("intraday", () => fetchJson(md("tw/intraday.json"), "台股盤中快照"));
+export const loadNavRaw = () => once("navraw", () => fetchJson(md("tw/nav_raw.json"), "ETF 盤中淨值"));
+export const loadCalendar = () => once("calendar", () => fetchJson(md("calendar/calendar.json"), "行事曆"));
 export const loadFearGreed = () => once("fg", () => fetchJson(md("sentiment/cnn_fear_greed.json"), "CNN 恐懼貪婪"));
 
 // 兩欄（date,value[,…]）的逐日序列

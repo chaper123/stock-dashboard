@@ -11,7 +11,7 @@ const NET_TIMEOUT_MS = 8000;
 
 const SHELL_FILES = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
-  "js/app.js", "js/config.js", "js/csv.js", "js/data.js", "js/fmt.js", "js/gauge.js", "js/news.js", "js/portfolio.js", "js/ui.js",
+  "js/app.js", "js/config.js", "js/csv.js", "js/data.js", "js/discipline.js", "js/fmt.js", "js/gauge.js", "js/news.js", "js/portfolio.js", "js/ui.js",
   "js/pages/overview.js", "js/pages/holdings.js", "js/pages/news.js", "js/pages/reports.js",
   "js/pages/charts.js",
   "icons/icon.svg", "icons/icon-192.png",

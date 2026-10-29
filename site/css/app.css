@@ -359,3 +359,9 @@ details.card.more > summary { padding: 0; }
 .ev1.flagged > summary .t { font-weight: 600; }
 .ev1 .body { padding: 0 0 10px; font-size: .9rem; }
 .ev1 .body p { margin: 6px 0; }
+
+/* 總覽：招呼、紀律進度 */
+.greet-hello { font-size: 1.6rem; font-weight: 700; }
+.greet-line { font-size: 1.05rem; margin: 8px 0 4px; }
+.progress { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; margin: 8px 0; }
+.progress > span { display: block; height: 100%; background: var(--accent); border-radius: 5px; }

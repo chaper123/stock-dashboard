@@ -47,3 +47,14 @@ export const TRACK = { tw: ["009816", "00981A"], us: ["VOO", "GOOGL", "NVDA", "T
 export const DROPPED = new Set(["00411A"]);
 
 export const MARKET_LABEL = { us: "美股", tw: "台股" };
+
+// 配置紀律（docs/PIVOT.md 第 2 節，2026-10-30 使用者核准）。只管台股；美股 VOO、GOOGL 不加碼、不算進比例
+export const DISCIPLINE = {
+  core: "009816", satellite: "00981A",
+  target: { "009816": 0.8, "00981A": 0.2 },
+  depositDay: 6, deposit: 3000,      // 每月 6 日入金 3,000
+  investedMin: 2700,                 // 當月台股買進合計達入金 9 成算已投入
+  checkMonths: [4, 10], checkDay: 6, // 每年 4/6、10/6 檢查
+  bandPts: 5,                        // 偏離超過 5 個百分點，用新資金補回
+  start: "2026-10",                  // 從這個月起算連續投入
+};

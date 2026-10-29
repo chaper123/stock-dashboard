@@ -1,4 +1,5 @@
 // 持倉 × 最新價。台股有今天的盤中快照就用盤中價，否則用最後收盤；美股用最後收盤，以美元兌台幣中間價換算。
+// 「今天漲跌」：台股＝現價對昨收；美股＝最後一個交易日對前一日（台北早上看到的是美國前一晚）。
 import { loadHoldings, loadDaily, loadIntraday, loadFx } from "./data.js";
 import { taipeiToday } from "./fmt.js";
 
@@ -7,17 +8,17 @@ async function twQuote(code, intraday) {
   if (q && q.is_today && Number.isFinite(q.price)) {
     const hm = (q.time || "").slice(11, 16);
     const mid = q.price_field === "bid_ask_mid" ? "，買賣中間價" : "";
-    return { price: q.price, at: `今天 ${hm}`, note: `證交所盤中快照${mid}` };
+    return { price: q.price, prev: q.prev_close, at: `今天 ${hm}`, note: `證交所盤中快照${mid}` };
   }
   const bars = await loadDaily("tw", code);
   const b = bars.at(-1);
-  return { price: b.close, at: b.time, note: "收盤" };
+  return { price: b.close, prev: bars.at(-2)?.close, at: b.time, note: "收盤" };
 }
 
 async function usQuote(code) {
   const bars = await loadDaily("us", code);
   const b = bars.at(-1);
-  return { price: b.close, at: b.time, note: "收盤" };
+  return { price: b.close, prev: bars.at(-2)?.close, at: b.time, note: "收盤" };
 }
 
 export async function loadPortfolio() {
@@ -51,6 +52,8 @@ export async function loadPortfolio() {
     p.mvTwd = rate ? p.mv * rate : null;
     p.costTwd = rate && h.cost != null ? h.cost * rate : null;
     p.pnlTwd = rate && p.pnl != null ? p.pnl * rate : null;
+    p.dayChg = Number.isFinite(p.prev) ? (p.price - p.prev) * p.shares : null;
+    p.dayChgTwd = rate && p.dayChg != null ? p.dayChg * rate : null;
     return p;
   }));
 
@@ -63,12 +66,14 @@ export async function loadPortfolio() {
       count: list.length,
       mv: sum(list, "mv"), cost: sum(list, "cost"), pnl: sum(list, "pnl"),
       mvTwd: sum(list, "mvTwd"), costTwd: sum(list, "costTwd"), pnlTwd: sum(list, "pnlTwd"),
+      dayChgTwd: sum(list, "dayChgTwd"),
     };
     totals[m].pnlPct = totals[m].cost ? (totals[m].pnl / totals[m].cost) * 100 : null;
   }
   totals.mvTwd = totals.tw.mvTwd + totals.us.mvTwd;
   totals.costTwd = totals.tw.costTwd + totals.us.costTwd;
   totals.pnlTwd = totals.tw.pnlTwd + totals.us.pnlTwd;
+  totals.dayChgTwd = totals.tw.dayChgTwd + totals.us.dayChgTwd;
   totals.pnlPct = totals.costTwd ? (totals.pnlTwd / totals.costTwd) * 100 : null;
   return { positions, fx, totals, warnings, today: taipeiToday() };
 }
