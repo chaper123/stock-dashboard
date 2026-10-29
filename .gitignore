@@ -28,3 +28,7 @@ tmp/
 
 # 網站本機開發用的測試資料（從儀表板試算表抄的，不進 git）
 site/dev-data/
+
+# 回測下載的研究資料（大檔、可重新下載，不進 git）
+backtest/data/
+backtest/out/
