@@ -1,17 +1,28 @@
-"""新聞晨報（新聞第二層）的候選清單：照固定規則篩選、對應標的、排序，並標出一定要寫的事項。
+"""新聞晨報（新聞第二層）的候選清單：照固定規則篩選、對應標的、排序，並標出一定要寫的事項（v3）。
 
 不靠模型自己寫篩選程式，讓每次執行（不管哪個模型）得到相同的候選清單；模型只負責查證與判斷。
-規則見 docs/NEWS_ROUTINE.md 第 3、4 節。
+規則見 docs/NEWS_ROUTINE.md 第 3、4 節與 docs/PIVOT.md 第 2、4 節（台股配置紀律＋每天兩次新聞）。
 
 用法（在放資料的目錄的上一層執行）：
-  python3 engine/news_select.py --data data --compact us_compact.json --compact tw_compact.json --out candidates.json --brief
+  python3 engine/news_select.py --data data --holdings holdings.json --out candidates.json --brief
+  python3 engine/news_select.py --data data --holdings holdings.json --since 2026-10-30T08:40+08:00 --brief   （11:30 那次）
   python3 engine/news_select.py --data data [--now 2026-10-26T08:40+08:00] [--per-target 8] > candidates.json
 data 目錄裡要有（缺的會記在 missing，相關項目略過）：
-  headlines.json、fed.json、calendar.json、00981A.json、00411A.json、
+  headlines.json、fed.json、calendar.json、00981A.json、
   macro_<SPX|IXIC|SOX|VIX|TNX|DXY|GOLD|WTI|TSM>.csv、us_<VOO|GOOGL|NVDA|TSLA|SPCX|AAPL>.csv、
-  tw_<009816|00981A|00411A>_norm.csv（日線：date,volume,open,high,low,close，無表頭）
---compact：最近一次美股、台股晨報的精簡 JSON（「報告存檔」的「精簡JSON」欄），用來判斷持有與買區；沒給就不加權。
-輸出（JSON）：window、inputs、missing、focus、counts、filtered、candidates、must_cover、agenda、highlight_slots、closure_hints。
+  tw_<009816|00981A>_norm.csv（日線：date,volume,open,high,low,close，無表頭）
+  可以沒有（沒有就略過，記在 optional_missing）：intraday.json（台股盤中快照）、topics.json（市場話題）、
+  tw_etf.json（ETF 除息日，market-data 的 data/dividends/tw_etf.json）
+--holdings：帳本「持倉」分頁 get_values 的回傳（{"values": [[表頭…], [列…]]}），用「代號」與「股數（券商確認）」
+  判斷持有（股數 > 0）。沒給時當作 009816、00981A 持有、美股都沒有持有。
+--since：時間窗起點（台北 ISO）；不給就是「前一個平日 08:40」。11:30 那次給當天 08:40，只看早上之後的新消息。
+
+標的與權重（預設；多個標的取最大）：
+  配置內的台股 009816、00981A＝3；持有的美股（目前 VOO、GOOGL）＝2；其他追蹤（美股、Anthropic、OpenAI）＝1；
+  總經＝1，但今晚的 FOMC、CPI 排程事件＝2。
+  Anthropic、OpenAI 是虛擬標的：對應 headlines 的 symbols "ANTHROPIC"、"OPENAI"，沒有時用標題關鍵字。
+輸出（JSON）：window、inputs、missing、optional_missing、focus、counts、filtered、candidates、must_cover、agenda、
+  highlight_slots、closure_hints、topics。
 """
 import argparse
 import csv
@@ -24,28 +35,40 @@ from zoneinfo import ZoneInfo
 
 TPE = ZoneInfo("Asia/Taipei")
 US = ("VOO", "GOOGL", "NVDA", "TSLA", "SPCX", "AAPL")
-TW = ("009816", "00981A", "00411A")
-TARGETS = US + TW + ("總經",)
+AI = ("ANTHROPIC", "OPENAI")
+TW = ("009816", "00981A")
+TARGETS = US + AI + TW + ("總經",)
+LABEL = {"ANTHROPIC": "Anthropic", "OPENAI": "OpenAI"}
+# 虛擬標的的標題關鍵字（第一層還沒有 symbols 時的備援）
+AI_WORDS = {"ANTHROPIC": re.compile(r"\bAnthropic\b", re.I),
+            "OPENAI": re.compile(r"\bOpen ?AI\b|ChatGPT|Sam Altman|奧特曼", re.I)}
 TSMC = {"2330", "TSM"}
 MACRO_TOPICS = {"fed", "tariff", "export_controls", "china", "taiwan", "oil", "war", "cpi", "jobs"}
 KEY_TOPICS = {"earnings", "export_controls", "tariff", "antitrust", "merger", "fed"}
 TIER_SCORE = {1: 40, 2: 30, 3: 20, 4: 0}
+# 權重（預設）：配置內台股 3、持有的美股 2、其他追蹤 1、總經 1；今晚的 FOMC、CPI 2
+W_ALLOC, W_HELD, W_OTHER, W_MACRO, W_MACRO_EVENT = 3, 2, 1, 1, 2
+DEFAULT_HELD = TW
 # 前一交易日的大幅變動門檻（%；TNX 是殖利率的絕對變動，單位百分點）
 MACRO_MOVE = {"SPX": 2.0, "IXIC": 2.0, "SOX": 3.0, "VIX": 15.0, "TNX": 0.15, "DXY": 1.0,
               "GOLD": 2.5, "WTI": 4.0, "TSM": 3.0}
 STOCK_MOVE = {"VOO": 2.0, "GOOGL": 5.0, "NVDA": 5.0, "TSLA": 5.0, "SPCX": 5.0, "AAPL": 5.0,
-              "009816": 3.0, "00981A": 3.0, "00411A": 4.0}
+              "009816": 3.0, "00981A": 3.0}
+# 台股盤中相對昨收的變動門檻（%）：兩檔 ETF 沿用 STOCK_MOVE，加權指數 2%
+INTRADAY_MOVE = {"009816": STOCK_MOVE["009816"], "00981A": STOCK_MOVE["00981A"], "TAIEX": 2.0}
+EX_DIV_DAYS = 7      # 除息日在今天起 7 天內就列進 agenda
+TOPICS_TOP = 5       # 市場話題、上升詞各取前幾名
 # 來源加分：通訊社與主要媒體優先於轉載整理（Yahoo Finance 等）
 SOURCE_BONUS = {"Reuters": 8, "AP News": 8, "Bloomberg.com": 5, "Bloomberg": 5, "WSJ": 5, "The Wall Street Journal": 5,
-                "Financial Times": 5, "CNBC": 5, "中央社 CNA": 5, "經濟日報": 5, "工商時報": 5}
+                "Financial Times": 5, "CNBC": 5, "中央社 CNA": 5, "中央社": 5, "經濟日報": 5, "工商時報": 5}
 # 選股文、問句標題扣分；有實質變動字眼加分
 LISTICLE = re.compile(r"[?？]\s*$|^(is|are|should|could|will)\b|stocks? to (buy|watch|own)|\bbest\b.*\bstocks?\b|\btop \d|"
                       r"\bprediction\b|\bbuy (now|today)\b|該買|值得買|存股", re.I)
 SUBSTANCE = re.compile(r"跌|漲|重挫|大跌|飆|財報|財測|營收|獲利|制裁|禁令|訴訟|調查|召回|關稅|休市|plunge|slump|tumble|sink|"
                        r"surge|soar|jump|\bfall|\bdrop|rall(y|ies)|beat|miss|guidance|outlook|forecast|\bcut|\braise|ban\b|"
-                       r"sanction|lawsuit|probe|recall|tariff|merger|acqui", re.I)
+                       r"sanction|lawsuit|probe|recall|tariff|merger|acqui|\bIPO\b|funding|valuation|上市|募資|估值", re.I)
 CLOSURE_WORDS = re.compile(r"休市|停止交易|暫停交易|颱風假|停班停課|market(s)? closed|trading (halt|suspend)", re.I)
-# 和買點邏輯無關的消息（一般產品發表與評測、消費者抱怨、地方稅務或地方訴訟）：不列入候選
+# 和持股無關的消息（一般產品發表與評測、消費者抱怨、地方稅務或地方訴訟）：不列入候選
 NOISE = re.compile(r"\b(unveils?|introduces|hands[- ]on|first look|review|pre-?orders?|best .{0,20}deals|how to|tips|"
                    r"complain(t|ts|s)?|users? (report|say)|backlash|crackgate|glitch|screen (problems?|issues?|cracks?)|"
                    r"county|parish|city council|school board|state tax|property tax|tax (break|incentive|deal)s?|"
@@ -55,7 +78,6 @@ NOISE = re.compile(r"\b(unveils?|introduces|hands[- ]on|first look|review|pre-?o
                    r"發表會|開箱|評測|預購|優惠|折扣|抱怨|網友|災情", re.I)
 NOT_NOISE = re.compile(r"antitrust|\bDOJ\b|\bFTC\b|\bSEC\b|\bEU\b|European Commission|regulat|export|tariff|recall|"
                        r"guidance|earnings|反壟斷|監管|出口|關稅|召回|財報|財測", re.I)
-ZONE_LEVELS = {"starter": "起始倉區", "z1": "第一買區", "z2": "第二買區", "z3": "深度買區"}
 NY = ZoneInfo("America/New_York")
 SAME_TIME_GROUP = 5  # 第一層沒有做時間檢查時：同一來源這麼多則發布時間完全相同，視為批次重新索引
 
@@ -91,22 +113,90 @@ def last_two(path, missing):
         return None
 
 
-def holding_codes(h, n, strip_us=False):
+def holding_codes(h, n):
     rows = sorted((h or {}).get("holdings") or [], key=lambda x: -(x.get("weight") or 0))[:n]
-    codes = [str(x["code"]) for x in rows]
-    return {c.removesuffix(" US") if strip_us else c for c in codes}
+    return {str(x["code"]) for x in rows}
 
 
-def map_targets(item, top981, top411):
+def num(s):
+    """帳本的數字（可能帶千分位、空白）→ float；不是數字就 None。"""
+    try:
+        return float(str(s).replace(",", "").strip())
+    except ValueError:
+        return None
+
+
+def parse_holdings(obj):
+    """帳本「持倉」get_values 回傳 → 有股數（> 0）的代號集合。找不到欄位就丟 ValueError。"""
+    rows = (obj or {}).get("values") or []
+    if not rows:
+        raise ValueError("持倉沒有資料")
+    head = [str(h).strip() for h in rows[0]]
+    try:
+        ci = head.index("代號")
+    except ValueError:
+        raise ValueError(f"持倉表頭沒有「代號」：{head}") from None
+    si = next((i for i, h in enumerate(head) if h == "股數（券商確認）"), None)
+    if si is None:
+        si = next((i for i, h in enumerate(head) if h.startswith("股數")), None)
+    if si is None:
+        raise ValueError(f"持倉表頭沒有「股數（券商確認）」：{head}")
+    held = set()
+    for r in rows[1:]:
+        if len(r) > max(ci, si) and (num(r[si]) or 0) > 0:
+            held.add(str(r[ci]).strip())
+    return held
+
+
+def load_focus(path, missing):
+    """持有與配置：--holdings 給帳本持倉；沒給就當作 009816、00981A 持有。"""
+    held, source = set(DEFAULT_HELD), "預設（未提供帳本持倉：當作 009816、00981A 持有）"
+    if path:
+        obj = load_json(pathlib.Path(path), missing)
+        try:
+            held, source = parse_holdings(obj), "帳本持倉"
+        except ValueError as e:
+            missing.append(f"{pathlib.Path(path).name}（{e}）")
+    return {"held": sorted(held & set(US + TW)), "allocation": list(TW), "other_held": sorted(held - set(US + TW)),
+            "source": source, "loaded": source == "帳本持倉"}
+
+
+def weight(targets, focus):
+    """標的的重要性：配置內台股 3、持有的美股 2、其他追蹤 1、總經 1。多個標的取最大。"""
+    w = 0
+    for t in targets:
+        if t in TW:
+            w = max(w, W_ALLOC)
+        elif t in US and t in focus["held"]:
+            w = max(w, W_HELD)
+        elif t == "總經":
+            w = max(w, W_MACRO)
+        else:
+            w = max(w, W_OTHER)
+    return w
+
+
+def focus_note(targets, focus):
+    parts = []
+    for t in targets:
+        tags = (["配置內"] if t in focus["allocation"] else []) + (["持有"] if t in focus["held"] else [])
+        if tags:
+            parts.append(f"{t}（{'、'.join(tags)}）")
+    return "、".join(parts)
+
+
+def map_targets(item, top981):
     """標題對應到哪些標的（規則見 NEWS_ROUTINE 第 3.1 節）。"""
     syms = set(item.get("symbols") or [])
-    tg = set(syms & set(US)) | (syms & set(TW))
+    tg = set(syms & set(US)) | (syms & set(TW)) | (syms & set(AI))
+    title = item.get("title") or ""
+    for t, rx in AI_WORDS.items():
+        if t not in tg and rx.search(title):
+            tg.add(t)
     if syms & TSMC:
-        tg |= {"009816", "00981A"}
+        tg |= set(TW)
     if syms & top981:
         tg.add("00981A")
-    if item.get("tier", 4) <= 2 and syms & top411:
-        tg.add("00411A")
     if not tg and set(item.get("topics") or []) & MACRO_TOPICS:
         tg.add("總經")
     return tg
@@ -129,50 +219,6 @@ def pct(prev, last):
     return (last / prev - 1) * 100
 
 
-def load_focus(paths, missing):
-    """從晨報的精簡 JSON 取出持有與買區：美股看 positions，台股看 held；level 在 ZONE_LEVELS 算在買區。"""
-    held, zones, as_of = set(), {}, {}
-    for p in paths:
-        c = load_json(pathlib.Path(p), missing)
-        if not c:
-            continue
-        as_of[c.get("market") or p] = c.get("data_date")
-        held |= set(c.get("positions") or {})
-        for t in c.get("tickers") or []:
-            if t.get("held"):
-                held.add(t["code"])
-            if t.get("role", "buy") == "buy" and t.get("level") in ZONE_LEVELS:
-                zones[t["code"]] = t["level"]
-    return {"held": sorted(held & set(US + TW)), "zones": {k: zones[k] for k in sorted(zones)},
-            "as_of": as_of, "loaded": bool(as_of)}
-
-
-def weight(targets, focus):
-    """標的的重要性：持有 +2、在買區 +2；總經 1（影響所有標的）。多個標的取最大。"""
-    w = 0
-    for t in targets:
-        w = max(w, 1 if t == "總經" else 2 * (t in focus["held"]) + 2 * (t in focus["zones"]))
-    return w
-
-
-def focus_note(targets, focus):
-    parts = []
-    for t in targets:
-        tags = (["持有"] if t in focus["held"] else []) + ([ZONE_LEVELS[focus["zones"][t]]] if t in focus["zones"] else [])
-        if tags:
-            parts.append(f"{t}（{'、'.join(tags)}）")
-    return "、".join(parts)
-
-
-def recompute(targets):
-    """接下來由哪個晨報重算。"""
-    us = any(t in US for t in targets)
-    tw = any(t in TW for t in targets)
-    if "總經" in targets or (us and tw):
-        return "美股晨報（09:20）與台股晨報（10:17）依最新價格重算"
-    return "美股晨報（09:20）依最新收盤與估值重算" if us else "台股晨報（10:17）依盤中價重算"
-
-
 def noise_reason(title):
     if NOISE.search(title) and not NOT_NOISE.search(title):
         return "雜訊（產品發表、消費者抱怨或地方事務）"
@@ -191,61 +237,129 @@ def suspect_ids(h):
     return ids
 
 
-def agenda(cal, now, focus, top411):
-    """今晚到明天中午（台北）會發生的排程事件：監測標的財報、FOMC 決議、CPI。"""
+def first(d, *keys):
+    for k in keys:
+        if isinstance(d, dict) and d.get(k) not in (None, ""):
+            return d[k]
+    return None
+
+
+def dividend_events(obj, code=None):
+    """從除息檔找出 (代號, 除息日, 每單位金額, 發放日)。格式以 market-data 為準，這裡接受常見的幾種：
+    清單裡每筆有 code／stock_id／symbol 與 ex_date／ex_dividend_date／date；或用代號當鍵（值是清單或一筆）。"""
+    out = []
+    if isinstance(obj, list):
+        for x in obj:
+            out += dividend_events(x, code)
+    elif isinstance(obj, dict):
+        c = first(obj, "code", "stock_id", "symbol") or code
+        d = first(obj, "ex_date", "ex_dividend_date", "next_ex_date")
+        if d is None and c is not None and first(obj, "amount", "cash_dividend", "dividend") is not None:
+            d = first(obj, "date")
+        if c is not None and isinstance(d, str) and re.match(r"\d{4}-\d{2}-\d{2}", d):
+            out.append((str(c), d[:10], first(obj, "amount", "cash_dividend", "dividend", "per_unit"),
+                        first(obj, "pay_date", "payment_date", "paid_date")))
+        for k, v in obj.items():
+            if isinstance(v, (list, dict)):
+                out += dividend_events(v, k if k in TW else c)
+    return out
+
+
+def agenda(cal, now, focus, divs=None):
+    """接下來的排程事件：今晚到明天中午（台北）的監測標的財報、FOMC 決議、CPI；以及 7 天內兩檔台股 ETF 除息。"""
     horizon = dt.datetime.combine(now.date() + dt.timedelta(days=1), dt.time(12, 0), TPE)
     out = []
 
-    def add(kind, symbol, when, targets, note):
-        if now < when <= horizon:
-            # FOMC、CPI 影響所有部位：有持有或買區時權重 3（排在持有＋買區之後、只有一項的之前）
-            w = 3 if targets == ["總經"] and (focus["held"] or focus["zones"]) else weight(targets, focus)
+    def add(kind, symbol, when, targets, note, w=None, after=now, until=horizon):
+        if after < when <= until:
+            w = weight(targets, focus) if w is None else w
             out.append({"type": kind, "symbol": symbol, "when_taipei": when.strftime("%Y-%m-%d %H:%M"),
                         "targets": targets, "weight": w, "focus": focus_note(targets, focus) or
-                        ("影響所有持有與買區標的" if w == 3 else ""), "note": note})
+                        ("影響所有部位" if targets == ["總經"] else ""), "note": note})
     for s, e in ((cal.get("earnings") or {}).get("symbols") or {}).items():
         for d in e.get("dates") or []:
             when = dt.datetime.combine(dt.date.fromisoformat(d), dt.time(16, 0), NY).astimezone(TPE)
-            tg = [s] + (["00411A"] if s in top411 else [])
-            add("earnings", s, when, tg, f"財報（美股盤後，約台北 {when:%m/%d} 清晨）"
-                f"{'，日期為估計' if e.get('is_estimate') else ''}；財報後由美股晨報依收盤與估值重算")
+            add("earnings", s, when, [s], f"財報（美股盤後，約台北 {when:%m/%d} 清晨）"
+                f"{'，日期為估計' if e.get('is_estimate') else ''}")
     for m in cal.get("fomc") or []:
         if m.get("end"):
             when = dt.datetime.combine(dt.date.fromisoformat(m["end"]), dt.time(14, 0), NY).astimezone(TPE)
-            add("fomc", "FOMC", when, ["總經"], f"FOMC 決議（台北 {when:%m/%d %H:%M}）；兩個晨報依最新價格重算")
+            add("fomc", "FOMC", when, ["總經"], f"FOMC 決議（台北 {when:%m/%d %H:%M}）", W_MACRO_EVENT)
     cpi = cal.get("cpi")
     dates = cpi.get("dates") or [] if isinstance(cpi, dict) else [x.get("date") for x in cpi or [] if isinstance(x, dict)]
     for d in dates:
         if d:
             when = dt.datetime.combine(dt.date.fromisoformat(d), dt.time(8, 30), NY).astimezone(TPE)
-            add("cpi", "CPI", when, ["總經"], f"美國 CPI（台北 {when:%m/%d %H:%M}）")
+            add("cpi", "CPI", when, ["總經"], f"美國 CPI（台北 {when:%m/%d %H:%M}）", W_MACRO_EVENT)
+    # 除息：今天（含今天，開盤就生效）起 7 天內
+    seen = set()
+    day0 = dt.datetime.combine(now.date(), dt.time(0, 0), TPE)
+    for code, d, amount, pay in divs or []:
+        if code not in TW or (code, d) in seen:
+            continue
+        seen.add((code, d))
+        when = dt.datetime.combine(dt.date.fromisoformat(d), dt.time(9, 0), TPE)
+        note = (f"除息日 {d}" + ("（今天）" if when.date() == now.date() else "")
+                + (f"，每單位 {amount} 元" if amount is not None else "") + (f"，發放日 {pay}" if pay else ""))
+        add("ex_dividend", code, when, [code], note, after=day0 - dt.timedelta(seconds=1),
+            until=day0 + dt.timedelta(days=EX_DIV_DAYS, hours=23, minutes=59))
     return sorted(out, key=lambda a: (-a["weight"], a["when_taipei"]))
 
 
+def intraday_moves(intra, now):
+    """台股盤中相對昨收超過門檻（只看今天的快照）。"""
+    out = []
+    quotes = (intra or {}).get("quotes") or {}
+    for s, th in INTRADAY_MOVE.items():
+        q = quotes.get(s) or {}
+        if not q.get("is_today") or q.get("data_date") != now.date().isoformat() or q.get("change_pct") is None:
+            continue
+        if abs(q["change_pct"]) >= th:
+            out.append({"type": "intraday_move", "target": "總經" if s == "TAIEX" else s, "symbol": s,
+                        "date": q.get("data_date"), "time": q.get("time"), "price": q.get("price"),
+                        "price_field": q.get("price_field"), "change": q.get("change_pct"), "unit": "%",
+                        "threshold": th, "session": (intra or {}).get("session")})
+    return out
+
+
+def market_topics(tp, h):
+    """市場話題（第一層 topics.json）：rise 前幾名＋上升詞前幾名，附樣本標題。沒有檔案就空。"""
+    if not tp:
+        return {"generated_at_taipei": None, "top": [], "rising_terms": []}
+    by_id = {x.get("id"): x for x in (h or {}).get("items") or []}
+
+    def samples(ids):
+        return [{"id": i, "title": by_id[i].get("title"), "source": by_id[i].get("source"),
+                 "time": by_id[i].get("published_taipei")} for i in ids or [] if i in by_id][:3]
+    topics = [t for t in tp.get("topics") or [] if isinstance(t.get("rise"), (int, float))]
+    top = sorted(topics, key=lambda t: -t["rise"])[:TOPICS_TOP]
+    return {"generated_at_taipei": tp.get("generated_at_taipei"),
+            "top": [{k: t.get(k) for k in ("topic", "label", "count_1d", "count_7d", "count_30d", "rise")}
+                    | {"samples": samples(t.get("sample_ids"))} for t in top],
+            "rising_terms": [{k: t.get(k) for k in ("term", "count_1d", "count_30d")}
+                             | {"samples": samples(t.get("sample_ids"))}
+                             for t in (tp.get("rising_terms") or [])[:TOPICS_TOP]]}
+
+
 def highlight_slots(must, agenda_items, candidates, focus, n=8):
-    """「今日重點」的建議順序：先是持有或買區標的（排程事件、必寫事項、Tier 1～2 消息；今晚的 FOMC、CPI
-    算影響所有部位，排在持有＋買區之後），其次是 Fed 新聞稿，最後是其他必寫事項（總經大幅變動等）。
-    模型照順序挑最多 3 條。"""
+    """「今日重點」的建議順序：先是配置內台股與持有美股（排程事件、必寫事項、Tier 1～2 消息；今晚的 FOMC、CPI
+    權重 2，和持有美股同級），其次是 Fed 新聞稿，最後是其他必寫事項（總經大幅變動等）。模型照順序挑最多 3 條。"""
     slots = []
     for a in agenda_items:
         p = 1 if a["weight"] >= 2 else 2
         slots.append({"priority": p, "kind": "agenda", "type": a["type"], "targets": a["targets"],
-                      "weight": a["weight"], "focus": a["focus"], "when_taipei": a["when_taipei"], "note": a["note"],
-                      "recompute": recompute(a["targets"])})
+                      "weight": a["weight"], "focus": a["focus"], "when_taipei": a["when_taipei"], "note": a["note"]})
     for m in must:
-        if m["type"] in ("tw_closed", "possible_closure"):
+        if m["type"] in ("tw_closed", "possible_closure") or m.get("symbol") in ("TSM", "TAIEX"):
             tg = list(TW)
-        elif m.get("symbol") == "TSM":
-            tg = ["009816", "00981A"]
         else:
             tg = [m["target"]]
         w = weight(tg, focus)
         p = 1 if w >= 2 else (2 if m["type"] == "fed" else 3)
         slots.append({"priority": p, "kind": "must_cover", "type": m["type"], "targets": tg, "weight": w,
-                      "focus": focus_note(tg, focus), "ref": {k: m.get(k) for k in ("symbol", "date", "change", "unit")
-                                                             if m.get(k) is not None},
-                      "recompute": recompute(tg)})
-    # 持有或買區標的各取最好的一則 Tier 1～2 消息（同一則消息只算一次），最多 4 則
+                      "focus": focus_note(tg, focus),
+                      "ref": {k: m.get(k) for k in ("symbol", "date", "time", "change", "unit") if m.get(k) is not None}})
+    # 權重 ≥ 2 的標的各取最好的一則 Tier 1～2 消息（同一則消息只算一次），最多 4 則
     news, used, covered = [], set(), set()
     for t in sorted(candidates, key=lambda t: -weight([t], focus)):
         w = weight([t], focus)
@@ -256,24 +370,26 @@ def highlight_slots(must, agenda_items, candidates, focus, n=8):
             used.add(c["id"])
             tg = [t] + c["other_targets"]
             covered |= {tuple(sorted(tg))} | set(tg)
-            news.append({"priority": 1, "kind": "news", "type": "news", "targets": tg, "weight": w,
+            news.append({"priority": 1, "kind": "news", "type": "news", "targets": tg, "weight": max(w, weight(tg, focus)),
                          "focus": focus_note(tg, focus), "id": c["id"], "title": c["title"], "tier": c["tier"],
-                         "url": c["url"], "recompute": recompute(tg)})
+                         "url": c["url"]})
     slots += news[:4]
     rank = {"agenda": 0, "must_cover": 1, "news": 2}
     slots.sort(key=lambda s: (s["priority"], -s["weight"], rank[s["kind"]]))
     return slots[:n]
 
 
-def select(data, now, per_target=8, compact=()):
-    missing = []
-    start = window_start(now)
+def select(data, now, per_target=8, holdings=None, since=None):
+    missing, optional = [], []
+    start = since or window_start(now)
     h = load_json(data / "headlines.json", missing) or {}
     fed = load_json(data / "fed.json", missing) or {}
     cal = load_json(data / "calendar.json", missing) or {}
     top981 = holding_codes(load_json(data / "00981A.json", missing), 10)
-    top411 = holding_codes(load_json(data / "00411A.json", missing), 5, strip_us=True)
-    focus = load_focus(compact, missing)
+    intra = load_json(data / "intraday.json", optional)
+    tp = load_json(data / "topics.json", optional)
+    divs = dividend_events(load_json(data / "tw_etf.json", optional))
+    focus = load_focus(holdings, missing)
 
     suspect = suspect_ids(h)
     items = [x for x in h.get("items") or [] if x.get("published_taipei") and x.get("id") not in suspect
@@ -281,7 +397,7 @@ def select(data, now, per_target=8, compact=()):
     buckets = {t: [] for t in TARGETS}
     seen = {t: set() for t in TARGETS}
     for x in items:
-        tg = map_targets(x, top981, top411)
+        tg = map_targets(x, top981)
         norm = re.sub(r"\W+", "", (x.get("title") or "").lower())
         for t in tg:
             if norm in seen[t]:
@@ -325,11 +441,14 @@ def select(data, now, per_target=8, compact=()):
             if abs(chg) >= th:
                 must.append({"type": "big_move", "target": s, "symbol": s, "date": d,
                              "change": round(chg, 3), "unit": "%", "threshold": th})
-    lo = start - dt.timedelta(days=1)
+    must += intraday_moves(intra, now)
+    # 財報當作美股盤後（美東 16:00）公布：時間已過才是必寫，還沒到的放在 agenda。
+    # 08:40 那次往前多看一天（週末、連假），11:30 那次（--since）只看時間窗內，避免重複 08:40 已寫的
+    lo = start if since else start - dt.timedelta(days=1)
     for s, e in ((cal.get("earnings") or {}).get("symbols") or {}).items():
         for d in e.get("dates") or []:
-            # 財報當作美股盤後（美東 16:00）公布：時間已過才是必寫，還沒到的放在 agenda
-            if lo <= dt.datetime.combine(dt.date.fromisoformat(d), dt.time(16, 0), NY).astimezone(TPE) <= now:
+            when = dt.datetime.combine(dt.date.fromisoformat(d), dt.time(16, 0), NY).astimezone(TPE)
+            if lo <= when <= now:
                 must.append({"type": "earnings", "target": s, "symbol": s, "date": d,
                              "is_estimate": e.get("is_estimate"), "note": "時間窗內公布財報：寫出營收、獲利、財測與預期差異"})
     today = now.date().isoformat()
@@ -345,47 +464,69 @@ def select(data, now, per_target=8, compact=()):
     hints.sort(key=lambda c: (c["tier"] or 4, c["time"]))
     if any((c["tier"] or 4) <= 2 for c in hints):
         must.append({"type": "possible_closure", "target": "009816", "date": today,
-                     "note": "標題提到休市或停止交易：確認台股（或美股）今天是否開盤，影響晨報判斷", "count": len(hints)})
+                     "note": "標題提到休市或停止交易：確認台股（或美股）今天是否開盤", "count": len(hints)})
 
-    ag = agenda(cal, now, focus, top411)
-    return {"window": {"start": start.isoformat(timespec="minutes"), "end": now.isoformat(timespec="minutes")},
+    ag = agenda(cal, now, focus, divs)
+    return {"window": {"start": start.isoformat(timespec="minutes"), "end": now.isoformat(timespec="minutes"),
+                       "since_given": since is not None},
             "inputs": {"headlines_generated": h.get("generated_at_taipei"), "headlines_status": h.get("status"),
                        "feeds_ok": f"{sum(1 for f in h.get('feeds') or [] if f.get('ok'))}/{len(h.get('feeds') or [])}",
                        "items_in_window": len(items), "fed_in_window": sum(1 for m in must if m["type"] == "fed"),
-                       "time_suspect_skipped": len(suspect),
-                       "top10_00981A": sorted(top981), "top5_00411A": sorted(top411)},
-            "missing": sorted(set(missing)), "focus": focus, "counts": counts, "filtered": filtered,
-            "candidates": candidates, "must_cover": must, "agenda": ag,
-            "highlight_slots": highlight_slots(must, ag, candidates, focus), "closure_hints": hints[:8]}
+                       "time_suspect_skipped": len(suspect), "top10_00981A": sorted(top981),
+                       "intraday": {"fetched_at_taipei": (intra or {}).get("fetched_at_taipei"),
+                                    "session": (intra or {}).get("session")} if intra else None,
+                       "topics_generated": (tp or {}).get("generated_at_taipei"),
+                       "ex_dividend_events": len(divs)},
+            "missing": sorted(set(missing)), "optional_missing": sorted(set(optional)), "focus": focus,
+            "counts": counts, "filtered": filtered, "candidates": candidates, "must_cover": must, "agenda": ag,
+            "highlight_slots": highlight_slots(must, ag, candidates, focus), "closure_hints": hints[:8],
+            "topics": market_topics(tp, h)}
+
+
+def name(t):
+    return LABEL.get(t, t)
 
 
 def brief(out, n=5):
-    """給模型看的精簡文字：輸入狀態、必寫事項、各標的前 n 名。"""
+    """給模型看的精簡文字：輸入狀態、持有、接下來、重點順序、必寫事項、市場話題、各標的前 n 名。"""
     fc = out["focus"]
-    L = [f"時間窗 {out['window']['start']} ～ {out['window']['end']}",
-         f"輸入 {json.dumps(out['inputs'], ensure_ascii=False)}", f"缺檔 {out['missing'] or '無'}",
-         "件數 " + "、".join(f"{t} {c['total']}" for t, c in out["counts"].items()),
-         "過濾 " + ("、".join(f"{t} 雜訊{f['noise']}／Tier4 {f['tier4']}" for t, f in out["filtered"].items()
+    w = out["window"]
+    L = [f"時間窗 {w['start']} ～ {w['end']}" + ("（--since）" if w.get("since_given") else ""),
+         f"輸入 {json.dumps(out['inputs'], ensure_ascii=False)}", f"缺檔 {out['missing'] or '無'}"
+         + (f"；選用檔案沒有 {out['optional_missing']}" if out["optional_missing"] else ""),
+         "件數 " + "、".join(f"{name(t)} {c['total']}" for t, c in out["counts"].items()),
+         "過濾 " + ("、".join(f"{name(t)} 雜訊{f['noise']}／Tier4 {f['tier4']}" for t, f in out["filtered"].items()
                             if f["noise"] or f["tier4"]) or "無"),
-         "", "【持有與買區】" + (f"（晨報資料日 {fc['as_of']}）" if fc["loaded"] else "未取得：重點不加權"),
-         f"- 持有 {'、'.join(fc['held']) or '無'}；買區 "
-         + ("、".join(f"{k} {ZONE_LEVELS[v]}" for k, v in fc["zones"].items()) or "無"),
-         "", "【今晚／明早】"]
-    L += [f"- {a['when_taipei']}｜{a['symbol']}｜{a['note']}｜影響 {','.join(a['targets'])}"
+         "", f"【持有】（{fc['source']}）",
+         f"- 配置內 {'、'.join(fc['allocation'])}；持有 {'、'.join(fc['held']) or '無'}"
+         + (f"；其他持有 {'、'.join(fc['other_held'])}" if fc["other_held"] else ""),
+         "", "【接下來】（今晚／明早的財報、FOMC、CPI；7 天內除息）"]
+    L += [f"- {a['when_taipei']}｜{name(a['symbol'])}｜{a['note']}｜影響 {','.join(name(t) for t in a['targets'])}"
           + (f"｜{a['focus']}" if a["focus"] else "") for a in out["agenda"]] or ["- 無"]
     L += ["", "【重點順序建議】（照順序挑最多 3 條；同一件事合併）"]
     L += [f"- P{s['priority']} {s['kind']}｜{s.get('title') or s['type']}"
           + (f"｜{json.dumps(s['ref'], ensure_ascii=False)}" if s.get("ref") else "")
           + (f"｜{s['when_taipei']}" if s.get("when_taipei") else "")
-          + f"｜影響 {','.join(s['targets'])}" + (f"｜{s['focus']}" if s["focus"] else "")
+          + f"｜影響 {','.join(name(t) for t in s['targets'])}" + (f"｜{s['focus']}" if s["focus"] else "")
           + (f"｜id {s['id']}" if s.get("id") else "") for s in out["highlight_slots"]] or ["- 無"]
     L += ["", "【必寫事項】"]
     L += [f"- {json.dumps(m, ensure_ascii=False)}" for m in out["must_cover"]] or ["- 無"]
+    tp = out["topics"]
+    L += ["", "【市場話題】" + (f"（第一層 {tp['generated_at_taipei']}）" if tp["generated_at_taipei"] else "（沒有 topics.json）")]
+    for t in tp["top"]:
+        L.append(f"- {t.get('label') or t.get('topic')}｜1 天 {t.get('count_1d')}、7 天 {t.get('count_7d')}、"
+                 f"30 天 {t.get('count_30d')}｜上升 {t.get('rise')}")
+        L += [f"  · {s['time']}｜{s['source']}｜{s['title']}" for s in t["samples"]]
+    for t in tp["rising_terms"]:
+        L.append(f"- 上升詞「{t.get('term')}」｜1 天 {t.get('count_1d')}、30 天 {t.get('count_30d')}")
+        L += [f"  · {s['time']}｜{s['source']}｜{s['title']}" for s in t["samples"]]
+    if not tp["top"] and not tp["rising_terms"]:
+        L.append("- 無")
     L += ["", "【休市相關標題】"] + [f"- {h['time']}｜{h['source']}（{h['tier']}）｜{h['title']}" for h in out["closure_hints"]]
     for t, lst in out["candidates"].items():
-        L += ["", f"【{t}】" + (f"（{focus_note([t], fc)}）" if focus_note([t], fc) else "")]
+        L += ["", f"【{name(t)}】" + (f"（{focus_note([t], fc)}）" if focus_note([t], fc) else "")]
         L += [f"- {c['time']}｜{c['source']}（{c['tier']}）｜{c['title']}｜{'有原文網址' if c['url'] else '無原文網址'}"
-              f"｜其他標的 {','.join(c['other_targets']) or '—'}｜id {c['id']}" for c in lst[:n]] or ["- 無"]
+              f"｜其他標的 {','.join(name(x) for x in c['other_targets']) or '—'}｜id {c['id']}" for c in lst[:n]] or ["- 無"]
     return "\n".join(L)
 
 
@@ -393,14 +534,15 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data", default="data")
     ap.add_argument("--now", help="台北時間 ISO，例如 2026-10-26T08:40+08:00；不給就用現在")
+    ap.add_argument("--since", help="時間窗起點（台北 ISO），例如 11:30 那次給 2026-10-30T08:40+08:00；不給就是前一個平日 08:40")
     ap.add_argument("--per-target", type=int, default=8)
-    ap.add_argument("--compact", action="append", default=[],
-                    help="晨報的精簡 JSON 檔（美股、台股各一個，可重複），用來判斷持有與買區")
+    ap.add_argument("--holdings", help="帳本「持倉」分頁 get_values 的回傳 JSON 檔（{\"values\": [[表頭…], …]}）")
     ap.add_argument("--brief", action="store_true", help="印精簡文字（必寫事項與各標的前 5 名），完整 JSON 另存 --out")
     ap.add_argument("--out", help="完整 JSON 寫到這個檔案")
     a = ap.parse_args(argv)
     now = dt.datetime.fromisoformat(a.now).astimezone(TPE) if a.now else dt.datetime.now(TPE)
-    out = select(pathlib.Path(a.data), now, a.per_target, a.compact)
+    since = dt.datetime.fromisoformat(a.since).astimezone(TPE) if a.since else None
+    out = select(pathlib.Path(a.data), now, a.per_target, a.holdings, since)
     sys.stdout.reconfigure(encoding="utf-8")
     text = json.dumps(out, ensure_ascii=False)
     if a.out:

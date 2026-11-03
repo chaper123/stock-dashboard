@@ -2,7 +2,7 @@
 
 > 新 session 先讀這份；細節看 [PLAN.md](PLAN.md)。每次 commit 一起更新。
 
-最後更新：2026-10-30
+最後更新：2026-11-03
 
 ## 網址
 - repo：https://github.com/chaper123/stock-dashboard
@@ -23,6 +23,7 @@
    - 永豐金 Shioaji API 暫不採用：要另外在永豐金開戶、只有台灣市場、IP 白名單無法配合 GitHub Actions。需要分鐘 K 或委買委賣時再評估（只開「行情／資料」權限）。
 7. GitHub Actions 10/19、10/20 的 runner 仍是 ubuntu-24.04，Ubuntu 26 還沒輪到，之後第一次要再留意。
 8. **買點規則回測（2026-10-29，使用者「先回測」）**：[BACKTEST.md](BACKTEST.md)，程式 `backtest/`（資料與結果不進 git）。2008-01～2026-10，0050 代台股、SPY 代 VOO，資金照實際入金；A 現行規則與定期定額幾乎相同（台股全期間 XIRR −0.02、SPY +0.02 個百分點／年），樣本外 2023-10～2026-10 都輸（−2.79、−4.69）；B 日 KDJ 確認、C 週 KD 確認在各市場、各期間都更差（現金閒置），D 景氣燈號幾乎沒差（+0.01）。建議 B、C、D 都不放進影子模式；engine、排程、參數都沒動。
+9. **news_select v3＋discipline.py（2026-11-03，PIVOT 第 2、4 節）**：`engine/news_select.py` v3（美股六檔＋Anthropic、OpenAI＋009816、00981A＋總經，拿掉 00411A 與買區；`--holdings` 讀帳本持倉，權重配置內台股 3／持有美股 2／其他 1；`--since` 給 11:30；讀 intraday.json 盤中大幅變動、topics.json 市場話題、tw_etf.json 7 天內除息，沒有檔案照常運作）；新增 `engine/discipline.py`（本月應投入／已投入、80／20 比例與偏離、檢查月 4、10 月補偏低的一檔、下次檢查日、連續投入月數、推播日與月底判斷，常數在 CONFIG）。測試 news_select 25 項、discipline 19 項。正式的新聞晨報仍固定 e9c6d24，v3 提示詞改釘這次的 commit。topics.json、tw_etf.json 的格式等 Phase 1 定案再對齊。
 
 ## Phase 0 基礎建設
 - [x] 專案移到 `C:\stock-dashboard`（舊的空資料夾被鎖，使用者重開 app 後手動刪）

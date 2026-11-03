@@ -9,7 +9,8 @@
 | `monitor_us.py` | 美股晨報提示詞「# monitor_us.py（照抄，不要修改）」 | 美股買區與訊號（10 檔，可用資金 40% 上限） |
 | `monitor.py` | 台股 ETF 晨報提示詞「# monitor.py（照抄，不要修改）」 | 台股 ETF 買區與訊號（3 檔，60% 上限） |
 | `norm.py` | 美股晨報提示詞「norm.py（照抄，不要修改）」 | 鉅亨網日線轉 CSV（只在 v1 的備援舊方法用到） |
-| `news_select.py` | 2026-10-23 新寫（不是從提示詞抽出），10-28 正式版加重要性 | 新聞晨報的候選清單：照固定規則篩時間窗、對應標的、排序，標出必寫事項（前一日大幅變動、財報、休市、Fed）；讀晨報精簡 JSON 判斷持有與買區、列出今晚／明早的財報與 FOMC、過濾雜訊與 Tier 4、排出「今日重點」的建議順序。規則見 [docs/NEWS_ROUTINE.md](../docs/NEWS_ROUTINE.md)，測試在 `tests/test_news_select.py`；不影響 monitor 與 engine 的 tag |
+| `news_select.py` | 2026-10-23 新寫（不是從提示詞抽出），10-28 正式版加重要性，10-30 v3（轉型） | 新聞晨報的候選清單：照固定規則篩時間窗、對應標的、排序，標出必寫事項（前一日大幅變動、財報、休市、Fed、台股盤中大幅變動）。v3：標的改成美股六檔＋Anthropic、OpenAI（虛擬標的）＋009816、00981A＋總經（拿掉 00411A）；持有改讀帳本「持倉」（`--holdings`），權重配置內台股 3、持有美股 2、其他 1；拿掉買區；`--since` 給 11:30 那次；讀 `intraday.json`、`topics.json`（市場話題）、`tw_etf.json`（7 天內除息）。規則見 [docs/NEWS_ROUTINE.md](../docs/NEWS_ROUTINE.md)、[docs/PIVOT.md](../docs/PIVOT.md)，測試在 `tests/test_news_select.py`；不影響 monitor 與 engine 的 tag |
+| `discipline.py` | 2026-10-30 新寫 | 台股配置紀律（PIVOT 第 2 節）：讀帳本「持倉」「交易紀錄」與價格，算本月應投入／已投入（≥ 2,700）、核心 009816：衛星 00981A 比例與偏離、本月建議分配（80／20；檢查月 4、10 月偏離超過 5 個百分點時全部補偏低的一檔）、下次檢查日、連續投入月數、今天是不是計畫推播日或當月最後一個交易日。常數在 `CONFIG`（網站 JS 要一致）。只用標準庫，測試在 `tests/test_discipline.py` |
 
 ## 版本核對
 
