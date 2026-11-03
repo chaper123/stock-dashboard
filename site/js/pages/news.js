@@ -2,7 +2,7 @@
 // 每則一行，點開看事實、來源等級、查證狀態與原文（PIVOT 第 4 節）。
 // 新聞內容一律以純文字放進頁面，原文網址只接受 http/https（extLink）。
 import { loadNewsView, sentimentParts, firstSentence, TIER_LABEL, SECTIONS, sectionOf } from "../news.js";
-import { loadFearGreed } from "../data.js";
+import { loadFearGreed, loadTopics } from "../data.js";
 import { cnnReading, gaugeBlock, pocketBlock } from "../gauge.js";
 import { el, taipeiTime, shortDate, taipeiToday, extLink } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
@@ -17,7 +17,7 @@ async function view(arg) {
   const v = await loadNewsView();
   if (!v.rows.length) return notice("info", "新聞分頁還沒有資料。");
   const stale = v.dataDate !== taipeiToday();
-  const [sentiment, fg] = await Promise.all([sentimentParts(v), loadFearGreed().catch(() => null)]);
+  const [sentiment, fg, topics] = await Promise.all([sentimentParts(v), loadFearGreed().catch(() => null), loadTopics().catch(() => null)]);
 
   // 標的篩選：持有的排前面
   const all = [...new Set(v.events.flatMap((e) => e.codes))].filter((c) => !DROPPED.has(c));
@@ -33,6 +33,7 @@ async function view(arg) {
     const empty = name === "市場話題" ? "還沒有話題（新聞晨報 v3 與話題統計上線後顯示）。" : "沒有。";
     return card(`${name}（${items.length}）`,
       items.length ? items.map((e) => evLine(e, v.ctx)) : el("p", { class: "small muted" }, empty),
+      name === "市場話題" && !filter && topicTable(topics),
       quiet.length > 0 && el("p", { class: "tiny" }, `無重大消息：${quiet.flatMap((e) => e.codes.length ? e.codes : e.symbols).join("、")}`));
   });
 
@@ -56,6 +57,20 @@ async function view(arg) {
     v.summaryRow && el("details", { class: "card more" }, el("summary", {}, "新聞晨報的輸入狀態"),
       el("p", { class: "small" }, v.summaryRow.fact)),
   ];
+}
+
+// 第一層的話題統計（data/news/topics.json）：本週相對 30 天平均上升最多的主題
+function topicTable(t) {
+  const list = (t?.topics || []).filter((x) => x.count_7d > 0)
+    .sort((a, b) => b.rise - a.rise || b.count_7d - a.count_7d).slice(0, 5);
+  if (!list.length) return null;
+  return el("div", {},
+    el("h3", {}, "標題裡常出現的主題（第一層統計）"),
+    el("div", { class: "table-wrap" }, el("table", { class: "nowrap" },
+      el("thead", {}, el("tr", {}, ["主題", "24 小時", "7 天", "上升倍數"].map((h, i) => el("th", { class: i ? "r" : "" }, h)))),
+      el("tbody", {}, list.map((x) => el("tr", {}, el("td", {}, x.label || x.topic), el("td", { class: "r" }, x.count_1d),
+        el("td", { class: "r" }, x.count_7d), el("td", { class: "r" }, x.rise.toFixed(1))))))),
+    el("p", { class: "tiny" }, `${t.generated_at_taipei} 統計；歷史 ${t.days_available} 天（不足 30 天時上升倍數參考就好）。固定規則計數，不做預測。`));
 }
 
 // 今天的重點與旗標（總覽也用）

@@ -5,10 +5,10 @@ import { loadNews, loadHoldings, loadFearGreed, loadVix } from "./data.js";
 import { isNum, shortDate } from "./fmt.js";
 
 export const TIER_LABEL = { 1: "官方", 2: "主要媒體", 3: "第一手發言", 4: "其他" };
-const NOT_CODES = new Set(["總經", "市場", "全部", ""]);
+const NOT_CODES = new Set(["總經", "市場", "全部", "配置", ""]);
 const CROWD = ["2330", "009816", "00981A"];
-// 不當成事件卡的列：摘要、重點、今日一句另外顯示；情緒列放在情緒區
-const HIDE_IN_CARDS = new Set(["摘要", "重點", "今日一句", "情緒"]);
+// 不當成事件卡的列：摘要、重點、今日一句另外顯示；情緒列放在情緒區；盤中、紀律（v3）放在總覽
+const HIDE_IN_CARDS = new Set(["摘要", "重點", "今日一句", "情緒", "盤中", "紀律"]);
 
 // 新聞頁的分區（PIVOT 第 4 節），依序；事件影響持有的代號就放「持股相關」，其他依類別欄
 export const SECTIONS = ["持股相關", "產業與供應鏈", "總經與政策", "地緣", "市場話題"];
@@ -131,6 +131,8 @@ export async function loadNewsView() {
     crowdRows: rows.filter((r) => r.category === "情緒" && CROWD.includes(r.symbol)),
     pocket: pocketReading(rows),
     todayLine: rows.find((r) => r.category === "今日一句")?.fact || null,
+    intradayRows: rows.filter((r) => r.category === "盤中"),
+    disciplineRows: rows.filter((r) => r.category === "紀律"),
   };
 }
 

@@ -1,7 +1,7 @@
 // 總覽：午間一站式（docs/PIVOT.md 第 3 節），由上到下：招呼與今日一句、我的資產、本月紀律、今天的重點、
 // 台股盤中、隔夜美股與總經、行事曆、市場背景，最後是資料狀態。每一塊各自讀資料、各自失敗。
 import {
-  loadSettings, loadTrades, loadMeta, loadFearGreed, loadVix, loadIntraday, loadNavRaw, loadCalendar, loadFx, loadHoldings,
+  loadSettings, loadTrades, loadMeta, loadFearGreed, loadIntraday, loadNavRaw, loadCalendar, loadFx, loadHoldings, loadDividends,
 } from "../data.js";
 import { loadPortfolio } from "../portfolio.js";
 import { discipline, nextDepositDate, nextCheckDate } from "../discipline.js";
@@ -71,7 +71,7 @@ async function assetsCard() {
 }
 
 async function disciplineCard() {
-  const [trades, pf] = await Promise.all([loadTrades(), loadPortfolio()]);
+  const [trades, pf, v] = await Promise.all([loadTrades(), loadPortfolio(), loadNewsView().catch(() => null)]);
   const today = taipeiToday();
   const d = discipline({ trades, positions: pf.positions, today });
   const ratio = Math.min(1, d.invested / D.deposit);
@@ -95,11 +95,13 @@ async function disciplineCard() {
     ] : kv("核心：衛星", "讀不到兩檔的市值"),
     kv("下次檢查", `${d.nextCheck.replace(/-/g, "/")}（${daysBetween(today, d.nextCheck)} 天後）`),
     kv("連續投入", `${d.streak} 個月`),
+    v?.disciplineRows?.length > 0 && el("div", { class: "small", style: { marginTop: "6px" } },
+      el("strong", {}, "新聞晨報："), v.disciplineRows.map((r) => el("div", {}, r.fact))),
     el("p", { class: "tiny" }, `當月台股買進合計達 ${int(D.investedMin)} 元算已投入；檢查日偏離超過 ${D.bandPts} 個百分點時，之後的入金先補偏低的一檔，不賣出。美股不算進比例。`));
 }
 
 async function twCard() {
-  const [intra, nav] = await Promise.all([loadIntraday(), loadNavRaw().catch(() => null)]);
+  const [intra, nav, v] = await Promise.all([loadIntraday(), loadNavRaw().catch(() => null), loadNewsView().catch(() => null)]);
   const q = intra.quotes || {};
   const ix = q.TAIEX;
   const row = (label, x, extra) => el("div", { class: "kv" },
@@ -113,10 +115,12 @@ async function twCard() {
   };
   const when = ix?.time ? taipeiTime(ix.time.replace(" ", "T") + "+08:00") : intra.fetched_at_taipei;
   return card("台股盤中",
-    el("div", { class: "small muted" }, `${intra.session || ""}・證交所快照 ${when || "—"}`, ix && !ix.is_today && el("span", { class: "badge b-warn" }, " 不是今天的")),
+    el("div", { class: "small muted" }, `${intra.session || ""}${intra.slot ? `（${intra.slot}）` : ""}・證交所快照 ${when || "—"}`, ix && !ix.is_today && el("span", { class: "badge b-warn" }, " 不是今天的")),
     row("加權指數", ix),
     TRACK.tw.map((c) => row(`${c} ${NAMES[c] || ""}`, q[c], prem(c))),
-    el("p", { class: "tiny" }, "快照目前約 10:05 更新；12:00 快照上線後改成午間資料。"));
+    v?.intradayRows?.length > 0 && el("div", { class: "small", style: { marginTop: "8px" } },
+      el("strong", {}, "新聞晨報："), v.intradayRows.map((r) => el("div", {}, r.fact))),
+    el("p", { class: "tiny" }, "快照：早盤約 10:05、午前 11:20、午間 12:00。"));
 }
 
 const MACRO = [["macro/SPX", "S&P 500"], ["macro/IXIC", "Nasdaq"], ["macro/SOX", "費城半導體"], ["macro/VIX", "VIX"],
@@ -149,7 +153,7 @@ async function usMacroCard() {
 }
 
 async function calendarCard() {
-  const cal = await loadCalendar();
+  const [cal, div] = await Promise.all([loadCalendar(), loadDividends().catch(() => null)]);
   const today = taipeiToday();
   const until = new Date(Date.parse(today) + 60 * 86400000).toISOString().slice(0, 10);
   const ev = [];
@@ -161,6 +165,10 @@ async function calendarCard() {
   for (const f of cal.fomc || []) if (f.end >= today) add(f.start < today ? today : f.start, `FOMC 會議 ${shortDate(f.start)}～${shortDate(f.end)}${f.sep ? "（含經濟預測）" : ""}`);
   const names = new Map((cal.tw_market?.entries || []).map((x) => [x.date, x.name]));
   for (const d of cal.tw_market?.closed || []) add(d, `台股休市（${names.get(d) || "休市"}）`);
+  for (const c of TRACK.tw) {
+    const n = div?.etfs?.[c]?.next;
+    if (n?.ex_date) add(n.ex_date, `${c} 除息${isNum(n.cash) ? `（每單位 ${n.cash} 元）` : ""}`);
+  }
   add(nextDepositDate(today), `入金 ${twd(D.deposit)}`);
   add(nextCheckDate(today), "配置檢查（核心：衛星）");
   ev.sort((a, b) => a[0].localeCompare(b[0]));
@@ -168,7 +176,11 @@ async function calendarCard() {
     ev.length ? el("ul", { class: "health" }, ev.slice(0, 10).map(([d, t]) =>
       el("li", {}, el("span", {}, t), el("span", { class: "muted nums" }, `${shortDate(d)}（${daysBetween(today, d)} 天後）`))))
       : el("p", { class: "muted" }, "60 天內沒有排定的事件。"),
-    el("p", { class: "tiny" }, `CPI：${cal.cpi?.status === "未取得" ? "日期未取得" : "見行事曆"}。除息與收益分配：資料準備中。`));
+    el("p", { class: "tiny" }, `CPI：${cal.cpi?.status === "未取得" ? "日期未取得" : "見行事曆"}。`,
+      div ? TRACK.tw.map((c) => {
+        const l = div.etfs?.[c]?.last;
+        return l ? `${c} 上次除息 ${shortDate(l.ex_date)} 每單位 ${l.cash} 元。` : `${c} 還沒有配息紀錄。`;
+      }).join("") : "除息資料讀不到。"));
 }
 
 const LIGHT = { 紅: ["#d03b3b", "熱絡"], 黃紅: ["#ec835a", "轉向"], 綠: ["#0ca30c", "穩定"], 黃藍: ["#5598e7", "轉向"], 藍: ["#2a78d6", "低迷"] };
