@@ -1,6 +1,7 @@
 // K 線：日 K、均線（美股 MA50／MA200、台股 MA20／MA60）、交易紀錄的成交標記，RSI14／KDJ 副圖（預設收起）。
 // 一次顯示一檔，上方切換；Lightweight Charts 只在這頁才載入。2026-10-30 轉型後拿掉買區色帶（PIVOT 第 7 節）。
-import { loadDaily, loadTrades, loadIntraday, loadIndex, DataError } from "../data.js";
+import { loadDaily, loadTrades, loadIndex, DataError } from "../data.js";
+import { fugleToday, quoteTime } from "../fugle.js";
 import { loadPerformance } from "../perf.js";
 import { el, price, shares, pct } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
@@ -150,10 +151,10 @@ async function view(arg, alive) {
   const [LW, bars, tradesR, intraR] = await Promise.all([
     loadLW(), loadDaily(pick.market, pick.code),
     loadTrades().then((v) => ({ v }), (e) => ({ e })),
-    pick.market === "tw" ? loadIntraday().catch(() => null) : null,
+    pick.market === "tw" ? fugleToday(pick.code) : null,
   ]);
   const trades = tradesR.v ? tradesR.v.filter((t) => t.code === pick.code) : [];
-  const ctx = { LW, bars, pick, trades, intraday: intraR?.quotes?.[pick.code], box, ohlc, legend, table,
+  const ctx = { LW, bars, pick, trades, intraday: intraR, box, ohlc, legend, table,
     rsi: rsi14(bars), kdj: kdj(bars), showInd };
   // 等 slot 把元素放進頁面後再畫（不用 requestAnimationFrame：分頁在背景時不會觸發）
   setTimeout(() => {
@@ -270,9 +271,9 @@ function draw({ LW, bars, pick, trades, intraday, box, ohlc, legend, table, rsi,
   chart.addSeries(LW.LineSeries, { ...lineOpts, color: v("--ma1") }).setData(ma1);
   if (ma2.length) chart.addSeries(LW.LineSeries, { ...lineOpts, color: v("--ma2") }).setData(ma2);
 
-  if (intraday?.is_today && Number.isFinite(intraday.price)) {
+  if (intraday && Number.isFinite(intraday.price)) {
     candles.createPriceLine({ price: intraday.price, color: v("--ink-2"), lineWidth: 1, lineStyle: LW.LineStyle.Dotted,
-      axisLabelVisible: true, title: `盤中 ${(intraday.time || "").slice(11, 16)}` });
+      axisLabelVisible: true, title: `富果 ${quoteTime(intraday).replace("今天", "").trim()}` });
   }
 
   // 成交標記：只標在有 K 棒的日子

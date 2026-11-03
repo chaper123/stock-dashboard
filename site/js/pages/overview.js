@@ -1,9 +1,10 @@
 // 總覽：午間一站式（docs/PIVOT.md 第 3 節），由上到下：招呼與今日一句、我的資產、本月紀律、今天的重點、
 // 台股盤中、隔夜美股與總經、行事曆、市場背景，最後是資料狀態。每一塊各自讀資料、各自失敗。
 import {
-  loadSettings, loadTrades, loadMeta, loadFearGreed, loadIntraday, loadNavRaw, loadCalendar, loadFx, loadHoldings, loadDividends,
+  loadSettings, loadTrades, loadMeta, loadFearGreed, loadNavHistory, loadIndex, loadDaily, loadCalendar, loadFx, loadHoldings, loadDividends,
 } from "../data.js";
 import { loadPortfolio } from "../portfolio.js";
+import { loadFugle, getKey, fugleSettings, quoteTime, FUGLE_NOTE } from "../fugle.js";
 import { discipline, nextDepositDate, nextCheckDate } from "../discipline.js";
 import { loadNewsView, sentimentParts } from "../news.js";
 import { highlightsCard } from "./news.js";
@@ -100,27 +101,67 @@ async function disciplineCard() {
     el("p", { class: "tiny" }, `當月台股買進合計達 ${int(D.investedMin)} 元算已投入；檢查日偏離超過 ${D.bandPts} 個百分點時，之後的入金先補偏低的一檔，不賣出。美股不算進比例。`));
 }
 
+// 台股盤中：有富果金鑰而且有今天的報價就用富果（使用者自己的瀏覽器查）；沒有就退回 market-data 前一交易日收盤
 async function twCard() {
-  const [intra, nav, v] = await Promise.all([loadIntraday(), loadNavRaw().catch(() => null), loadNewsView().catch(() => null)]);
-  const q = intra.quotes || {};
-  const ix = q.TAIEX;
-  const row = (label, x, extra) => el("div", { class: "kv" },
-    el("span", { class: "k" }, label),
-    el("span", { class: "v" }, x && isNum(x.price) ? [price(x.price), " ",
-      el("span", { class: tone(x.change) }, `${signed(x.change, (n) => price(+n.toFixed(2)))}（${pct(x.change_pct, 2)}）`)] : "—", extra));
-  const prem = (code) => {
-    const it = nav?.items?.[code];
-    const g = it ? Number(it.g) : NaN;
-    return Number.isFinite(g) ? el("div", { class: "tiny" }, `盤中預估折溢價 ${pct(g, 2)}`) : null;
+  const [f, v, navs, ix, ...bars] = await Promise.all([
+    loadFugle().then((x) => ({ x }), (e) => ({ e })), loadNewsView().catch(() => null), loadNavHistory().catch(() => null),
+    loadIndex("TAIEX").catch(() => null), ...TRACK.tw.map((c) => loadDaily("tw", c).catch(() => null))]);
+  const today = taipeiToday();
+  const fq = (sym) => {
+    const q = f.x?.quotes?.[sym];
+    return q && q.date === today ? q : null;
   };
-  const when = ix?.time ? taipeiTime(ix.time.replace(" ", "T") + "+08:00") : intra.fetched_at_taipei;
+  const used = [];
+  // 每一列：富果今天的報價，或前一交易日收盤（標日期）
+  const line = (label, q, closes) => {
+    let val = "—", chg = null, chgPct = null, when = "";
+    if (q) {
+      val = price(q.price);
+      chg = q.change;
+      chgPct = q.changePct;
+      when = quoteTime(q);
+      used.push(q);
+    } else if (closes?.length >= 2) {
+      const a = closes.at(-2), b = closes.at(-1);
+      val = price(+b.value.toFixed(2));
+      chg = b.value - a.value;
+      chgPct = (chg / a.value) * 100;
+      when = `${shortDate(b.date)} 收盤`;
+    }
+    return el("div", { class: "kv" },
+      el("span", { class: "k" }, label, el("div", { class: "tiny" }, when)),
+      el("span", { class: "v" }, val, " ", isNum(chg) ? el("span", { class: tone(chg) }, `${signed(chg, (n) => price(+n.toFixed(2)))}（${pct(chgPct, 2)}）`) : ""));
+  };
+  const closesOf = (b) => b?.map((x) => ({ date: x.time, value: x.close }));
+  const rows = [line("加權指數", fq("IX0001"), ix),
+    ...TRACK.tw.map((c, i) => line(`${c} ${NAMES[c] || ""}`, fq(c), closesOf(bars[i])))];
+
+  // 為什麼沒有用富果
+  let why = null;
+  if (!getKey()) why = "沒有富果金鑰：顯示前一交易日收盤。";
+  else if (f.e || (f.x && Object.keys(f.x.quotes).length === 0)) why = `富果查詢失敗（${Object.values(f.x?.errors || {})[0] || f.e?.message || "未知原因"}）：顯示前一交易日收盤。`;
+  else if (!used.length) why = "現在不是交易時間：顯示前一交易日收盤。";
+
+  // 折溢價：淨值資料停止更新，最新日期落後最近兩個交易日就不顯示
+  const ref = bars[0]?.at(-2)?.time;
+  const latestNav = navs?.length ? navs.reduce((m, x) => (x.date > m ? x.date : m), "") : null;
+  const navFresh = latestNav && ref && latestNav >= ref;
+  const prem = navFresh ? TRACK.tw.map((c) => {
+    const n = navs.filter((x) => x.code === c).at(-1);
+    return n ? `${c} ${pct(n.premium, 2)}` : null;
+  }).filter(Boolean).join("、") : null;
+
+  const refreshBtn = el("button", { class: "btn small", type: "button" }, "↻ 更新");
+  refreshBtn.addEventListener("click", () => document.dispatchEvent(new Event("refresh-request")));
   return card("台股盤中",
-    el("div", { class: "small muted" }, `${intra.session || ""}${intra.slot ? `（${intra.slot}）` : ""}・證交所快照 ${when || "—"}`, ix && !ix.is_today && el("span", { class: "badge b-warn" }, " 不是今天的")),
-    row("加權指數", ix),
-    TRACK.tw.map((c) => row(`${c} ${NAMES[c] || ""}`, q[c], prem(c))),
+    el("div", { class: "spread" },
+      el("span", { class: "small muted" }, used.length ? `${FUGLE_NOTE}` : why),
+      getKey() && refreshBtn),
+    rows,
+    el("p", { class: "tiny" }, prem ? `收盤折溢價（${shortDate(latestNav)}）：${prem}` : "ETF 淨值資料停止更新，不顯示折溢價。"),
     v?.intradayRows?.length > 0 && el("div", { class: "small", style: { marginTop: "8px" } },
       el("strong", {}, "新聞晨報："), v.intradayRows.map((r) => el("div", {}, r.fact))),
-    el("p", { class: "tiny" }, "快照：早盤約 10:05、午前 11:20、午間 12:00。"));
+    fugleSettings());
 }
 
 const MACRO = [["macro/SPX", "S&P 500"], ["macro/IXIC", "Nasdaq"], ["macro/SOX", "費城半導體"], ["macro/VIX", "VIX"],

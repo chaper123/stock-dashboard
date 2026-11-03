@@ -1,7 +1,7 @@
 // 新聞整理：把新聞分頁（一件事件影響幾個標的就有幾列）合併成事件、依重要性排序、分區、挑出「今天的重點」。
 // 新聞頁與總覽共用。內容一律以純文字放進頁面（呼叫端用 el()），網址只接受 http/https。
 // 2026-10-30 轉型：不再看晨報買區，「相關」只看帳本持有的代號。
-import { loadNews, loadHoldings, loadFearGreed, loadVix } from "./data.js";
+import { loadNews, loadHoldings, loadFearGreed } from "./data.js";
 import { isNum, shortDate } from "./fmt.js";
 
 export const TIER_LABEL = { 1: "官方", 2: "主要媒體", 3: "第一手發言", 4: "其他" };
@@ -157,7 +157,7 @@ export function pocketReading(rows) {
   };
 }
 
-// 情緒一行：恐懼貪婪、台指 VIX（market-data），同學風向四檔（新聞分頁）
+// 情緒一行：CNN 恐懼貪婪（market-data）、口袋恐懼貪婪與同學風向（新聞分頁）。台指 VIX 已停用
 const FG_ZH = { "extreme fear": "極度恐懼", fear: "恐懼", neutral: "中性", greed: "貪婪", "extreme greed": "極度貪婪" };
 function crowdShort(fact) {
   const m = /(\d+)\s*分「(.+?)」/.exec(fact || "");
@@ -165,15 +165,11 @@ function crowdShort(fact) {
 }
 // view：loadNewsView() 的結果（讀不到新聞分頁時給 null，只顯示 market-data 的兩項）
 export async function sentimentParts(view) {
-  const [fg, vix] = await Promise.allSettled([loadFearGreed(), loadVix()]);
+  const [fg] = await Promise.allSettled([loadFearGreed()]);
   const parts = [];
   parts.push(fg.status === "fulfilled"
     ? `恐懼貪婪 ${isNum(fg.value.score) ? fg.value.score.toFixed(0) : "—"}（${FG_ZH[fg.value.rating] || fg.value.rating}）`
     : "恐懼貪婪讀不到");
-  if (vix.status === "fulfilled") {
-    const last = vix.value.at(-1);
-    parts.push(`台指 VIX ${last.value.toFixed(2)}（${shortDate(last.date)}）`);
-  } else parts.push("台指 VIX 讀不到");
   if (view?.pocket && !view.pocket.missing) parts.push(`口袋恐懼貪婪 ${view.pocket.score.toFixed(0)}（${view.pocket.label || "—"}）`);
   if (view) {
     const by = new Map(view.crowdRows.map((r) => [r.symbol, r]));

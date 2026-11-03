@@ -1,15 +1,13 @@
-// 持倉 × 最新價。台股有今天的盤中快照就用盤中價，否則用最後收盤；美股用最後收盤，以美元兌台幣中間價換算。
+// 持倉 × 最新價。台股有今天的富果報價（使用者自己的金鑰）就用它，否則用 market-data 最後收盤；
+// 美股用最後收盤，以美元兌台幣中間價換算。
 // 「今天漲跌」：台股＝現價對昨收；美股＝最後一個交易日對前一日（台北早上看到的是美國前一晚）。
-import { loadHoldings, loadDaily, loadIntraday, loadFx } from "./data.js";
+import { loadHoldings, loadDaily, loadFx } from "./data.js";
+import { fugleToday, quoteTime, FUGLE_NOTE } from "./fugle.js";
 import { taipeiToday } from "./fmt.js";
 
-async function twQuote(code, intraday) {
-  const q = intraday?.quotes?.[code];
-  if (q && q.is_today && Number.isFinite(q.price)) {
-    const hm = (q.time || "").slice(11, 16);
-    const mid = q.price_field === "bid_ask_mid" ? "，買賣中間價" : "";
-    return { price: q.price, prev: q.prev_close, at: `今天 ${hm}`, note: `證交所盤中快照${mid}` };
-  }
+async function twQuote(code) {
+  const q = await fugleToday(code);
+  if (q) return { price: q.price, prev: q.prev, at: quoteTime(q), note: FUGLE_NOTE };
   const bars = await loadDaily("tw", code);
   const b = bars.at(-1);
   return { price: b.close, prev: bars.at(-2)?.close, at: b.time, note: "收盤" };
@@ -26,20 +24,15 @@ export async function loadPortfolio() {
   const warnings = [];
   const hasUs = holdings.some((h) => h.market === "us");
   const hasTw = holdings.some((h) => h.market === "tw");
-  const [fxR, intraR] = await Promise.allSettled([
-    hasUs ? loadFx() : Promise.resolve(null),
-    hasTw ? loadIntraday() : Promise.resolve(null),
-  ]);
+  const [fxR] = await Promise.allSettled([hasUs ? loadFx() : Promise.resolve(null)]);
   const fxRow = fxR.status === "fulfilled" && fxR.value ? fxR.value.at(-1) : null;
   const fx = fxRow ? { rate: fxRow.value, date: fxRow.date } : null;
   if (hasUs && !fx) warnings.push(`讀不到匯率（${fxR.reason?.message || "未知原因"}），美股沒有換算成台幣`);
-  const intraday = intraR.status === "fulfilled" ? intraR.value : null;
-  if (hasTw && !intraday) warnings.push("讀不到台股盤中快照，台股用最後收盤價");
 
   const positions = await Promise.all(holdings.map(async (h) => {
     const p = { ...h };
     try {
-      Object.assign(p, h.market === "tw" ? await twQuote(h.code, intraday) : await usQuote(h.code));
+      Object.assign(p, h.market === "tw" ? await twQuote(h.code) : await usQuote(h.code));
     } catch (e) {
       p.error = `讀不到價格（${e.message}）`;
       warnings.push(`${h.code} ${p.error}`);

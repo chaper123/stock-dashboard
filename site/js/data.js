@@ -246,8 +246,7 @@ export const loadDaily = (market, code) => once(`daily:${market}:${code}`, async
   return bars;
 });
 
-export const loadIntraday = () => once("intraday", () => fetchJson(md("tw/intraday.json"), "台股盤中快照"));
-export const loadNavRaw = () => once("navraw", () => fetchJson(md("tw/nav_raw.json"), "ETF 盤中淨值"));
+// 證交所 MIS 盤中快照、盤中淨值、台指 VIX 已停用（2026-11，條款不允許程式下載後公開）；盤中價改用 js/fugle.js
 export const loadCalendar = () => once("calendar", () => fetchJson(md("calendar/calendar.json"), "行事曆"));
 export const loadDividends = () => once("dividends", () => fetchJson(md("dividends/tw_etf.json"), "ETF 配息"));
 export const loadTopics = () => once("topics", () => fetchJson(md("news/topics.json"), "新聞話題統計"));
@@ -264,8 +263,17 @@ const loadSeries = (path, src) => once(`series:${path}`, async () => {
   return out;
 });
 export const loadFearGreedHistory = () => loadSeries("sentiment/cnn_fear_greed.csv", "恐懼貪婪歷史");
-export const loadVix = () => loadSeries("sentiment/taifex_vix.csv", "台指 VIX");
 export const loadFx = () => loadSeries("fx/usdtwd_mid.csv", "美元兌台幣");
+
+// ETF 每日淨值與收盤折溢價：date,code,nav,close,premium_pct,source（2026-11 起停止更新，呼叫端要檢查日期）
+export const loadNavHistory = () => once("navhist", async () => {
+  const out = [];
+  for (const r of parseCSV(await fetchText(md("tw/nav_history.csv"), "ETF 淨值"))) {
+    const prem = Number(r[4]);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(r[0]) && r[1] && Number.isFinite(prem)) out.push({ date: r[0], code: r[1], nav: Number(r[2]), premium: prem });
+  }
+  return out;
+});
 
 // 指數日線（data/index/）：TAIEX.csv 是 date,open,high,low,close,量,值（7 欄）；TAIEX_TR.csv 是 date,close（2 欄）
 export const loadIndex = (name) => once(`index:${name}`, async () => {

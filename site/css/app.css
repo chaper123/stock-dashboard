@@ -408,3 +408,8 @@ details.card.more > summary { padding: 0; }
 /* 組合對大盤 */
 .perf-box { position: relative; height: 260px; margin-top: 8px; }
 @media (min-width: 700px) { .perf-box { height: 320px; } }
+
+/* 富果金鑰設定 */
+.fugle-set { margin-top: 10px; font-size: .88rem; }
+.fugle-set > summary { cursor: pointer; color: var(--ink-2); }
+.fugle-set input { flex: 1; min-width: 12em; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
