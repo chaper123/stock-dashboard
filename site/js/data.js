@@ -117,6 +117,7 @@ export const loadTrades = () => once("trades", async () => {
     price: num(col(r, "成交價")),
     currency: col(r, "幣別"),
     twd: num(col(r, "台幣金額")),
+    settle: num(col(r, "交割金額")), // 原幣、含費（美股是美元）
     inPool: col(r, "計入資金池") === "是",
     note: col(r, "備註"),
   })).filter((t) => /^\d{4}-\d{2}-\d{2}$/.test(t.date) && t.code);
@@ -237,6 +238,8 @@ export const loadDaily = (market, code) => once(`daily:${market}:${code}`, async
 export const loadIntraday = () => once("intraday", () => fetchJson(md("tw/intraday.json"), "台股盤中快照"));
 export const loadNavRaw = () => once("navraw", () => fetchJson(md("tw/nav_raw.json"), "ETF 盤中淨值"));
 export const loadCalendar = () => once("calendar", () => fetchJson(md("calendar/calendar.json"), "行事曆"));
+export const loadDividends = () => once("dividends", () => fetchJson(md("dividends/tw_etf.json"), "ETF 配息"));
+export const loadTopics = () => once("topics", () => fetchJson(md("news/topics.json"), "新聞話題統計"));
 export const loadFearGreed = () => once("fg", () => fetchJson(md("sentiment/cnn_fear_greed.json"), "CNN 恐懼貪婪"));
 
 // 兩欄（date,value[,…]）的逐日序列
@@ -252,3 +255,15 @@ const loadSeries = (path, src) => once(`series:${path}`, async () => {
 export const loadFearGreedHistory = () => loadSeries("sentiment/cnn_fear_greed.csv", "恐懼貪婪歷史");
 export const loadVix = () => loadSeries("sentiment/taifex_vix.csv", "台指 VIX");
 export const loadFx = () => loadSeries("fx/usdtwd_mid.csv", "美元兌台幣");
+
+// 指數日線（data/index/）：TAIEX.csv 是 date,open,high,low,close,量,值（7 欄）；TAIEX_TR.csv 是 date,close（2 欄）
+export const loadIndex = (name) => once(`index:${name}`, async () => {
+  const src = `指數 ${name}`;
+  const out = [];
+  for (const r of parseCSV(await fetchText(md(`index/${name}.csv`), src))) {
+    const v = Number(r.length >= 7 ? r[4] : r[1]);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(r[0]) && Number.isFinite(v)) out.push({ date: r[0], value: v });
+  }
+  if (!out.length) throw new DataError(src, "沒有資料");
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+});

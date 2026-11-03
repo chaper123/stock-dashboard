@@ -7,6 +7,7 @@ import { loading, errorBox } from "./ui.js";
 const ROUTES = {
   overview: { title: "總覽", load: () => import("./pages/overview.js") },
   holdings: { title: "持倉", load: () => import("./pages/holdings.js") },
+  funds: { title: "資金", load: () => import("./pages/funds.js") },
   news: { title: "新聞", load: () => import("./pages/news.js") },
   reports: { title: "報告歷史", load: () => import("./pages/reports.js") },
   charts: { title: "K 線", load: () => import("./pages/charts.js") },

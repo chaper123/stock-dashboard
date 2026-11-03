@@ -58,3 +58,13 @@ export const DISCIPLINE = {
   bandPts: 5,                        // 偏離超過 5 個百分點，用新資金補回
   start: "2026-10",                  // 從這個月起算連續投入
 };
+
+// 資金頁的試算常數（docs/PIVOT.md 第 6 節）。都是試算，不是投資建議
+export const FUNDS = {
+  bucket: 1_000_000,                 // 小豬撲滿每隻 100 萬
+  scenarios: [0.04, 0.07, 0.10],     // 20 年後的三種年報酬情境
+  // 波克夏 2024 年股東信（2025 年 2 月發布）：1965～2024 每股市值年化 19.9%、S&P 500（含股利）10.4%；每年出新信時更新
+  buffett: { brk: 0.199, spx: 0.104, period: "1965～2024", source: "波克夏（Berkshire Hathaway）2024 年股東信" },
+  fire: { monthly: 100_000, rule: 0.04, etfs: ["0056", "00878", "00919"] }, // 4% 法則：Bengen（1994）
+  nhiThreshold: 20_000, nhiRate: 0.0211, // 二代健保補充保費：單筆股利 2 萬元以上扣 2.11%
+};

@@ -81,7 +81,7 @@ button { font: inherit; }
 /* 分頁：手機在底部，寬螢幕在頁首下方 */
 nav.tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-  display: grid; grid-template-columns: repeat(var(--tabs, 5), 1fr);
+  display: grid; grid-template-columns: repeat(var(--tabs, 6), 1fr);
   background: var(--surface); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -365,3 +365,42 @@ details.card.more > summary { padding: 0; }
 .greet-line { font-size: 1.05rem; margin: 8px 0 4px; }
 .progress { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; margin: 8px 0; }
 .progress > span { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
+
+/* 資金頁 */
+.rng { display: grid; grid-template-columns: 1fr; gap: 2px; margin: 8px 0; font-size: .88rem; }
+.rng span { color: var(--ink-2); }
+.rng input { width: 100%; accent-color: var(--accent); }
+.rng output { font-variant-numeric: tabular-nums; font-weight: 600; }
+@media (min-width: 560px) { .rng { grid-template-columns: 10em 1fr 7em; align-items: center; gap: 10px; } .rng output { text-align: right; } }
+.pig-stage { position: relative; max-width: 260px; margin: 0 auto; }
+.pig { width: 100%; height: auto; display: block; }
+.pig-body { fill: #f3b6c4; }
+.pig-outline { fill: none; stroke: #c9788c; stroke-width: 2.5; }
+.pig-body.pig-outline { fill: #f3b6c4; }
+.pig-fill { fill: #e9b949; opacity: .95; }
+.pig-leg { fill: #e79fb1; }
+.pig-tail { fill: none; stroke: #c9788c; stroke-width: 3; stroke-linecap: round; }
+.pig-dark { fill: #6b3a46; }
+.pig-text { text-align: center; }
+.pig-text .value { font-size: 1.6rem; font-weight: 700; }
+.coin { position: absolute; top: -6px; width: 22px; height: 22px; border-radius: 50%; background: #e9b949; color: #6b4e00;
+  font: 700 12px/22px system-ui; text-align: center; box-shadow: inset 0 -2px 0 rgba(0,0,0,.2); opacity: 0;
+  animation: coin-drop 1.1s ease-in forwards; }
+@keyframes coin-drop { 0% { transform: translateY(-30px); opacity: 0; } 20% { opacity: 1; } 80% { transform: translateY(32px); opacity: 1; } 100% { transform: translateY(40px) scale(.6); opacity: 0; } }
+.fw { position: absolute; left: 50%; top: 35%; pointer-events: none; }
+.fw i { position: absolute; width: 7px; height: 7px; border-radius: 50%; background: #e9b949; opacity: 0;
+  animation: fw-burst 1.4s ease-out 3 forwards; }
+.fw i:nth-child(3n) { background: var(--candle-up); } .fw i:nth-child(3n+1) { background: var(--accent); }
+@keyframes fw-burst { 0% { transform: translate(0, 0); opacity: 1; } 100% { transform: translate(var(--dx), var(--dy)); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .coin, .fw i { animation: none; display: none; } }
+.scen { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px 0; }
+@media (min-width: 560px) { .scen { grid-template-columns: repeat(4, 1fr); } }
+.scen-item { border-radius: 8px; padding: 8px 10px; background: var(--surface-2); border-left: 4px solid var(--ink-2); }
+.scen-item.s1 { border-left-color: #2a78d6; } .scen-item.s2 { border-left-color: #eb6834; } .scen-item.s3 { border-left-color: #1baf7a; }
+.scen-v { font-size: 1.2rem; font-weight: 700; }
+.fchart { width: 100%; height: auto; display: block; }
+.fc-axis { stroke: var(--axis); }
+.fc-line { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.fc-line.s1 { stroke: #2a78d6; } .fc-line.s2 { stroke: #eb6834; } .fc-line.s3 { stroke: #1baf7a; } .fc-line.s0 { stroke: var(--ink-2); stroke-dasharray: 4 3; }
+.fc-label { fill: var(--ink-2); font-size: 10px; }
+.notes { padding-left: 18px; }
