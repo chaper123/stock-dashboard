@@ -1,7 +1,8 @@
 // K 線：日 K、均線（美股 MA50／MA200、台股 MA20／MA60）、交易紀錄的成交標記，RSI14／KDJ 副圖（預設收起）。
 // 一次顯示一檔，上方切換；Lightweight Charts 只在這頁才載入。2026-10-30 轉型後拿掉買區色帶（PIVOT 第 7 節）。
-import { loadDaily, loadTrades, loadIntraday, DataError } from "../data.js";
-import { el, price, shares } from "../fmt.js";
+import { loadDaily, loadTrades, loadIntraday, loadIndex, DataError } from "../data.js";
+import { loadPerformance } from "../perf.js";
+import { el, price, shares, pct } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
 import { MA, NAMES, MARKET_LABEL, TRACK } from "../config.js";
 
@@ -29,8 +30,95 @@ function loadLW() {
 }
 
 export async function render(root, { arg, alive }) {
-  root.append(pageHeader("K 線", "日 K＋均線，箭頭是交易紀錄的成交；RSI14／KDJ 副圖可以打開。"));
+  root.append(pageHeader("K 線", "組合對大盤，以及各標的日 K＋均線（箭頭是交易紀錄的成交；RSI14／KDJ 副圖可以打開）。"));
+  slot(root, () => perfView(alive));
   slot(root, () => view(arg, alive));
+}
+
+// ── 組合對大盤（PIVOT 第 6 節）：時間加權報酬（扣掉投入的影響）對台股加權報酬指數，另列 XIRR ──
+const PERIODS = [["all", "首筆買進起"], ["3m", "3 個月"], ["6m", "6 個月"], ["ytd", "今年"]];
+let period = "all";
+
+function periodStart(key, first, last) {
+  const d = new Date(`${last}T00:00:00Z`);
+  if (key === "3m") d.setUTCMonth(d.getUTCMonth() - 3);
+  else if (key === "6m") d.setUTCMonth(d.getUTCMonth() - 6);
+  else if (key === "ytd") d.setUTCMonth(0, 1);
+  else return first;
+  const s = d.toISOString().slice(0, 10);
+  return s < first ? first : s;
+}
+
+async function perfView(alive) {
+  const [LW, perf, tr] = await Promise.all([loadLW(), loadPerformance(), loadIndex("TAIEX_TR").catch((e) => e)]);
+  const box = el("div", { class: "perf-box", role: "img", "aria-label": "組合與加權報酬指數的累積報酬折線圖" });
+  const stats = el("div", { class: "chart-legend" });
+  const chips = el("div", { class: "chips", style: { margin: "4px 0 0" } });
+  const trOk = Array.isArray(tr);
+  const trAt = (d) => {
+    if (!trOk) return null;
+    let v = null;
+    for (const x of tr) {
+      if (x.date > d) break;
+      v = x.value;
+    }
+    return v;
+  };
+  let chart = null;
+  const draw = () => {
+    chart?.remove();
+    const css = getComputedStyle(document.documentElement);
+    const v = (n) => css.getPropertyValue(n).trim();
+    const start = periodStart(period, perf.first, perf.last);
+    const days = perf.days.filter((x) => x.date >= start);
+    const base = days[0], trBase = trAt(base.date);
+    const mine = days.map((x) => ({ time: x.date, value: (x.index / base.index - 1) * 100 }));
+    const bench = trBase ? days.map((x) => ({ time: x.date, value: (trAt(x.date) / trBase - 1) * 100 })) : [];
+    chart = LW.createChart(box, {
+      autoSize: true,
+      layout: { background: { type: LW.ColorType.Solid, color: v("--surface") }, textColor: v("--ink-2"), fontSize: 11,
+        fontFamily: getComputedStyle(document.body).fontFamily },
+      grid: { vertLines: { visible: false }, horzLines: { color: v("--line") } },
+      rightPriceScale: { borderColor: v("--axis") },
+      timeScale: { borderColor: v("--axis") },
+      localization: { locale: "zh-TW", dateFormat: "yyyy/MM/dd" },
+    });
+    const fmt = { type: "custom", formatter: (x) => `${x >= 0 ? "+" : ""}${x.toFixed(1)}%`, minMove: 0.1 };
+    const opts = { lineWidth: 2, priceLineVisible: false, priceFormat: fmt };
+    chart.addSeries(LW.LineSeries, { ...opts, color: v("--accent"), title: "我的組合" }).setData(mine);
+    if (bench.length) chart.addSeries(LW.LineSeries, { ...opts, color: v("--ma1"), title: "加權報酬指數" }).setData(bench);
+    chart.timeScale().fitContent();
+    const a = mine.at(-1).value, b = bench.at(-1)?.value;
+    stats.replaceChildren(
+      el("span", {}, el("i", { class: "sw", style: { background: v("--accent") } }), `我的組合 ${pct(a)}`),
+      el("span", {}, el("i", { class: "sw", style: { background: v("--ma1") } }), bench.length ? `加權報酬指數 ${pct(b)}` : "加權報酬指數：資料準備中"),
+      bench.length ? el("span", {}, `差距 ${a - b >= 0 ? "+" : "−"}${Math.abs(a - b).toFixed(1)} 個百分點`) : null,
+      perf.xirr != null ? el("span", {}, `XIRR（首筆起、年化）${pct(perf.xirr * 100)}`) : null);
+  };
+  for (const [k, label] of PERIODS) {
+    const b = el("button", { class: "chip", type: "button", "aria-pressed": String(k === period) }, label);
+    b.addEventListener("click", () => {
+      period = k;
+      for (const x of chips.children) x.setAttribute("aria-pressed", String(x === b));
+      draw();
+    });
+    chips.append(b);
+  }
+  setTimeout(() => {
+    draw();
+    const onTheme = () => {
+      if (!alive() || !box.isConnected) {
+        document.removeEventListener("themechange", onTheme);
+        chart?.remove();
+        return;
+      }
+      draw();
+    };
+    document.addEventListener("themechange", onTheme);
+  }, 0);
+  return card("組合對大盤", chips, box, stats,
+    !trOk && notice("warn", `讀不到加權報酬指數（${tr.message}）`),
+    el("p", { class: "tiny" }, `曲線是時間加權報酬（扣掉每次投入的影響，GIPS 的比較方式）：台股用日線收盤、美股用日線收盤 × 當天美元兌台幣；大盤是含股利的台股加權報酬指數。XIRR 是資金加權報酬（考慮投入時點）。算到 ${perf.last}。`));
 }
 
 async function view(arg, alive) {

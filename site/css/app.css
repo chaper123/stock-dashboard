@@ -404,3 +404,7 @@ details.card.more > summary { padding: 0; }
 .fc-line.s1 { stroke: #2a78d6; } .fc-line.s2 { stroke: #eb6834; } .fc-line.s3 { stroke: #1baf7a; } .fc-line.s0 { stroke: var(--ink-2); stroke-dasharray: 4 3; }
 .fc-label { fill: var(--ink-2); font-size: 10px; }
 .notes { padding-left: 18px; }
+
+/* 組合對大盤 */
+.perf-box { position: relative; height: 260px; margin-top: 8px; }
+@media (min-width: 700px) { .perf-box { height: 320px; } }
