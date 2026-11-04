@@ -56,12 +56,15 @@ export function discipline({ trades, positions, today }) {
     weights = { core: wc, sat: 1 - wc, devPts: (wc - D.target[D.core]) * 100, coreMv: core, satMv: sat };
   }
 
-  // 本月建議：偏離超過門檻時入金先補偏低的一檔（不賣出），否則照目標比例
+  // 本月建議（與 engine/discipline.py 相同）：檢查月偏離超過門檻時入金整筆補偏低的一檔（不賣出），
+  // 其他情況照目標比例；不在檢查月但已超過門檻時記下 overBand，等下次檢查
+  const over = weights && Math.abs(weights.devPts) > D.bandPts;
   let plan;
-  if (weights && Math.abs(weights.devPts) > D.bandPts) {
+  if (over && D.checkMonths.includes(Number(month.slice(5)))) {
     plan = { mode: "rebalance", items: [[weights.devPts < 0 ? D.core : D.satellite, D.deposit]] };
   } else {
-    plan = { mode: "target", items: [[D.core, D.deposit * D.target[D.core]], [D.satellite, D.deposit * D.target[D.satellite]]] };
+    plan = { mode: "target", overBand: !!over,
+      items: [[D.core, D.deposit * D.target[D.core]], [D.satellite, D.deposit * D.target[D.satellite]]] };
   }
 
   const depositDate = `${month}-${pad(D.depositDay)}`;

@@ -87,8 +87,9 @@ async function disciplineCard() {
     el("div", { class: "progress", role: "img", "aria-label": `已投入 ${Math.round(ratio * 100)}%` },
       el("span", { style: { width: `${ratio * 100}%` } })),
     el("div", { class: "small muted" }, d.plan.mode === "rebalance"
-      ? `偏離超過 ${D.bandPts} 個百分點：本月入金先補 ${d.plan.items[0][0]}（${twd(d.plan.items[0][1])}）`
-      : `本月建議：${d.plan.items.map(([c, a]) => `${c} ${twd(a)}`).join("、")}（照目標比例）`),
+      ? `檢查月偏離超過 ${D.bandPts} 個百分點：本月入金先補 ${d.plan.items[0][0]}（${twd(d.plan.items[0][1])}）`
+      : `本月建議：${d.plan.items.map(([c, a]) => `${c} ${twd(a)}`).join("、")}（照目標比例）`
+        + (d.plan.overBand ? `；偏離已超過 ${D.bandPts} 個百分點，但不在檢查月，下次檢查再補` : "")),
     w ? [
       kv("核心：衛星（市值）", `${Math.round(w.core * 100)}：${Math.round(w.sat * 100)}（目標 ${target(D.core)}：${target(D.satellite)}）`),
       kv("偏離", el("span", { class: Math.abs(w.devPts) > D.bandPts ? "badge b-warn" : "" },
@@ -98,7 +99,7 @@ async function disciplineCard() {
     kv("連續投入", `${d.streak} 個月`),
     v?.disciplineRows?.length > 0 && el("div", { class: "small", style: { marginTop: "6px" } },
       el("strong", {}, "新聞晨報："), v.disciplineRows.map((r) => el("div", {}, r.fact))),
-    el("p", { class: "tiny" }, `當月台股買進合計達 ${int(D.investedMin)} 元算已投入；檢查日偏離超過 ${D.bandPts} 個百分點時，之後的入金先補偏低的一檔，不賣出。美股不算進比例。`));
+    el("p", { class: "tiny" }, `當月台股買進合計達 ${int(D.investedMin)} 元算已投入；檢查月（${D.checkMonths.join("、")} 月）偏離超過 ${D.bandPts} 個百分點時，當月入金整筆補偏低的一檔，其他月份照目標比例，不賣出。美股不算進比例。`));
 }
 
 // 台股盤中：有富果金鑰而且有今天的報價就用富果（使用者自己的瀏覽器查）；沒有就退回 market-data 前一交易日收盤
