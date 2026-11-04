@@ -191,8 +191,9 @@ const newsRow = (r) => ({
 
 // 最新資料日裡產生時間最新的那一組（同一天重跑會多一組列）。
 // v3 一天兩組（晨間 08:40、午間 11:30）：最新一組是午間時，再補當天較早那組的事件列（同事件ID 以較新的為準）；
-// 摘要、重點、今日一句、盤中、話題、紀律、情緒、社群只用最新一組（NEWS_ROUTINE 第 11 節）
-const LATEST_ONLY = new Set(["摘要", "重點", "今日一句", "盤中", "話題", "紀律", "情緒", "社群"]);
+// 摘要、重點、今日一句、盤中、話題、紀律只用最新一組（NEWS_ROUTINE 第 11 節）；情緒、社群只有晨間寫，算事件列。
+// 重點列沿用事件列的事件ID，比對重複時不算它們，否則晨間的事件列會被午間的重點蓋掉
+const LATEST_ONLY = new Set(["摘要", "重點", "今日一句", "盤中", "話題", "紀律"]);
 export function latestNewsGroup(rows) {
   if (!rows.length) return { dataDate: null, generatedAt: null, rows: [] };
   const dataDate = rows.reduce((m, r) => (r.dataDate > m ? r.dataDate : m), "");
@@ -201,7 +202,7 @@ export function latestNewsGroup(rows) {
   const latest = day.filter((r) => r.generatedAt === generatedAt);
   const noon = latest.some((r) => r.category === "摘要" && /^午間/.test(r.fact));
   if (!noon) return { dataDate, generatedAt, rows: latest };
-  const ids = new Set(latest.map((r) => r.eventId));
+  const ids = new Set(latest.filter((r) => !LATEST_ONLY.has(r.category)).map((r) => r.eventId));
   const older = day.filter((r) => r.generatedAt !== generatedAt && !LATEST_ONLY.has(r.category) && r.eventId && !ids.has(r.eventId));
   const newest = new Map();
   for (const r of older) if (!newest.has(r.eventId) || r.generatedAt > newest.get(r.eventId)) newest.set(r.eventId, r.generatedAt);

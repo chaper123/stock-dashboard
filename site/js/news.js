@@ -10,11 +10,12 @@ const CROWD = ["2330", "009816", "00981A"];
 // 不當成事件卡的列：摘要、重點、今日一句另外顯示；情緒列放在情緒區；盤中、紀律（v3）放在總覽
 const HIDE_IN_CARDS = new Set(["摘要", "重點", "今日一句", "情緒", "盤中", "紀律"]);
 
-// 新聞頁的分區（PIVOT 第 4 節），依序；事件影響持有的代號就放「持股相關」，其他依類別欄
+// 新聞頁的分區（PIVOT 第 4 節），依序；話題列一律放「市場話題」，其他事件影響持有的代號就放「持股相關」，再依類別欄
 export const SECTIONS = ["持股相關", "產業與供應鏈", "總經與政策", "地緣", "市場話題"];
 const SECTION_OF_CATEGORY = { 公司: "產業與供應鏈", 產業: "產業與供應鏈", 總經: "總經與政策", 政策: "總經與政策",
   地緣: "地緣", 話題: "市場話題", 社群: "市場話題" };
-export const sectionOf = (e) => (e.relevant.length ? "持股相關" : SECTION_OF_CATEGORY[e.category] || "產業與供應鏈");
+export const sectionOf = (e) => (e.category === "話題" ? "市場話題"
+  : e.relevant.length ? "持股相關" : SECTION_OF_CATEGORY[e.category] || "產業與供應鏈");
 
 const splitCodes = (s) => (s || "").split(/[,、，\s]+/).map((x) => x.trim()).filter(Boolean);
 
