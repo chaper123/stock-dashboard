@@ -4,10 +4,10 @@
 // 網站讀帳本用「發布到網路」的 CSV，寫入後約 5 分鐘才看得到。
 // 自主加碼＝當月台股買進（含手續費與稅）超過當月定投金額的部分，不影響下個月的定投。第一版只做台股新增。
 import { loadTrades, loadHoldings, loadDca } from "../data.js";
-import { dcaFor, monthlyInvested, addMonth } from "../discipline.js";
-import { el, twd, int, price, shares, taipeiToday } from "../fmt.js";
-import { slot, card, pageHeader, kv, notice, loading } from "../ui.js";
-import { NAMES, TRACK } from "../config.js";
+import { dcaFor, minFor, monthlyInvested, addMonth, discipline } from "../discipline.js";
+import { el, twd, int, price, shares, taipeiToday, daysBetween } from "../fmt.js";
+import { slot, card, pageHeader, kv, notice, loading, openDialog } from "../ui.js";
+import { NAMES, TRACK, DISCIPLINE as D } from "../config.js";
 import {
   writeConfig, validUrl, saveConfig, clearConfig, newSecret, newRequestId, callLedger, MIN_SECRET,
 } from "../ledger_write.js";
@@ -192,11 +192,29 @@ async function tradeCard() {
       shares: Number(f.shares.value), price: Number(f.price.value), amount: Number(f.amount.value),
       fee: Number(f.fee.value), tax: f.tax.value === "" ? 0 : Number(f.tax.value), note: f.note.value.trim(),
     };
-    pending = { id: newRequestId(), data };
+    pending = null;
     submit.disabled = true;
-    result.replaceChildren(loading("向帳本確認中…（不會寫入）"));
     try {
+      // 賣出前先勸一下（使用者 2026-11-05 要求）：顯示投入多久、連續投入幾個月
+      if (data.side === "賣出" && !(await sellDialog(trades, dca, today))) {
+        result.replaceChildren(notice("info", "好，這筆賣出先不記。繼續照計畫投入。"));
+        return;
+      }
+      pending = { id: newRequestId(), data };
+      result.replaceChildren(loading("向帳本確認中…（不會寫入）"));
       const out = await callLedger("addTrade", { ...data, dryRun: true });
+      // 本月已投入（達定投 9 成）又要記買進：先問這筆是加碼還是其他規劃，選擇寫進備註；關閉就不記
+      const m = out.month;
+      if (data.side === "買進" && m.monthly != null && m.investedBefore >= minFor(m.monthly)) {
+        const choice = await buyDialog(out);
+        if (!choice) {
+          pending = null;
+          result.replaceChildren(notice("info", "已關閉，這筆沒有記。"));
+          return;
+        }
+        data.note = [choice, data.note].filter(Boolean).join("；").slice(0, 200);
+        out.trade.note = data.note;
+      }
       const confirm = el("button", { class: "btn primary", type: "button" }, "確認寫入帳本");
       const cancel = el("button", { class: "btn", type: "button" }, "取消");
       const status = el("div", { role: "status" });
@@ -260,6 +278,92 @@ function doneView(out) {
     el("strong", {}, out.repeated ? "這筆剛才已經寫入過，這次沒有重複寫。" : `✓ 已寫入交易紀錄第 ${out.rowNumber} 列。`),
     ` ${t.date} ${t.side} ${t.code} ${shares(t.shares)} 股，交割 ${twd(t.settle)}；持倉 ${shares(h.after.shares)} 股。`,
     "約 5 分鐘後按「↻ 重新整理」，其他頁面才看得到。");
+}
+
+// ── 警告視窗 ──
+
+// 本月已投入又要買進：回傳要寫進備註的標記（「自主加碼」或「其他規劃：…」），關閉回傳 null
+function buyDialog(out) {
+  const m = out.month, t = out.trade;
+  return openDialog((close) => {
+    const body = el("div");
+    const showChoices = () => {
+      const plus = el("button", { class: "btn primary", type: "button", onclick: () => close("自主加碼") }, "算自主加碼");
+      const other = el("button", { class: "btn", type: "button", onclick: showOther }, "其他規劃");
+      const shut = el("button", { class: "btn", type: "button", onclick: () => close(null) }, "關閉視窗");
+      body.replaceChildren(
+        el("h2", {}, "這個月已經投入了"),
+        el("p", {}, `${monthName(m.month)}台股已買 ${twd(m.investedBefore)}，定投 ${twd(m.monthly)} 已經完成。`),
+        el("p", {}, `這筆 ${t.code} ${twd(t.settle)} 記下去，本月合計 ${twd(m.investedAfter)}，其中自主加碼 ${twd(m.extraAfter)}。要記成哪一種？`),
+        el("p", { class: "tiny" }, "超過定投的部分都算自主加碼，不會改變下個月的定投金額。選擇會寫進備註；都不是就關閉視窗，這筆不記。"),
+        el("div", { class: "modal-actions" }, plus, other, shut));
+      plus.focus();
+    };
+    const showOther = () => {
+      const input = el("input", { type: "text", maxlength: 80, placeholder: "例如：提前投入下個月的定投", "aria-label": "其他規劃的說明" });
+      const msg = el("div", { class: "tiny", role: "status" });
+      const chips = ["提前投入下個月的定投", "同一筆定投分次成交", "補偏低的一檔（再平衡）"].map((s) =>
+        el("button", { class: "chip", type: "button", onclick: () => { input.value = s; input.focus(); } }, s));
+      const ok = el("button", { class: "btn primary", type: "button" }, "確定");
+      ok.addEventListener("click", () => {
+        const v = input.value.trim();
+        if (!v) {
+          msg.textContent = "寫一下這筆的規劃，或按「返回」。";
+          return;
+        }
+        close(`其他規劃：${v}`);
+      });
+      input.addEventListener("keydown", (e) => e.key === "Enter" && ok.click());
+      body.replaceChildren(
+        el("h2", {}, "這筆是什麼規劃？"),
+        el("div", { class: "chips" }, chips),
+        el("div", { class: "modal-field" }, input), msg,
+        el("div", { class: "modal-actions" }, ok,
+          el("button", { class: "btn", type: "button", onclick: showChoices }, "返回"),
+          el("button", { class: "btn", type: "button", onclick: () => close(null) }, "關閉視窗")));
+      input.focus();
+    };
+    queueMicrotask(showChoices);
+    return body;
+  });
+}
+
+// 賣出前的勸阻：投入多久、累計買進、連續投入幾個月；「確定賣出」5 秒後才能按。回傳 true 才繼續
+const SELL_WAIT_S = 5;
+function sellDialog(trades, dca, today) {
+  const buys = (trades || []).filter((t) => t.market === "tw" && t.side === "買進").sort((a, b) => a.date.localeCompare(b.date));
+  const first = buys[0]?.date;
+  const days = first ? daysBetween(first, today) : null;
+  const total = buys.reduce((s, t) => s + (t.twd ?? (t.shares != null && t.price != null ? t.shares * t.price : 0)), 0);
+  const streak = trades ? discipline({ trades, positions: [], today, dca }).streak : null;
+  return openDialog((close) => {
+    let timer = null;
+    const done = (v) => {
+      clearInterval(timer);
+      close(v);
+    };
+    const stay = el("button", { class: "btn primary", type: "button", onclick: () => done(false) }, "我再想想，不賣了");
+    const go = el("button", { class: "btn", type: "button", disabled: true, onclick: () => done(true) }, `還是要賣（${SELL_WAIT_S}）`);
+    let left = SELL_WAIT_S;
+    timer = setInterval(() => {
+      left -= 1;
+      if (left > 0) go.textContent = `還是要賣（${left}）`;
+      else {
+        clearInterval(timer);
+        go.disabled = false;
+        go.textContent = "我確定要賣出";
+      }
+    }, 1000);
+    queueMicrotask(() => stay.focus());
+    return [
+      el("h2", {}, "先停一下：真的要賣嗎？"),
+      first && el("p", {}, `你從 ${first.replace(/-/g, "/")} 第一次買進台股，到今天 ${int(days)} 天（約 ${Math.max(1, Math.round(days / 30.4))} 個月），台股累計買進 ${twd(total)}。`),
+      streak != null && el("p", {}, `配置紀律從 ${D.start.replace("-", " 年 ")} 月起，已經連續 ${streak} 個月按時投入。`),
+      el("p", {}, "定期定額靠的是時間：中途賣掉，前面累積的紀律就斷了。短期漲跌不是賣出的理由，照計畫每月投入、4 月與 10 月再檢查配置就好。"),
+      el("p", { class: "tiny" }, "這是你自己設的提醒，不是投資建議。真的需要用錢或有其他規劃，5 秒後可以繼續。"),
+      el("div", { class: "modal-actions" }, stay, go),
+    ];
+  });
 }
 
 // ── 每月定投金額（下個月生效） ──

@@ -11,7 +11,7 @@ export function dcaFor(dca, ym) {
   return a;
 }
 // 已投入門檻：定投金額的 9 成（3,000 → 2,700，與 engine/discipline.py 相同）
-const minFor = (amount) => Math.round((amount * D.investedMin) / D.deposit);
+export const minFor = (amount) => Math.round((amount * D.investedMin) / D.deposit);
 
 const pad = (n) => String(n).padStart(2, "0");
 export const addMonth = (m, k) => {

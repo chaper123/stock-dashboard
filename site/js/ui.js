@@ -45,6 +45,29 @@ export function pageHeader(title, sub) {
     el("p", { class: "disclaimer-line" }, "依自訂規則的訊號，不是投資建議。"));
 }
 
+// 對話框：build(close) 回傳內容；close(值) 關閉並把值交給 Promise。按 Esc 或點外面回傳 null
+export function openDialog(build) {
+  return new Promise((resolve) => {
+    const dlg = el("dialog", { class: "modal" });
+    let done = false;
+    const close = (v = null) => {
+      if (done) return;
+      done = true;
+      dlg.close();
+      dlg.remove();
+      resolve(v);
+    };
+    dlg.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      close(null);
+    });
+    dlg.addEventListener("click", (e) => e.target === dlg && close(null));
+    dlg.append(el("div", { class: "modal-body" }, build(close)));
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
+
 // 標籤＋數值的小格子
 export function kv(label, value, extra) {
   return el("div", { class: "kv" }, el("span", { class: "k" }, label), el("span", { class: "v" }, value), extra);
