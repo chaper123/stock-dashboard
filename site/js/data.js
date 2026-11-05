@@ -79,6 +79,7 @@ export const loadSettings = () => once("settings", async () => {
   const s = {
     pool: num(get("可用資金")),
     monthly: num(get("每月入金")),
+    nextMonthly: num(get("下月定投")),
     nextDeposit: get("下一次入金日"),
     lastBuy: get("最近一次買入日"),
     capTw: get("台股單次上限"),
@@ -105,6 +106,18 @@ export const loadHoldings = () => once("holdings", async () => {
   return list;
 });
 
+// 定投金額的變更紀錄：[{ ym: "2026-11", amount: 3000 }]，由舊到新。某個月用生效月份不晚於它的最後一列
+export const loadDca = () => once("dca", async () => {
+  const src = "帳本「定投金額」";
+  const rows = parseTable(await fetchText(SOURCES.ledger.dca, src, true));
+  const list = rows.map((r) => {
+    const m = /^(\d{4})[-/](\d{1,2})/.exec(col(r, "生效月份").trim());
+    return m ? { ym: `${m[1]}-${m[2].padStart(2, "0")}`, amount: num(col(r, "每月定投")) } : null;
+  }).filter((x) => x && x.amount != null).sort((a, b) => a.ym.localeCompare(b.ym));
+  if (!list.length) throw new DataError(src, "沒有讀到定投金額");
+  return list;
+});
+
 export const loadTrades = () => once("trades", async () => {
   const src = "帳本「交易紀錄」";
   const rows = parseTable(await fetchText(SOURCES.ledger.trades, src, true));
@@ -120,6 +133,9 @@ export const loadTrades = () => once("trades", async () => {
     settle: num(col(r, "交割金額")), // 原幣、含費（美股是美元）
     inPool: col(r, "計入資金池") === "是",
     note: col(r, "備註"),
+    time: col(r, "成交時間"),
+    tax: num(col(r, "交易稅")),
+    fee: num(col(r, "手續費")),
   })).filter((t) => /^\d{4}-\d{2}-\d{2}$/.test(t.date) && t.code);
 });
 

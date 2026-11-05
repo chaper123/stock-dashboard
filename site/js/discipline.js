@@ -1,6 +1,17 @@
 // 本月紀律（docs/PIVOT.md 第 2 節）：從帳本交易紀錄算當月台股投入、核心：衛星比例與偏離、本月建議、
-// 下次檢查日、連續投入月數。只管台股；美股不算進比例。都在瀏覽器計算，帳本「設定」分頁不用改。
+// 下次檢查日、連續投入月數，以及定投與自主加碼（當月買進含手續費超過定投金額的部分，2026-11-05 使用者決定）。
+// 只管台股；美股不算進比例。都在瀏覽器計算。
 import { DISCIPLINE as D } from "./config.js";
+
+// 某個月的定投金額（帳本「定投金額」分頁）：生效月份不晚於這個月的最後一列；比第一列早用第一列；讀不到用 config
+export function dcaFor(dca, ym) {
+  if (!dca?.length) return D.deposit;
+  let a = dca[0].amount;
+  for (const r of dca) if (r.ym <= ym) a = r.amount;
+  return a;
+}
+// 已投入門檻：定投金額的 9 成（3,000 → 2,700，與 engine/discipline.py 相同）
+const minFor = (amount) => Math.round((amount * D.investedMin) / D.deposit);
 
 const pad = (n) => String(n).padStart(2, "0");
 export const addMonth = (m, k) => {
@@ -36,12 +47,14 @@ export function nextDepositDate(today) {
   return thisMonth >= today ? thisMonth : `${addMonth(today.slice(0, 7), 1)}-${pad(D.depositDay)}`;
 }
 
-// positions：loadPortfolio().positions；trades：loadTrades()；today：台北 YYYY-MM-DD
-export function discipline({ trades, positions, today }) {
+// positions：loadPortfolio().positions；trades：loadTrades()；today：台北 YYYY-MM-DD；dca：loadDca()（可以是 null）
+export function discipline({ trades, positions, today, dca = null }) {
   const month = today.slice(0, 7);
   const inv = monthlyInvested(trades);
   const cur = inv.get(month) || { total: 0, byCode: {} };
-  const done = (m) => (inv.get(m)?.total || 0) >= D.investedMin;
+  const deposit = dcaFor(dca, month);
+  const investedMin = minFor(deposit);
+  const done = (m) => (inv.get(m)?.total || 0) >= minFor(dcaFor(dca, m));
 
   // 連續投入月數：從 D.start 起；當月還沒投入時算到上個月為止
   let streak = 0;
@@ -61,16 +74,17 @@ export function discipline({ trades, positions, today }) {
   const over = weights && Math.abs(weights.devPts) > D.bandPts;
   let plan;
   if (over && D.checkMonths.includes(Number(month.slice(5)))) {
-    plan = { mode: "rebalance", items: [[weights.devPts < 0 ? D.core : D.satellite, D.deposit]] };
+    plan = { mode: "rebalance", items: [[weights.devPts < 0 ? D.core : D.satellite, deposit]] };
   } else {
     plan = { mode: "target", overBand: !!over,
-      items: [[D.core, D.deposit * D.target[D.core]], [D.satellite, D.deposit * D.target[D.satellite]]] };
+      items: [[D.core, deposit * D.target[D.core]], [D.satellite, deposit * D.target[D.satellite]]] };
   }
 
   const depositDate = `${month}-${pad(D.depositDay)}`;
   const lastDay = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
   return {
-    month, invested: cur.total, byCode: cur.byCode, done: cur.total >= D.investedMin, streak, weights, plan,
+    month, invested: cur.total, byCode: cur.byCode, done: cur.total >= investedMin, streak, weights, plan,
+    deposit, investedMin, dcaPart: Math.min(cur.total, deposit), extra: Math.max(0, cur.total - deposit),
     depositArrived: today >= depositDate, depositDate, daysLeft: lastDay - Number(today.slice(8, 10)),
     nextCheck: nextCheckDate(today), nextDeposit: nextDepositDate(today),
   };

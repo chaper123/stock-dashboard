@@ -1,11 +1,12 @@
 // 資金（docs/PIVOT.md 第 6 節）：小豬撲滿、20 年後、和巴菲特的差距、財富自由計算機。
 // 都在瀏覽器計算，都只是試算，不是投資建議。
-import { loadSettings, loadTrades, loadDividends, loadDaily, loadIndex } from "../data.js";
+import { loadSettings, loadTrades, loadDividends, loadDaily, loadIndex, loadDca } from "../data.js";
+import { dcaFor } from "../discipline.js";
 import { loadPortfolio } from "../portfolio.js";
 import { loadPerformance } from "../perf.js";
-import { el, twd, pct, int, isNum } from "../fmt.js";
+import { el, twd, pct, int, isNum, taipeiToday } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
-import { DISCIPLINE as D, FUNDS as F, NAMES } from "../config.js";
+import { FUNDS as F, NAMES } from "../config.js";
 
 export async function render(root) {
   root.append(pageHeader("資金", "看得到的進度：撲滿、20 年後、和巴菲特比、財富自由要多少。這一頁都是試算，不是投資建議。"));
@@ -49,6 +50,9 @@ function store(k, v) {
 }
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+// 每月投入金額：帳本「定投金額」這個月的金額（讀不到用 config 的 3,000）
+const monthlyDeposit = async () => dcaFor(await loadDca().catch(() => null), taipeiToday().slice(0, 7));
+
 async function totalAssets() {
   const [pf, st] = await Promise.all([loadPortfolio(), loadSettings().catch(() => null)]);
   return pf.totals.mvTwd + (st?.pool || 0);
@@ -67,6 +71,7 @@ function range(label, { min, max, step, value, fmt }, onInput) {
 
 // ── 小豬撲滿 ──
 async function piggyCard() {
+  const deposit = await monthlyDeposit();
   const [total, trades] = await Promise.all([totalAssets(), loadTrades().catch(() => [])]);
   const B = F.bucket;
   const full = Math.floor(total / B);
@@ -82,14 +87,14 @@ async function piggyCard() {
   const stage = el("div", { class: "pig-stage" }, pig);
   if (motion && newTrades) stage.append(...coins(Math.min(newTrades, 5)));
   if (motion && crossed) stage.append(fireworks());
-  const eta = F.scenarios.map((r) => `${Math.round(r * 100)}% 約 ${yearsText(monthsToReach((full + 1) * B, total, D.deposit, r))}`);
+  const eta = F.scenarios.map((r) => `${Math.round(r * 100)}% 約 ${yearsText(monthsToReach((full + 1) * B, total, deposit, r))}`);
   return card("小豬撲滿", stage,
     el("div", { class: "pig-text" },
       el("div", { class: "value" }, twd(total)),
       el("div", { class: "small" }, `第 ${full + 1} 隻撲滿：${twd(total - full * B)}／${int(B)}（${pct(fill * 100, 1, false)}）${full ? `・已經裝滿 ${full} 隻` : ""}`),
       newTrades > 0 && el("div", { class: "small up" }, `上次打開後有 ${newTrades} 筆新交易${motion ? "" : "（已關閉動畫）"}`),
       crossed && el("div", { class: "small up" }, `恭喜裝滿第 ${full} 隻！換下一隻。`)),
-    el("p", { class: "tiny" }, `裝的是總資產（持倉市值＋可用資金），市場跌時撲滿也會變少。照每月 ${int(D.deposit)} 元裝滿這一隻：${eta.join("、")}。`));
+    el("p", { class: "tiny" }, `裝的是總資產（持倉市值＋可用資金），市場跌時撲滿也會變少。照每月 ${int(deposit)} 元裝滿這一隻：${eta.join("、")}。`));
 }
 
 function pigSvg(fill) {
@@ -135,7 +140,7 @@ function fireworks() {
 // ── 20 年後 ──
 async function futureCard() {
   const pv = await totalAssets();
-  const state = { pmt: D.deposit, years: 20, custom: 0.07 };
+  const state = { pmt: await monthlyDeposit(), years: 20, custom: 0.07 };
   const outBox = el("div");
   const draw = () => {
     const n = state.years * 12;
@@ -233,7 +238,7 @@ async function fireCard() {
     return { code: c, ttm: e?.ttm_cash, n: e?.ttm_count, close, yield: e?.ttm_cash && close ? e.ttm_cash / close : null };
   }));
   const ok = etfs.filter((x) => isNum(x.yield));
-  const state = { monthly: F.fire.monthly, ret: 0.07, pmt: D.deposit, years: 20, w: Object.fromEntries(ok.map((x) => [x.code, 1])) };
+  const state = { monthly: F.fire.monthly, ret: 0.07, pmt: await monthlyDeposit(), years: 20, w: Object.fromEntries(ok.map((x) => [x.code, 1])) };
   const outBox = el("div");
   const weighted = () => {
     const sw = ok.reduce((s, x) => s + state.w[x.code], 0);

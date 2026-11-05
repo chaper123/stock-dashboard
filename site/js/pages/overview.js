@@ -1,11 +1,11 @@
 // 總覽：午間一站式（docs/PIVOT.md 第 3 節），由上到下：招呼與今日一句、我的資產、本月紀律、今天的重點、
 // 台股盤中、隔夜美股與總經、行事曆、市場背景，最後是資料狀態。每一塊各自讀資料、各自失敗。
 import {
-  loadSettings, loadTrades, loadMeta, loadFearGreed, loadNavHistory, loadIndex, loadDaily, loadCalendar, loadFx, loadHoldings, loadDividends,
+  loadSettings, loadTrades, loadDca, loadMeta, loadFearGreed, loadNavHistory, loadIndex, loadDaily, loadCalendar, loadFx, loadHoldings, loadDividends,
 } from "../data.js";
 import { loadPortfolio } from "../portfolio.js";
 import { loadFugle, getKey, fugleSettings, quoteTime, FUGLE_NOTE } from "../fugle.js";
-import { discipline, nextDepositDate, nextCheckDate } from "../discipline.js";
+import { discipline, dcaFor, nextDepositDate, nextCheckDate } from "../discipline.js";
 import { loadNewsView, sentimentParts } from "../news.js";
 import { highlightsCard } from "./news.js";
 import { cnnReading, gaugeBlock, pocketBlock } from "../gauge.js";
@@ -72,24 +72,29 @@ async function assetsCard() {
 }
 
 async function disciplineCard() {
-  const [trades, pf, v] = await Promise.all([loadTrades(), loadPortfolio(), loadNewsView().catch(() => null)]);
+  const [trades, pf, v, dca] = await Promise.all([loadTrades(), loadPortfolio(), loadNewsView().catch(() => null), loadDca().catch(() => null)]);
   const today = taipeiToday();
-  const d = discipline({ trades, positions: pf.positions, today });
-  const ratio = Math.min(1, d.invested / D.deposit);
+  const d = discipline({ trades, positions: pf.positions, today, dca });
+  const ratio = Math.min(1, d.invested / d.deposit);
   const status = !d.depositArrived && !d.invested
     ? el("span", { class: "muted" }, `本月 ${shortDate(d.depositDate)} 入金後開始`)
     : d.done ? el("span", { class: "badge b-ok" }, "✓ 本月已投入")
-      : el("span", { class: "badge b-warn" }, `⚠ 還差 ${twd(D.investedMin - d.invested)} 到 9 成（月底前，剩 ${d.daysLeft} 天）`);
+      : el("span", { class: "badge b-warn" }, `⚠ 還差 ${twd(d.investedMin - d.invested)} 到 9 成（月底前，剩 ${d.daysLeft} 天）`);
   const w = d.weights;
   const target = (code) => `${Math.round(D.target[code] * 100)}%`;
+  const planText = d.plan.mode === "rebalance"
+    ? `檢查月偏離超過 ${D.bandPts} 個百分點：本月入金先補 ${d.plan.items[0][0]}（${twd(d.plan.items[0][1])}）`
+    : `本月建議：${d.plan.items.map(([c, a]) => `${c} ${twd(a)}`).join("、")}（照目標比例）`
+      + (d.plan.overBand ? `；偏離已超過 ${D.bandPts} 個百分點，但不在檢查月，下次檢查再補` : "");
+  const bought = Object.entries(d.byCode).sort((a, b) => b[1] - a[1]).map(([c, a]) => `${c} ${twd(a)}`).join("、");
   return card(`本月紀律（${Number(d.month.slice(5))} 月）`,
-    el("div", { class: "spread" }, el("span", {}, `已投入 ${twd(d.invested)}／應投入 ${twd(D.deposit)}`), status),
+    el("div", { class: "spread" }, el("span", {}, `已投入 ${twd(d.invested)}／本月定投 ${twd(d.deposit)}`), status),
     el("div", { class: "progress", role: "img", "aria-label": `已投入 ${Math.round(ratio * 100)}%` },
       el("span", { style: { width: `${ratio * 100}%` } })),
-    el("div", { class: "small muted" }, d.plan.mode === "rebalance"
-      ? `檢查月偏離超過 ${D.bandPts} 個百分點：本月入金先補 ${d.plan.items[0][0]}（${twd(d.plan.items[0][1])}）`
-      : `本月建議：${d.plan.items.map(([c, a]) => `${c} ${twd(a)}`).join("、")}（照目標比例）`
-        + (d.plan.overBand ? `；偏離已超過 ${D.bandPts} 個百分點，但不在檢查月，下次檢查再補` : "")),
+    d.extra > 0 && el("div", { class: "small" }, `其中定投 ${twd(d.dcaPart)}、自主加碼 ${twd(d.extra)}`),
+    el("div", { class: "small muted" }, d.done
+      ? `本月已買：${bought}；建議是 ${d.plan.items.map(([c, a]) => `${c} ${twd(a)}`).join("、")}`
+      : planText),
     w ? [
       kv("核心：衛星（市值）", `${Math.round(w.core * 100)}：${Math.round(w.sat * 100)}（目標 ${target(D.core)}：${target(D.satellite)}）`),
       kv("偏離", el("span", { class: Math.abs(w.devPts) > D.bandPts ? "badge b-warn" : "" },
@@ -99,7 +104,7 @@ async function disciplineCard() {
     kv("連續投入", `${d.streak} 個月`),
     v?.disciplineRows?.length > 0 && el("div", { class: "small", style: { marginTop: "6px" } },
       el("strong", {}, "新聞晨報："), v.disciplineRows.map((r) => el("div", {}, r.fact))),
-    el("p", { class: "tiny" }, `當月台股買進合計達 ${int(D.investedMin)} 元算已投入；檢查月（${D.checkMonths.join("、")} 月）偏離超過 ${D.bandPts} 個百分點時，當月入金整筆補偏低的一檔，其他月份照目標比例，不賣出。美股不算進比例。`));
+    el("p", { class: "tiny" }, `當月台股買進合計（含手續費）達 ${int(d.investedMin)} 元（定投金額 9 成）算已投入，超過定投金額的部分算自主加碼，不影響下個月的定投；檢查月（${D.checkMonths.join("、")} 月）偏離超過 ${D.bandPts} 個百分點時，當月入金整筆補偏低的一檔，其他月份照目標比例，不賣出。美股不算進比例。`));
 }
 
 // 台股盤中：有富果金鑰而且有今天的報價就用富果（使用者自己的瀏覽器查）；沒有就退回 market-data 前一交易日收盤
@@ -195,7 +200,7 @@ async function usMacroCard() {
 }
 
 async function calendarCard() {
-  const [cal, div] = await Promise.all([loadCalendar(), loadDividends().catch(() => null)]);
+  const [cal, div, dca] = await Promise.all([loadCalendar(), loadDividends().catch(() => null), loadDca().catch(() => null)]);
   const today = taipeiToday();
   const until = new Date(Date.parse(today) + 60 * 86400000).toISOString().slice(0, 10);
   const ev = [];
@@ -211,7 +216,8 @@ async function calendarCard() {
     const n = div?.etfs?.[c]?.next;
     if (n?.ex_date) add(n.ex_date, `${c} 除息${isNum(n.cash) ? `（每單位 ${n.cash} 元）` : ""}`);
   }
-  add(nextDepositDate(today), `入金 ${twd(D.deposit)}`);
+  const nd = nextDepositDate(today);
+  add(nd, `入金 ${twd(dcaFor(dca, nd.slice(0, 7)))}`);
   add(nextCheckDate(today), "配置檢查（核心：衛星）");
   ev.sort((a, b) => a[0].localeCompare(b[0]));
   return card("行事曆（60 天內）",

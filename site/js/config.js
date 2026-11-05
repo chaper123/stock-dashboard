@@ -20,6 +20,7 @@ export const SOURCES = {
     settings: sheetCsv(LEDGER_PUB, 0),
     trades: sheetCsv(LEDGER_PUB, 1),
     holdings: sheetCsv(LEDGER_PUB, 2),
+    dca: sheetCsv(LEDGER_PUB, 10), // 「定投金額」分頁（2026-11-05 建立）：每月定投金額的變更紀錄
   },
   dash: {
     archive: DEV ? "dev-data/archive.csv" : DASH_PUB && sheetCsv(DASH_PUB, 0),
@@ -52,8 +53,8 @@ export const MARKET_LABEL = { us: "美股", tw: "台股" };
 export const DISCIPLINE = {
   core: "009816", satellite: "00981A",
   target: { "009816": 0.8, "00981A": 0.2 },
-  depositDay: 6, deposit: 3000,      // 每月 6 日入金 3,000
-  investedMin: 2700,                 // 當月台股買進合計達入金 9 成算已投入
+  depositDay: 6, deposit: 3000,      // 每月 6 日入金；金額以帳本「定投金額」分頁為準，讀不到時才用 3,000
+  investedMin: 2700,                 // 當月台股買進合計達入金 9 成算已投入（定投金額改了照比例）
   checkMonths: [4, 10], checkDay: 6, // 每年 4/6、10/6 檢查
   bandPts: 5,                        // 偏離超過 5 個百分點，用新資金補回
   start: "2026-10",                  // 從這個月起算連續投入
