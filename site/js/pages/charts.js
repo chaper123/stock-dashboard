@@ -1,7 +1,7 @@
 // K 線：日 K、均線（美股 MA50／MA200、台股 MA20／MA60）、交易紀錄的成交標記，RSI14／KDJ 副圖（預設收起）。
 // 一次顯示一檔，上方切換；Lightweight Charts 只在這頁才載入。2026-10-30 轉型後拿掉買區色帶（PIVOT 第 7 節）。
 import { loadDaily, loadTrades, loadIndex, DataError } from "../data.js";
-import { fugleToday, quoteTime } from "../fugle.js";
+import { fugleQuote, fugleUsable, fugleClosed, fugleBar, quoteTime, FUGLE_NOTE } from "../fugle.js";
 import { loadPerformance } from "../perf.js";
 import { el, price, shares, pct } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
@@ -145,16 +145,27 @@ async function view(arg, alive) {
   box.classList.toggle("with-ind", showInd);
   const note = el("p", { class: "tiny" },
     "RSI14（日收盤，Wilder 平滑）與 KDJ(9,3,3) 只是參考，不是配置紀律的一部分。");
-  const section = card(null, head, el("div", { class: "row", style: { marginTop: "6px" } }, toggle), ohlc, box, legend, note, table);
+  const fugleNote = el("p", { class: "tiny", hidden: true });
+  const section = card(null, head, el("div", { class: "row", style: { marginTop: "6px" } }, toggle), ohlc, box, legend, fugleNote, note, table);
 
   // 資料與函式庫都到齊才畫；其中一項失敗就在圖的位置顯示原因
-  const [LW, bars, tradesR, intraR] = await Promise.all([
+  const [LW, daily, tradesR, fq] = await Promise.all([
     loadLW(), loadDaily(pick.market, pick.code),
     loadTrades().then((v) => ({ v }), (e) => ({ e })),
-    pick.market === "tw" ? fugleToday(pick.code) : null,
+    pick.market === "tw" ? fugleQuote(pick.code) : null,
   ]);
+  // 富果比 market-data 新的那天：收盤了就補一根 K 棒（market-data 隔天早上更新後換成正式資料），盤中只畫虛線
+  const lastDate = daily.at(-1)?.time;
+  const fresh = fugleUsable(fq, lastDate) ? fq : null;
+  const extra = fresh && fresh.date > lastDate && fugleClosed(fresh) ? fugleBar(fresh) : null;
+  const bars = extra ? [...daily, extra] : daily;
+  const intraday = fresh && !extra ? fresh : null;
+  if (extra) {
+    fugleNote.textContent = `${extra.time.slice(5).replace("-", "/")} 這根來自富果（${FUGLE_NOTE}）；market-data 隔天早上更新後換成正式資料。`;
+    fugleNote.hidden = false;
+  }
   const trades = tradesR.v ? tradesR.v.filter((t) => t.code === pick.code) : [];
-  const ctx = { LW, bars, pick, trades, intraday: intraR, box, ohlc, legend, table,
+  const ctx = { LW, bars, pick, trades, intraday, box, ohlc, legend, table,
     rsi: rsi14(bars), kdj: kdj(bars), showInd };
   // 等 slot 把元素放進頁面後再畫（不用 requestAnimationFrame：分頁在背景時不會觸發）
   setTimeout(() => {

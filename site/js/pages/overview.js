@@ -4,7 +4,7 @@ import {
   loadSettings, loadTrades, loadDca, loadMeta, loadFearGreed, loadNavHistory, loadIndex, loadDaily, loadCalendar, loadFx, loadHoldings, loadDividends,
 } from "../data.js";
 import { loadPortfolio } from "../portfolio.js";
-import { loadFugle, getKey, fugleSettings, quoteTime, FUGLE_NOTE } from "../fugle.js";
+import { loadFugle, getKey, fugleSettings, fugleUsable, quoteTime, FUGLE_NOTE } from "../fugle.js";
 import { discipline, dcaFor, nextDepositDate, nextCheckDate } from "../discipline.js";
 import { loadNewsView, sentimentParts } from "../news.js";
 import { highlightsCard } from "./news.js";
@@ -112,10 +112,10 @@ async function twCard() {
   const [f, v, navs, ix, ...bars] = await Promise.all([
     loadFugle().then((x) => ({ x }), (e) => ({ e })), loadNewsView().catch(() => null), loadNavHistory().catch(() => null),
     loadIndex("TAIEX").catch(() => null), ...TRACK.tw.map((c) => loadDaily("tw", c).catch(() => null))]);
-  const today = taipeiToday();
-  const fq = (sym) => {
+  // 富果今天的報價，或比 market-data 最後收盤新的那天（收盤後到隔天早上、週末）
+  const fq = (sym, closes) => {
     const q = f.x?.quotes?.[sym];
-    return q && q.date === today ? q : null;
+    return fugleUsable(q, closes?.at(-1)?.date) ? q : null;
   };
   const used = [];
   // 每一列：富果今天的報價，或前一交易日收盤（標日期）
@@ -139,8 +139,8 @@ async function twCard() {
       el("span", { class: "v" }, val, " ", isNum(chg) ? el("span", { class: tone(chg) }, `${signed(chg, (n) => price(+n.toFixed(2)))}（${pct(chgPct, 2)}）`) : ""));
   };
   const closesOf = (b) => b?.map((x) => ({ date: x.time, value: x.close }));
-  const rows = [line("加權指數", fq("IX0001"), ix),
-    ...TRACK.tw.map((c, i) => line(`${c} ${NAMES[c] || ""}`, fq(c), closesOf(bars[i])))];
+  const rows = [line("加權指數", fq("IX0001", ix), ix),
+    ...TRACK.tw.map((c, i) => line(`${c} ${NAMES[c] || ""}`, fq(c, closesOf(bars[i])), closesOf(bars[i])))];
 
   // 為什麼沒有用富果
   let why = null;

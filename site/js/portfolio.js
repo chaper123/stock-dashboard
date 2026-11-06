@@ -2,13 +2,18 @@
 // 美股用最後收盤，以美元兌台幣中間價換算。
 // 「今天漲跌」：台股＝現價對昨收；美股＝最後一個交易日對前一日（台北早上看到的是美國前一晚）。
 import { loadHoldings, loadDaily, loadFx } from "./data.js";
-import { fugleToday, quoteTime, FUGLE_NOTE } from "./fugle.js";
+import { fugleQuote, fugleUsable, quoteTime, FUGLE_NOTE } from "./fugle.js";
 import { taipeiToday } from "./fmt.js";
 
 async function twQuote(code) {
-  const q = await fugleToday(code);
-  if (q) return { price: q.price, prev: q.prev, at: quoteTime(q), note: FUGLE_NOTE };
-  const bars = await loadDaily("tw", code);
+  const [qR, barsR] = await Promise.allSettled([fugleQuote(code), loadDaily("tw", code)]);
+  const q = qR.status === "fulfilled" ? qR.value : null;
+  const bars = barsR.status === "fulfilled" ? barsR.value : null;
+  // 富果今天的報價，或比 market-data 最後收盤新的那天（收盤後到隔天早上、週末）；market-data 讀不到時有富果就用
+  if (q && (bars ? fugleUsable(q, bars.at(-1)?.time) : true)) {
+    return { price: q.price, prev: q.prev, at: q.date === taipeiToday() ? quoteTime(q) : q.date, note: FUGLE_NOTE };
+  }
+  if (!bars) throw barsR.reason;
   const b = bars.at(-1);
   return { price: b.close, prev: bars.at(-2)?.close, at: b.time, note: "收盤" };
 }

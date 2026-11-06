@@ -49,6 +49,7 @@ async function quote(symbol, key) {
     const t = Number.isFinite(q.lastUpdated) ? new Date(q.lastUpdated / 1000) : null;
     return {
       symbol, name: q.name, date: q.date, price, prev: q.previousClose ?? q.referencePrice,
+      open: q.openPrice, high: q.highPrice, low: q.lowPrice,
       change: q.change, changePct: q.changePercent, closed: !!q.isClose, time: t,
     };
   } finally {
@@ -75,15 +76,29 @@ export function clearFugle() {
   memo = null;
 }
 
-// 今天的富果報價（日期是今天才算；盤前、休市日回傳 null，呼叫端退回前一交易日收盤）
-export async function fugleToday(symbol) {
+// 富果的最新報價（盤中是今天；收盤後、半夜、週末與假日是最近一個交易日）。沒有金鑰或查詢失敗回傳 null
+export async function fugleQuote(symbol) {
   const f = await loadFugle().catch(() => null);
-  const q = f?.quotes?.[symbol];
-  return q && q.date === taipeiToday() ? q : null;
+  return f?.quotes?.[symbol] || null;
+}
+
+// 這筆報價要不要用：今天的報價，或比 market-data 最後一根（lastDate）新的那天。
+// market-data 的台股日線要隔天早上（週五的在週六早上）才更新，這段時間用富果補上最近一個交易日（2026-11-07 加）
+export const fugleUsable = (q, lastDate) => !!q?.date && (q.date === taipeiToday() || (!!lastDate && q.date > lastDate));
+
+// 那天收盤了沒：富果標了收盤，或日期已經不是今天
+export const fugleClosed = (q) => q.closed || q.date < taipeiToday();
+
+// 收盤後的整根日 K（開高低收都有才算），給 K 線補上 market-data 還沒更新的那天
+export function fugleBar(q) {
+  const bar = { time: q.date, open: q.open, high: q.high, low: q.low, close: q.price };
+  return [bar.open, bar.high, bar.low, bar.close].every(Number.isFinite) ? bar : null;
 }
 
 const hhmm = (t) => (t ? new Intl.DateTimeFormat("zh-TW", { timeZone: "Asia/Taipei", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(t) : "");
-export const quoteTime = (q) => (q.closed ? `今天收盤 ${hhmm(q.time)}` : `今天 ${hhmm(q.time)}`);
+const md = (ymd) => ymd.slice(5).replace("-", "/");
+export const quoteTime = (q) => (q.date !== taipeiToday() ? `${md(q.date)} 收盤`
+  : q.closed ? `今天收盤 ${hhmm(q.time)}` : `今天 ${hhmm(q.time)}`);
 
 // 設定欄：輸入、更換、清除金鑰（畫面只顯示末四碼）。改了之後發出 refresh-request，外殼會重讀資料
 export function fugleSettings() {
