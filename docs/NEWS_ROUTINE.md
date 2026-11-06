@@ -269,7 +269,7 @@
 - **一天兩組列**：晨間摘要列事件ID `YYYYMMDD-00`、事實開頭「晨間（08:40）」，事件 01～49；午間摘要列 `YYYYMMDD-50`、事實開頭「午間（11:30）」，事件 51 起；盤中 M、話題 T、紀律 D、今日一句 Q、社群情緒 S、同學風向 C、口袋恐懼貪婪 P。
 - **網站讀法**：同一天兩組都要讀。重點、今日一句、盤中、話題、紀律以最新一組（午間）為準；事件列取當天兩組全部（同事件ID 不重複顯示）；午間沒跑時用晨間那組。
 
-## 12. v4（2026-11-06 設計，測試通過，等上線）
+## 12. v4（2026-11-06 設計、測試、上線）
 
 > 使用者 2026-11-06 選定：晨報讀私人持股用「排程掛上私人 repo」（Claude GitHub App 只授權 market-data-private，不用 token）；v4 加四項內容；`discipline.py` 改讀帳本「定投金額」。提示詞 `private/routines/news_morning.v4.prompt.md`、`news_noon.v4.prompt.md`（測試版 `*.v4test.prompt.md`）不進 git，由 scratchpad 的 build_v4.py 從 v3 產生。engine 釘選 stock-dashboard 2bea826（c831ada 加 `--dca` 與 `fund_moves.py`，2bea826 修正「定投金額」表頭）。
 
