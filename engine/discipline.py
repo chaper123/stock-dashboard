@@ -90,13 +90,18 @@ def trades(obj):
     return out
 
 
+def by_prefix(row, prefix):
+    """表頭以 prefix 開頭的那一欄（帳本實際表頭是「每月定投（NT$）」；和網站 data.js 的 col() 一樣用前綴比對）。"""
+    return next((v for h, v in row.items() if h.startswith(prefix)), "")
+
+
 def dca_list(obj):
     """帳本「定投金額」→ [(YYYY-MM, 金額)]（舊到新）；格式不對的列略過。"""
     out = []
     for r in table(obj):
-        m = str(r.get("生效月份", "")).strip().replace("/", "-")
+        m = str(by_prefix(r, "生效月份")).strip().replace("/", "-")
         parts = m.split("-")
-        amount = num(r.get("每月定投", ""))
+        amount = num(by_prefix(r, "每月定投"))
         if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit() and len(parts[0]) == 4 and amount:
             out.append((f"{parts[0]}-{int(parts[1]):02d}", int(amount) if amount == int(amount) else amount))
     return sorted(out)

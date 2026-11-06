@@ -205,8 +205,8 @@ def test_config_constants():
             c["invested_min"], c["market"]) == ("009816", "00981A", 6, 3000, [4, 10], 5, 2700, "台股")
 
 
-# 帳本「定投金額」分頁（2026-11-05 建立；E、F 欄是公式）
-DCA_HEAD = ["生效月份", "每月定投", "設定日期", "備註", "入金次數", "入金合計"]
+# 帳本「定投金額」分頁（2026-11-05 建立；E、F 欄是公式）。表頭照帳本實際的字樣（2026-11-06 測試排程讀回）
+DCA_HEAD = ["生效月份", "每月定投（NT$）", "設定日期", "備註", "這段期間入金次數", "這段期間入金合計（NT$）"]
 
 
 def dca(*rows):
@@ -266,3 +266,13 @@ def test_dca_cli_missing_file_falls_back(data, tmp_path):
     df.write_text(json.dumps(dca(("2026-11", "4000")), ensure_ascii=False), encoding="utf-8")
     p = subprocess.run(base + ["--dca", str(df), "--brief"], capture_output=True)
     assert p.returncode == 0 and "應投入 4,000（帳本「定投金額」）" in p.stdout.decode("utf-8")
+
+
+def test_dca_real_ledger_shape():
+    # 11/06 測試排程用 get_values 讀回的「定投金額」分頁（逐字）
+    real = {"range": "'定投金額'!A1:F200", "values": [
+        ["生效月份", "每月定投（NT$）", "設定日期", "備註", "這段期間入金次數", "這段期間入金合計（NT$）"],
+        ["2026-11", "3,000", "2026-11-05", "初始值（原本設定分頁的每月入金）", "1", "3,000"]]}
+    assert dp.dca_list(real) == [("2026-11", 3000)]
+    o = dp.compute(LEDGER_HOLD, LEDGER_TRADES, dt.date(2026, 11, 6), {"009816": (14.53, "x"), "00981A": (23.05, "x")}, set(), real)
+    assert (o["dca_source"], o["should_invest"], o["warnings"]) == ("帳本「定投金額」", 3000, [])
