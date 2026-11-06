@@ -2,16 +2,19 @@
 // → 新聞晨報整理的事件、話題、情緒。每一塊各自讀資料、各自失敗。
 // 新聞內容一律以純文字放進頁面，連結只接受 http/https（el 的 href 會檢查）。
 import { loadNewsView, sentimentParts, firstSentence, TIER_LABEL, SECTIONS, sectionOf } from "../news.js";
-import { loadFearGreed, loadTopics, loadHeadlines, loadNsf, loadIndex } from "../data.js";
+import { loadFearGreed, loadTopics, loadHeadlines, loadNsf, loadIndex, loadCalendar } from "../data.js";
 import { cnnReading, gaugeBlock, pocketBlock } from "../gauge.js";
-import { el, taipeiTime, shortDate, taipeiToday, extLink, daysBetween, int, pct } from "../fmt.js";
+import { el, taipeiTime, shortDate, taipeiToday, extLink, daysBetween, int, pct, twd, tone } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
 import { DROPPED } from "../config.js";
 import { TABS, holdTags, sortItems, hotList, nsfNews, nsfStatus, ago, timeOf } from "../headlines.js";
 import { macroTiles } from "../macro.js";
-import { outlookEvents } from "../outlook.js";
+import { outlookEvents, review009816, dayLabel } from "../outlook.js";
+import { loadPortfolio } from "../portfolio.js";
+import { loadFund, hasPrivate, privateSettings, PRIVATE_NOTE } from "../private.js";
+import { MOVE_PCT, weekStart, fundMoves, sinceFirst, lastSetChange, top10Rows, fundSummary, lookThrough } from "../inside.js";
 
-const PARTS = [["brief", "今天的重點"], ["nsf", "國安基金"], ["outlook", "展望"], ["macro", "總經"], ["feed", "持股新聞"], ["more", "晨報事件與情緒"]];
+const PARTS = [["brief", "今天的重點"], ["nsf", "國安基金"], ["outlook", "展望"], ["macro", "總經"], ["inside", "ETF 裡面在變什麼"], ["feed", "持股新聞"], ["more", "晨報事件與情緒"]];
 
 export async function render(root, { arg }) {
   root.append(pageHeader("新聞", "先看跟你有關的重點，再看接下來的事、總經，最後是持股的即時新聞。"));
@@ -32,6 +35,7 @@ export async function render(root, { arg }) {
   });
   slot(part("outlook"), outlookView);
   slot(part("macro"), macroView);
+  slot(part("inside"), insideView);
   slot(part("feed"), () => feedView(arg));
   slot(part("more"), moreView);
 }
@@ -117,6 +121,116 @@ async function nsfView() {
       el("p", { class: "tiny" }, "怎麼判斷：「會」要財政部公告啟動或繼續執行，或兩家以上主要媒體報導已決議進場；只有「不排除」、臨時會或一家報導時算「未定」；",
         "財政部公告停止或沒有公告算「沒有」。出處：財政部國安基金新聞稿（政府資料開放授權條款－第 1 版）、", ext(NSF_LAW, "國家金融安定基金設置及管理條例"),
         "。媒體只列官方與主要媒體（Tier 1～2）標題提到國安基金、護盤、救市、限空、公股行庫的。")));
+}
+
+// ── 你的 ETF 裡面在變什麼（私人 repo 的每日持股，要 GitHub token；本機 ?dev 讀 dev-data/private）
+const FUND_CODES = ["00981A", "009816"];
+const MOVE_LABEL = { new: "新買", add: "加碼", cut: "減碼", exit: "出清" };
+const lots = (n) => int(n / 1000);
+const pp = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
+
+async function insideView() {
+  const title = "你的 ETF 裡面在變什麼";
+  if (!hasPrivate()) {
+    return card(title,
+      el("p", { class: "small" }, "這裡會列 00981A 經理人這週買賣了什麼、009816 什麼時候換股與換了哪幾檔，以及你的台股實際押在哪些公司。",
+        "兩家投信不允許轉載持股，所以資料放在你的私人 repo，要先在下面設定只能讀那個 repo 的 GitHub token。"),
+      privateSettings({ open: true }));
+  }
+  const today = taipeiToday();
+  const [aR, bR, pR, calR] = await Promise.allSettled([loadFund("00981A"), loadFund("009816"), loadPortfolio(), loadCalendar()]);
+  const err = [aR, bR].find((r) => r.status === "rejected");
+  const ok = [aR, bR].filter((r) => r.status === "fulfilled").map((r) => r.value.doc);
+  const funds = Object.fromEntries(ok.map((d) => [d.code, d]));
+  return card(title,
+    err && notice("warn", `讀不到私人持股：${err.reason?.message || "未知原因"}`),
+    aR.status === "fulfilled" && activeFund(aR.value),
+    bR.status === "fulfilled" && indexFund(bR.value, calR, today),
+    exposure(pR, funds),
+    ok.length > 0 && el("p", { class: "tiny" }, `${PRIVATE_NOTE}。出處：`,
+      ok.map((d, i) => [i ? "、" : "", ext(d.source, d.source_name)]), " 的每日持股，平日晚上 21:30、隔天早上 07:00 收集。"),
+    privateSettings({ open: !!err }));
+}
+
+function fundHead(code, label, s) {
+  return [el("h3", {}, `${code} ${label}`),
+    el("p", { class: "tiny" }, `${shortDate(s.date)} 持股｜股票 ${s.count} 檔｜前十大 ${s.top10.toFixed(1)}%`,
+      s.cash != null ? `｜現金 ${s.cash.toFixed(1)}%` : "", s.futures ? `｜台指期 ${s.futures.toFixed(1)}%` : "",
+      s.aum ? `｜規模 ${int(s.aum / 1e8)} 億` : "")];
+}
+
+function moveText(m) {
+  if (m.kind === "new") return `${shortDate(m.since)} 起，現在 ${lots(m.b)} 張（權重 ${m.wb.toFixed(2)}%）`;
+  if (m.kind === "exit") return `原本 ${lots(m.a)} 張（權重 ${m.wa.toFixed(2)}%）`;
+  return `${lots(m.a)} → ${lots(m.b)} 張（${m.pct > 0 ? "+" : "−"}${Math.abs(m.pct).toFixed(0)}%），權重 ${m.wa.toFixed(2)}% → ${m.wb.toFixed(2)}%`;
+}
+
+function top10Table(doc, hist) {
+  const rows = top10Rows(doc, hist);
+  const cmp = hist.dates.length > 1;
+  const first = shortDate(hist.dates[0]);
+  return el("div", { class: "table-wrap" }, el("table", { class: "nowrap" },
+    el("thead", {}, el("tr", {}, el("th", {}, "前十大"), el("th", {}, "權重"),
+      cmp && el("th", {}, `權重比 ${first}`), cmp && el("th", {}, `股數比 ${first}`))),
+    el("tbody", {}, rows.map((r) => el("tr", {}, el("td", {}, r.name), el("td", {}, `${r.weight.toFixed(2)}%`),
+      cmp && el("td", { class: r.dw == null ? "" : tone(r.dw) }, r.isNew ? "新進" : r.dw == null ? "—" : pp(r.dw)),
+      cmp && el("td", {}, r.ds == null ? "—" : Math.abs(r.ds) < 0.5 ? "沒變" : `${r.ds > 0 ? "+" : "−"}${Math.abs(r.ds).toFixed(0)}%`))))));
+}
+
+// 00981A：經理人這週買賣了什麼、收集以來新增與出清、前十大
+function activeFund({ doc, hist }) {
+  const last = hist.dates.at(-1);
+  const from = weekStart(hist.dates);
+  const { moves, tokens } = from < last ? fundMoves(hist, from, last) : { moves: [], tokens: 0 };
+  const sf = sinceFirst(hist);
+  const line = (m) => el("li", {}, el("b", { class: m.kind === "new" || m.kind === "add" ? "up" : "down" }, `${MOVE_LABEL[m.kind]} ${m.name}`), "：", moveText(m));
+  return el("div", { class: "fund" },
+    fundHead("00981A", "主動統一台股增長｜經理人選股", fundSummary(doc)),
+    el("p", { class: "small" }, el("b", {}, `這週（${shortDate(from)} → ${shortDate(last)}）經理人調了什麼`),
+      el("span", { class: "tiny" }, `（只列股數變化 ${MOVE_PCT}% 以上的）`)),
+    from >= last ? el("p", { class: "muted small" }, "持股只收集到一天，還不能比較。")
+      : moves.length ? el("ul", { class: "moves" }, moves.slice(0, 8).map(line))
+        : el("p", { class: "muted small" }, `這週沒有股數變化 ${MOVE_PCT}% 以上的。`),
+    moves.length > 8 && el("details", { class: "routine" }, el("summary", {}, `其他 ${moves.length - 8} 筆`),
+      el("ul", { class: "moves" }, moves.slice(8).map(line))),
+    el("p", { class: "tiny" }, `${shortDate(sf.first)} 開始收集以來：新增 ${sf.added.join("、") || "沒有"}；出清 ${sf.removed.join("、") || "沒有"}。`,
+      tokens ? `另有 ${tokens} 檔只放幾張的象徵性持股有變動，沒有列出。` : ""),
+    top10Table(doc, hist));
+}
+
+// 009816：指數規則、換股時程、最近一次換了哪幾檔、前十大
+function indexFund({ doc, hist }, calR, today) {
+  const closed = calR.status === "fulfilled" ? new Set(calR.value.tw_market?.closed || []) : null;
+  const next = closed && review009816(today, closed);
+  const ch = lastSetChange(hist);
+  const reviews = (doc.reviews || []).slice(0, 3);
+  return el("div", { class: "fund" },
+    fundHead("009816", "凱基台灣TOP50｜照指數規則換股，不是經理人選股", fundSummary(doc)),
+    el("ul", { class: "moves" },
+      el("li", {}, el("b", {}, "規則"), "：追蹤臺灣指數公司特選臺灣TOP 50 指數。上市股票先篩流動性與獲利，取市值前 50 檔；自由流通市值加權，權重兼顧動能。"),
+      el("li", {}, el("b", {}, "多久換一次"), "：每年 2、5、8、11 月審核，第 7 個交易日為基準日，5 個交易日後收盤生效。照規則換，你不用動作。"),
+      next && el("li", {}, el("b", {}, "下一次"), `：基準日 ${dayLabel(next.base)}，約 ${dayLabel(next.effective)} 收盤後生效${next.estimate ? "（預估）" : ""}。`),
+      ch ? el("li", {}, el("b", {}, `最近一次成分股變動（${shortDate(ch.from)} → ${shortDate(ch.to)}）`),
+        `：納入 ${ch.added.join("、") || "沒有"}；刪除 ${ch.removed.join("、") || "沒有"}。`)
+        : el("li", {}, el("b", {}, "換了哪幾檔"), `：每日持股從 ${shortDate(hist.dates[0])} 開始收集，下一次換股後會在這裡列出名單。`),
+      reviews.length > 0 && el("li", {}, el("b", {}, "過去幾次（投信公布的檔數）"), "：",
+        reviews.map((r) => `${shortDate(r.effective)} 生效，進 ${int(r.added)} 出 ${int(r.removed)}`).join("；"), "。")),
+    top10Table(doc, hist));
+}
+
+// 你的台股實際押在哪些公司：ETF 市值 × 成分股權重
+function exposure(pR, funds) {
+  const head = el("b", {}, "你的台股實際押在哪些公司");
+  if (pR.status === "rejected") return el("div", { class: "ai" }, head, `讀不到帳本持倉（${pR.reason?.message || "未知原因"}），算不出來。`);
+  const lt = lookThrough(pR.value.positions, funds, FUND_CODES);
+  if (lt.missing) return el("div", { class: "ai" }, head, `讀不到 ${lt.missing.join("、")} 的持股，先不算。`);
+  if (!lt.total) return el("div", { class: "ai" }, head, "帳本沒有台股持倉。");
+  const tsmc = lt.items.find((x) => x.code === "2330");
+  return el("div", { class: "ai" }, head,
+    `台股部位 ${twd(lt.total)}，把 ETF 拆開來看，前五大是：`,
+    el("ol", { class: "hot" }, lt.items.slice(0, 5).map((x) => el("li", {}, `${x.name} ${twd(x.value)}（${(x.value / lt.total * 100).toFixed(1)}%）`))),
+    tsmc && el("p", { class: "small" }, `台積電來自 ${tsmc.via.map((v) => `${v.code} ${twd(v.value)}（權重 ${v.weight.toFixed(2)}%）`).join(" ＋ ")}。`),
+    el("p", { class: "tiny" }, `市值用帳本持倉 × 最新價，權重用 ${[...new Set(lt.dates)].map(shortDate).join("、")} 的持股；ETF 還有現金與期貨，所以加起來不到 100%。`));
 }
 
 // ── 展望

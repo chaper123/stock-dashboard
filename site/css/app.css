@@ -546,3 +546,10 @@ ul.nsf-list .k { display: block; font-size: .76rem; color: var(--ink-2); }
 .nsf-status .tiny { margin: 6px 0 0; }
 details.nsf-more { margin-top: 10px; }
 details.nsf-more > summary { cursor: pointer; color: var(--accent); font-size: .92rem; padding: 4px 0; }
+
+/* ETF 裡面在變什麼 */
+.fund { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.fund:first-of-type { margin-top: 4px; padding-top: 0; border-top: 0; }
+.fund h3 { margin: 0 0 4px; }
+ul.moves { margin: 6px 0; padding-left: 1.2em; font-size: .9rem; line-height: 1.55; }
+ul.moves li { margin: 4px 0; }

@@ -1,6 +1,7 @@
 // 外殼：分頁切換（#/overview…）、重新整理、深淺色、離線提示、service worker。
 import { clearCache, offlineSources } from "./data.js";
 import { clearFugle } from "./fugle.js";
+import { clearPrivate } from "./private.js";
 import { IS_DEV } from "./config.js";
 import { el, taipeiTime } from "./fmt.js";
 import { loading, errorBox } from "./ui.js";
@@ -86,6 +87,7 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => docu
 function refresh() {
   clearCache();
   clearFugle();
+  clearPrivate();
   route();
 }
 document.getElementById("refresh").addEventListener("click", refresh);
