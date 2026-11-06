@@ -95,6 +95,17 @@ window.addEventListener("online", updateBanner);
 window.addEventListener("offline", updateBanner);
 document.addEventListener("data-settled", updateBanner);
 
+// 回到最上面：往下捲超過一個畫面才出現（每一頁都有）
+const toTop = el("button", { class: "to-top", type: "button", "aria-label": "回到最上面", title: "回到最上面", hidden: true }, "↑ 頂端");
+toTop.addEventListener("click", () => {
+  scrollTo({ top: 0 });
+  document.querySelector("main")?.focus({ preventScroll: true });
+});
+document.body.append(toTop);
+const updateToTop = () => { toTop.hidden = scrollY < 400; };
+window.addEventListener("scroll", updateToTop, { passive: true });
+window.addEventListener("hashchange", updateToTop);
+
 if ("serviceWorker" in navigator && !new URLSearchParams(location.search).has("nosw")) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }

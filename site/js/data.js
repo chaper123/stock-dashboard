@@ -268,6 +268,21 @@ export const loadCalendar = () => once("calendar", () => fetchJson(md("calendar/
 export const loadDividends = () => once("dividends", () => fetchJson(md("dividends/tw_etf.json"), "ETF 配息"));
 export const loadTopics = () => once("topics", () => fetchJson(md("news/topics.json"), "新聞話題統計"));
 export const loadFearGreed = () => once("fg", () => fetchJson(md("sentiment/cnn_fear_greed.json"), "CNN 恐懼貪婪"));
+// 新聞標題（第一層，最近 72 小時，約 2 MB；GitHub 傳輸時會壓縮）。格式見 market-data README「新聞標題格式」
+export const loadHeadlines = () => once("headlines", () => fetchJson(md("news/headlines.json"), "新聞標題"));
+// 國安基金官方新聞稿（財政部「國家金融安定基金訊息」列表，2026-11-06 起）：items[].date、title、link
+export const loadNsf = () => once("nsf", () => fetchJson(md("news/nsf.json"), "國安基金新聞稿"));
+
+// 集中市場三大法人買賣差額（元）：date,dealer_self,dealer_hedge,trust,foreign,foreign_dealer,total
+export const loadMarketInsti = () => once("market-insti", async () => {
+  const out = [];
+  for (const r of parseCSV(await fetchText(md("chips/tw_market_insti.csv"), "三大法人"))) {
+    const [date, , , trust, foreign, foreignDealer, total] = [r[0], ...r.slice(1, 7).map(Number)];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date) && [trust, foreign, total].every(Number.isFinite)) out.push({ date, trust, foreign, foreignDealer, total });
+  }
+  if (!out.length) throw new DataError("三大法人", "沒有資料");
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+});
 
 // 兩欄（date,value[,…]）的逐日序列
 const loadSeries = (path, src) => once(`series:${path}`, async () => {

@@ -1,61 +1,237 @@
-// 新聞：今天的重點（含旗標）→ 依標的篩選 → 分區（持股相關、產業與供應鏈、總經與政策、地緣、市場話題、情緒）。
-// 每則一行，點開看事實、來源等級、查證狀態與原文（PIVOT 第 4 節）。
-// 新聞內容一律以純文字放進頁面，原文網址只接受 http/https（extLink）。
+// 新聞（v4，docs/PROGRESS.md 第 12 項）：跳轉列 → 今天跟你有關的（新聞晨報）→ 展望 → 總經 → 持股新聞（不經 AI）＋多家媒體都在報
+// → 新聞晨報整理的事件、話題、情緒。每一塊各自讀資料、各自失敗。
+// 新聞內容一律以純文字放進頁面，連結只接受 http/https（el 的 href 會檢查）。
 import { loadNewsView, sentimentParts, firstSentence, TIER_LABEL, SECTIONS, sectionOf } from "../news.js";
-import { loadFearGreed, loadTopics } from "../data.js";
+import { loadFearGreed, loadTopics, loadHeadlines, loadNsf, loadIndex } from "../data.js";
 import { cnnReading, gaugeBlock, pocketBlock } from "../gauge.js";
-import { el, taipeiTime, shortDate, taipeiToday, extLink } from "../fmt.js";
+import { el, taipeiTime, shortDate, taipeiToday, extLink, daysBetween, int, pct } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
 import { DROPPED } from "../config.js";
+import { TABS, holdTags, sortItems, hotList, nsfNews, nsfStatus, ago, timeOf } from "../headlines.js";
+import { macroTiles } from "../macro.js";
+import { outlookEvents } from "../outlook.js";
+
+const PARTS = [["brief", "今天的重點"], ["nsf", "國安基金"], ["outlook", "展望"], ["macro", "總經"], ["feed", "持股新聞"], ["more", "晨報事件與情緒"]];
 
 export async function render(root, { arg }) {
-  root.append(pageHeader("新聞", "新聞晨報整理的事件：先看重點，再依分區或標的看；每則點開看事實、來源與原文。"));
-  slot(root, () => view(arg));
+  root.append(pageHeader("新聞", "先看跟你有關的重點，再看接下來的事、總經，最後是持股的即時新聞。"));
+  // 網站用 #/… 換頁，跳轉不能用錨點連結，改成按鈕捲動。國安基金那一塊只在大跌或有消息時出現，按鈕跟著出現
+  const buttons = Object.fromEntries(PARTS.map(([id, label]) => [id,
+    el("button", { type: "button", hidden: id === "nsf", onclick: () => document.getElementById(id)?.scrollIntoView({ block: "start" }) }, label)]));
+  root.append(el("nav", { class: "jump", "aria-label": "跳到" }, Object.values(buttons)));
+  const part = (id) => {
+    const box = el("div", { id, class: "jump-target" });
+    root.append(box);
+    return box;
+  };
+  slot(part("brief"), briefView);
+  slot(part("nsf"), async () => {
+    const node = await nsfView();
+    buttons.nsf.hidden = !node;
+    return node;
+  });
+  slot(part("outlook"), outlookView);
+  slot(part("macro"), macroView);
+  slot(part("feed"), () => feedView(arg));
+  slot(part("more"), moreView);
 }
 
-async function view(arg) {
+// ── 今天跟你有關的（新聞晨報的重點列；晨報 v4 之後改成「對你／為什麼／要做什麼」）
+async function briefView() {
   const v = await loadNewsView();
-  if (!v.rows.length) return notice("info", "新聞分頁還沒有資料。");
+  if (!v.rows.length) return notice("info", "新聞晨報還沒有資料。");
   const stale = v.dataDate !== taipeiToday();
-  const [sentiment, fg, topics] = await Promise.all([sentimentParts(v), loadFearGreed().catch(() => null), loadTopics().catch(() => null)]);
+  return [
+    v.ctx.missing.length > 0 && notice("warn", `讀不到${v.ctx.missing.join("、")}，「持有」的標示可能不完整。`),
+    highlightsCard(v, { title: "今天跟你有關的" }),
+    el("p", { class: "tiny row" }, `新聞晨報 ${taipeiTime(v.generatedAt)}・資料日 ${shortDate(v.dataDate)}`,
+      stale && el("span", { class: "badge b-warn" }, "⚠ 不是今天的")),
+  ];
+}
 
-  // 標的篩選：持有的排前面
-  const all = [...new Set(v.events.flatMap((e) => e.codes))].filter((c) => !DROPPED.has(c));
-  const codes = [...all.filter((c) => v.ctx.held.has(c)), ...all.filter((c) => !v.ctx.held.has(c)).sort()];
-  const filter = codes.includes(arg) ? arg : null;
-  const list = filter ? v.events.filter((e) => e.codes.includes(filter) || e.related.includes(filter)) : v.events;
+// ── 大跌時：國安基金與政府動向。只列官方公告與主要媒體的報導，不猜會不會進場
+const NSF_LAW = "https://law-out.mof.gov.tw/LawContent.aspx?id=GL008772";
+const NSF_LIST = "https://www.mof.gov.tw/multiplehtml/383";
+const ext = (href, text) => el("a", { href, target: "_blank", rel: "noopener noreferrer" }, text);
+// 同一家媒體最多列 n 則（同一家常一題多發，避免擠掉其他來源）
+const perSource = (items, n) => { const c = {}; return items.filter((x) => (c[x.source] = (c[x.source] || 0) + 1) <= n); };
 
-  const sections = SECTIONS.map((name) => {
-    const inSec = list.filter((e) => sectionOf(e) === name);
+// 國安基金狀態 → 圖示、一個字的答案、一句話
+const NSF_VIEW = {
+  active: { icon: "✓", word: "會", line: () => "國安基金已決定進場護盤" },
+  considering: { icon: "?", word: "未定", line: () => "有進場的消息，但還沒正式決定" },
+  stopped: { icon: "✕", word: "沒有", line: (s) => `國安基金目前沒有在護盤（${shortDate(s.date)} 已停止）` },
+  none: { icon: "✕", word: "沒有", line: () => "財政部沒有進場公告" },
+  unknown: { icon: "—", word: "讀不到", line: () => "讀不到財政部的國安基金公告，請稍後再看" },
+};
+
+async function nsfView() {
+  const today = taipeiToday();
+  const now = Date.now();
+  const [ixR, nsfR, hR] = await Promise.allSettled([loadIndex("TAIEX"), loadNsf(), loadHeadlines()]);
+  const ix = ixR.status === "fulfilled" ? ixR.value : null;
+  let m = null;
+  if (ix?.length >= 6) {
+    const last = ix.at(-1);
+    const high = Math.max(...ix.slice(-250).map((x) => x.value));
+    m = { last, chg: (last.value / ix.at(-2).value - 1) * 100, week: (last.value / ix.at(-6).value - 1) * 100, dd: (last.value / high - 1) * 100 };
+  }
+  const official = nsfR.status === "fulfilled" ? nsfR.value.items || [] : [];
+  const fresh = (d) => daysBetween(d, today) <= 14;
+  const media = hR.status === "fulfilled" ? nsfNews(sortItems(hR.value.items || [])).filter((x) => now - timeOf(x) < 72 * 3600e3) : [];
+  const st = nsfStatus(nsfR.status === "fulfilled" ? official : null, media, today, now);
+  // 出現條件：進場中或有消息、大跌、兩週內有官方公告，或兩天內有兩則以上主要媒體報導
+  const drop = m && (m.chg <= -3 || m.dd <= -10);
+  if (!["active", "considering"].includes(st.state) && !drop && !official.some((x) => fresh(x.date))
+    && media.filter((x) => now - timeOf(x) < 48 * 3600e3).length < 2) return null;
+
+  const v = NSF_VIEW[st.state];
+  return card("國安基金會不會護盤？",
+    el("div", { class: `nsf-status ${st.state}` },
+      el("span", { class: "nsf-icon", "aria-hidden": "true" }, v.icon),
+      el("div", {},
+        el("div", { class: "nsf-word" }, v.word, el("span", {}, v.line(st))),
+        st.title && el("p", { class: "tiny" }, `依據：${st.by} ${shortDate(st.date)}`, ext(st.link, `〈${st.title}〉`),
+          st.media ? "（財政部還沒公告）" : ""))),
+    el("details", { class: "nsf-more" },
+      el("summary", {}, "看依據：大盤、官方公告、媒體報導、法規"),
+      m && el("p", { class: "small" },
+        `加權指數 ${shortDate(m.last.date)} 收 ${int(m.last.value)} 點：當天 ${pct(m.chg, 2)}、近 5 個交易日 ${pct(m.week, 1)}、比 52 週高點 ${pct(m.dd, 1)}。`,
+        el("span", { class: "tiny" }, "（收盤數字隔天早上更新）")),
+      el("h3", {}, "官方公告（財政部・國安基金新聞稿）"),
+      official.length ? el("ul", { class: "nsf-list" }, official.slice(0, 3).map((x) => el("li", {},
+        el("span", { class: "mini hold" }, "官方"), " ", ext(x.link, x.title),
+        el("span", { class: "k" }, `${x.date}${fresh(x.date) ? "・兩週內" : ""}`))))
+        : el("p", { class: "muted small" }, nsfR.status === "rejected" ? "讀不到財政部的國安基金新聞稿。" : "沒有公告。"),
+      el("p", { class: "tiny" }, ext(NSF_LIST, "財政部「國家金融安定基金訊息」全部公告 ↗")),
+      el("h3", {}, "主要媒體怎麼報（最近 72 小時）"),
+      media.length ? el("ul", { class: "nsf-list" }, perSource(media, 2).slice(0, 6).map((x) => el("li", {},
+        el("span", { class: "mini" }, x.tier === 1 ? "官方" : "主要媒體"), " ", ext(x.url || x.link, x.title),
+        el("span", { class: "k" }, `${x.source}・${ago(timeOf(x), now)}`))))
+        : el("p", { class: "muted small" }, "最近 72 小時沒有主要媒體的相關報導。"),
+      el("div", { class: "ai" }, el("b", {}, "國安基金什麼時候會進場（法規）"),
+        "依《國家金融安定基金設置及管理條例》第 8 條：國內外重大事件、國際資金大幅移動，顯著影響民眾信心，致市場有失序或損及國家安定之虞時，",
+        "由管理委員會（主任委員是行政院副院長）決議動用；可運用總額 5,000 億元（第 4 條）。股市下跌本身不一定會進場，要看委員會的決議與財政部公告。"),
+      el("div", { class: "ai" }, el("b", {}, "對你"),
+        "國安基金進不進場，都不改變你的計畫：每月 6 日照 80／20 投入，4 月與 10 月檢查比例。這裡只整理官方公告與主要媒體的報導，不預測漲跌。"),
+      el("p", { class: "tiny" }, "怎麼判斷：「會」要財政部公告啟動或繼續執行，或兩家以上主要媒體報導已決議進場；只有「不排除」、臨時會或一家報導時算「未定」；",
+        "財政部公告停止或沒有公告算「沒有」。出處：財政部國安基金新聞稿（政府資料開放授權條款－第 1 版）、", ext(NSF_LAW, "國家金融安定基金設置及管理條例"),
+        "。媒體只列官方與主要媒體（Tier 1～2）標題提到國安基金、護盤、救市、限空、公股行庫的。")));
+}
+
+// ── 展望
+async function outlookView() {
+  const today = taipeiToday();
+  const { events, failed } = await outlookEvents(today);
+  const until = (d) => {
+    const n = Math.round((Date.parse(d) - Date.parse(today)) / 864e5);
+    return n === 0 ? "今天" : n === 1 ? "明天" : `${n} 天後`;
+  };
+  return card("展望：接下來要注意的事",
+    events.length ? el("div", { class: "ev-list" }, events.map((e) => el("div", { class: "ev" },
+      el("span", { class: "d" }, e.when, el("small", {}, until(e.date))),
+      el("span", { class: "t" }, e.title, e.estimate && el("span", { class: "mini" }, "預估")),
+      el("span", { class: "m" }, e.note))))
+      : el("p", { class: "muted" }, "75 天內沒有排定的事件。"),
+    el("div", { class: "ai" }, el("b", {}, "你的計畫什麼時候會變"),
+      "只有你的規則會改變動作：每月 6 日入金照 80／20，4 月與 10 月檢查比例。短期漲跌、法人看多看空都不改變計畫。"),
+    failed.length > 0 && el("p", { class: "tiny" }, `讀不到：${failed.join("、")}（相關事件沒有列出）。`),
+    el("p", { class: "tiny" }, "只列已排定的事件與照規則算出的日期，不預測漲跌。009816 審核日照指數規則推算，以臺灣指數公司公告為準。"));
+}
+
+// ── 總經
+async function macroView() {
+  const { tiles, failed } = await macroTiles();
+  return card("總經",
+    el("div", { class: "tiles" }, tiles.map((t) => el("div", { class: "mt" },
+      el("div", { class: "n" }, t.name, t.date && el("span", {}, t.date)),
+      t.missing ? el("div", { class: "v muted" }, "讀不到")
+        : [el("div", { class: `v ${t.tone || ""}` }, t.value, t.change && el("small", {}, t.change)),
+          el("div", { class: "x" }, t.text)]))),
+    failed.length > 0 && el("p", { class: "tiny" }, `讀不到：${failed.join("、")}。`),
+    el("p", { class: "tiny" }, "數字來自 market-data（美股與原油收盤、匯率、證交所三大法人、國發會景氣燈號、FRED）。說明照固定規則產生，只描述方向。"));
+}
+
+// ── 持股新聞（不經 AI）＋ 多家媒體都在報
+async function feedView(arg) {
+  const d = await loadHeadlines();
+  const items = sortItems(d.items || []);
+  const now = Date.now();
+  const tabNames = TABS.map(([n]) => n);
+  let cur = Math.max(0, tabNames.indexOf(arg));
+  let loose = false;
+  let shown = 15;
+
+  const tabs = el("div", { class: "ftabs", role: "group", "aria-label": "篩選持股" });
+  const list = el("div", { class: "feed" });
+  const item = (x) => {
+    const src = x.also?.length ? `${x.source} 等 ${x.also.length + 1} 家` : x.source;
+    const tags = holdTags(x).map(([c, direct]) => el("span", { class: "mini hold" }, direct ? c : `內文提到 ${c}`));
+    return el("div", { class: "fi" },
+      el("div", { class: "fi-meta" }, el("span", {}, `${src}・${ago(timeOf(x), now)}`),
+        x.tier >= 3 && el("span", { class: "mini low" }, TIER_LABEL[x.tier] === "其他" ? "非主要媒體" : TIER_LABEL[x.tier])),
+      el("a", { class: "fi-title", href: x.url || x.link, target: "_blank", rel: "noopener noreferrer" }, x.title),
+      tags.length > 0 && el("div", { class: "fi-tags" }, tags));
+  };
+  const draw = () => {
+    const rows = items.filter((x) => TABS[cur][1](x, loose));
+    tabs.replaceChildren(...TABS.map(([name, f], i) => el("button", {
+      class: "ftab", type: "button", "aria-pressed": String(i === cur),
+      onclick: () => { cur = i; shown = 15; draw(); },
+    }, name, el("span", { class: "n" }, items.filter((x) => f(x, loose)).length))));
+    list.replaceChildren(
+      ...(rows.length ? rows.slice(0, shown).map(item) : [el("p", { class: "muted" }, "72 小時內沒有符合的新聞。")]),
+      el("div", { class: "row more-btn" },
+        rows.length > shown && el("button", { class: "btn", type: "button", onclick: () => { shown += 15; draw(); } },
+          `顯示更多（還有 ${rows.length - shown} 則）`),
+        el("button", { class: "btn ghost", type: "button", onclick: () => { loose = !loose; shown = 15; draw(); } },
+          loose ? "只看標題提到持股、主要媒體的" : "也顯示內文提到、非主要媒體的")));
+  };
+  draw();
+
+  const hot = hotList(items, now);
+  return el("div", { class: "layout" },
+    card("持股新聞", tabs, list,
+      el("p", { class: "tiny" }, `${taipeiTime(d.generated_at_utc)} 整理（最近 72 小時，Google News 與中央社的標題，沒有經過 AI）。`)),
+    card("多家媒體都在報",
+      hot.length ? el("ol", { class: "hot" }, hot.map((x) => el("li", {},
+        el("a", { href: x.url || x.link, target: "_blank", rel: "noopener noreferrer" }, x.title),
+        el("span", { class: "k" }, `${x.also.length + 1} 家報導・${ago(timeOf(x), now)}`))))
+        : el("p", { class: "muted small" }, "最近沒有多家同時報導的持股新聞。"),
+      el("p", { class: "tiny" }, "最近 36 小時，跟持股或台股有關、不只一家報導的，依家數排。")));
+}
+
+// ── 新聞晨報整理的事件、話題、情緒
+async function moreView() {
+  const [vR, fg, topics] = await Promise.all([loadNewsView().then((v) => ({ v }), (e) => ({ e })),
+    loadFearGreed().catch(() => null), loadTopics().catch(() => null)]);
+  const v = vR.v;
+  const sentiment = await sentimentParts(v || null);
+  const sections = v ? SECTIONS.map((name) => {
+    // 只有已不關注的代號（00411A）的事件不列
+    const inSec = v.events.filter((e) => sectionOf(e) === name && !(e.codes.length && e.codes.every((c) => DROPPED.has(c))));
     // 晨報為每個沒消息的標的寫一列「無重大消息」，併成一行
     const quiet = inSec.filter((e) => /^無重大消息/.test(e.fact || ""));
-    const items = inSec.filter((e) => !quiet.includes(e));
-    const empty = name === "市場話題" ? "還沒有話題（新聞晨報 v3 與話題統計上線後顯示）。" : "沒有。";
-    return card(`${name}（${items.length}）`,
-      items.length ? items.map((e) => evLine(e, v.ctx)) : el("p", { class: "small muted" }, empty),
-      name === "市場話題" && !filter && topicTable(topics),
+    const evs = inSec.filter((e) => !quiet.includes(e));
+    if (!evs.length && !quiet.length) return null;
+    return el("div", {},
+      el("h3", {}, `${name}（${evs.length}）`),
+      evs.map((e) => evLine(e, v.ctx)),
       quiet.length > 0 && el("p", { class: "tiny" }, `無重大消息：${quiet.flatMap((e) => e.codes.length ? e.codes : e.symbols).join("、")}`));
-  });
-
+  }) : [];
   return [
-    el("p", { class: "small muted row" }, `新聞晨報 ${taipeiTime(v.generatedAt)}・資料日 ${shortDate(v.dataDate)}・讀「${v.label}」分頁`,
-      stale && el("span", { class: "badge b-warn" }, "⚠ 不是今天的")),
-    v.ctx.missing.length > 0 && notice("warn", `讀不到${v.ctx.missing.join("、")}，「持有」的標示可能不完整。`),
-    highlightsCard(v),
-    el("div", { class: "card" },
-      el("div", { class: "tiny", style: { marginBottom: "6px" } }, "依標的篩選"),
-      el("div", { class: "chips", style: { margin: 0 } }, [["", "全部"], ...codes.map((c) => [c, c])].map(([c, label]) =>
-        el("a", { class: "chip", href: `#/news/${c}`, role: "button", "aria-pressed": String((filter || "") === c) }, label)))),
-    ...sections,
+    v ? el("details", { class: "card more routine" },
+      el("summary", {}, `新聞晨報整理的事件（${v.events.length} 件，有查證與來源等級）`),
+      sections, topicTable(topics),
+      v.summaryRow && el("p", { class: "tiny" }, `晨報輸入狀態：${v.summaryRow.fact}`))
+      : notice("err", `讀不到新聞晨報：${vR.e?.message || ""}`),
     card("情緒",
       el("div", { class: "sent-grid" },
         el("div", { class: "fg-pair" },
           fg ? gaugeBlock("CNN 恐懼貪婪（美股）", `更新 ${taipeiTime(fg.time_utc)}`, cnnReading(fg), "沒有分數") : notice("err", "讀不到 CNN 恐懼貪婪"),
-          pocketBlock(v.pocket)),
+          pocketBlock(v?.pocket, v ? null : "讀不到新聞分頁")),
         el("div", { class: "sent-line" }, sentiment.join("・"),
           el("div", { class: "tiny" }, "情緒只當參考。")))),
-    v.summaryRow && el("details", { class: "card more" }, el("summary", {}, "新聞晨報的輸入狀態"),
-      el("p", { class: "small" }, v.summaryRow.fact)),
   ];
 }
 
@@ -94,9 +270,11 @@ export function highlightsCard(v, { title = "今天的重點", link = false } = 
     link && el("p", { class: "small" }, el("a", { href: "#/news" }, `看全部新聞（${v.events.length} 件）→`)));
 }
 
+// 「看明細」：晨報事件收在折疊區裡，先打開外層再打開這一則
 function openEvent(id) {
   const d = document.getElementById(`ev-${id}`);
   if (!d) return;
+  d.closest("details.routine")?.setAttribute("open", "");
   d.open = true;
   d.scrollIntoView({ behavior: "smooth", block: "center" });
 }
