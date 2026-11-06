@@ -4,6 +4,7 @@ import {
   loadSettings, loadTrades, loadDca, loadMeta, loadFearGreed, loadNavHistory, loadIndex, loadDaily, loadCalendar, loadFx, loadHoldings, loadDividends,
 } from "../data.js";
 import { loadPortfolio } from "../portfolio.js";
+import { marketCard } from "../market.js";
 import { loadFugle, getKey, fugleSettings, fugleUsable, quoteTime, FUGLE_NOTE } from "../fugle.js";
 import { discipline, dcaFor, nextDepositDate, nextCheckDate } from "../discipline.js";
 import { loadNewsView, sentimentParts } from "../news.js";
@@ -28,6 +29,7 @@ export async function render(root) {
   slot(grid2, usMacroCard);
   slot(grid2, calendarCard);
   slot(grid2, backgroundCard);
+  slot(root, marketCard); // 市場狀態（docs/INSIGHTS.md 3.2）
   slot(root, healthCard);
 }
 

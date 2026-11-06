@@ -339,6 +339,9 @@ table.nowrap td { white-space: nowrap; }
   border: 1px solid color-mix(in srgb, var(--crit) 55%, transparent); background: color-mix(in srgb, var(--crit) 10%, var(--surface)); }
 .flag-alert > div { margin-top: 6px; }
 .tag.up { color: var(--up); } .tag.down { color: var(--down); }
+/* 市場狀態：修正、熊市（2026-11-07） */
+.tag.st-warn { background: color-mix(in srgb, var(--warn) 30%, transparent); color: var(--ink); }
+.tag.st-crit { background: color-mix(in srgb, var(--crit) 30%, transparent); color: var(--ink); }
 .linkish { background: none; border: 0; padding: 0; margin-top: 2px; color: var(--accent); cursor: pointer; font-size: .82rem; }
 .sent-line { font-size: .9rem; }
 details.card.more > summary { padding: 0; }
@@ -346,8 +349,13 @@ details.card.more > summary { padding: 0; }
 .chain-hl li { margin: 4px 0; }
 
 /* K 線副圖（RSI、KDJ）打開時加高 */
-.chart-box.with-ind { height: 600px; }
-@media (min-width: 700px) { .chart-box.with-ind { height: 760px; } }
+.chart-box.with-ind { height: 520px; }
+@media (min-width: 700px) { .chart-box.with-ind { height: 640px; } }
+/* 副圖切換與技術面白話（2026-11-07） */
+.ind-row { gap: 8px; margin-top: 6px; align-items: center; }
+.ind-row .chips { margin: 0; }
+.ta-read { margin-top: 10px; }
+.ta-read > strong { font-size: .95rem; }
 .ind-read { display: block; color: var(--ink-2); }
 
 /* 新聞：一則一行（點開看明細） */

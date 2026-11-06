@@ -97,15 +97,19 @@ async function build() {
     }
     invested += flow;
     let value = 0;
+    const hv = {}, pxd = {}; // 每檔的台幣市值與台幣價格（給 attribution 拆解用）
     for (const [c, n] of Object.entries(shares)) {
       if (!n) continue;
       const isUs = us.includes(c);
       const p = priceAt(c, d) ?? lastPrice[c];
-      value += n * p * (isUs ? fx.at(d) ?? NaN : 1);
+      const q = p * (isUs ? fx.at(d) ?? NaN : 1);
+      pxd[c] = q;
+      hv[c] = n * q;
+      value += n * q;
     }
     // TWR：當天報酬＝(收盤市值 − 當天投入) ÷ 前一天收盤市值
     if (prevV != null && prevV > 0) index *= (value - flow) / prevV;
-    days.push({ date: d, value, flow, invested, index });
+    days.push({ date: d, value, flow, invested, index, hv, px: pxd });
     prevV = value;
   }
 
@@ -117,5 +121,42 @@ async function build() {
     twr: last.index - 1, xirr: xirr(cfs),
     flows: days.filter((x) => x.flow).map((x) => ({ date: x.date, amount: x.flow })),
     years: (Date.parse(last.date) - Date.parse(days[0].date)) / (365 * 86400000),
+    markets: Object.fromEntries([...tw.map((c) => [c, "tw"]), ...us.map((c) => [c, "us"])]),
+  };
+}
+
+// 為什麼輸（贏）大盤（docs/INSIGHTS.md 4.2）：把「組合 − 大盤」的累積報酬差拆到每一檔。
+// 每檔每天＝前一天權重 ×（該檔當天報酬 − 大盤當天報酬），再乘「之前的組合成長 × 之後的大盤成長」，
+// 這樣整段加總剛好等於累積報酬差；剩下的（買進當天成交價與收盤價的差、手續費）列成「其他」。
+// 另算「同樣的錢在同樣的日子改投大盤」現在值多少（包含投入時點的影響）。benchAt(date) 回傳大盤當天（或之前最近）的值
+export function attribution(perf, start, benchAt) {
+  const days = perf.days.filter((x) => x.date >= start);
+  if (days.length < 2) return null;
+  const d0 = days[0], dN = days.at(-1);
+  const B0 = benchAt(d0.date), BN = benchAt(dN.date);
+  if (!B0 || !BN) return null;
+  const by = {};
+  for (let i = 1; i < days.length; i++) {
+    const p = days[i - 1], d = days[i];
+    const bp = benchAt(p.date), bd = benchAt(d.date);
+    if (!(p.value > 0) || !bp || !bd) continue;
+    const rb = bd / bp - 1;
+    const k = (p.index / d0.index) * (BN / bd);
+    for (const [c, v] of Object.entries(p.hv)) {
+      const q0 = p.px[c], q1 = d.px[c];
+      if (!(v > 0) || !q0 || !q1) continue;
+      by[c] = (by[c] || 0) + k * (v / p.value) * (q1 / q0 - 1 - rb);
+    }
+  }
+  const diff = dN.index / d0.index - BN / B0;
+  const sum = Object.values(by).reduce((a, x) => a + x, 0);
+  let same = d0.value * (BN / B0);
+  for (const d of days.slice(1)) {
+    const b = d.flow ? benchAt(d.date) : null;
+    if (b) same += d.flow * (BN / b);
+  }
+  return {
+    diff: diff * 100, other: (diff - sum) * 100, value: dN.value, same,
+    by: Object.entries(by).map(([code, x]) => ({ code, pp: x * 100, market: perf.markets[code] })).sort((a, b) => a.pp - b.pp),
   };
 }

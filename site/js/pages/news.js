@@ -386,7 +386,10 @@ export function highlightsCard(v, { title = "今天的重點", link = false } = 
       h.parts ? el("dl", { class: "hl-why" },
         [["對你", h.parts.forYou], ["為什麼", h.parts.why], ["要做什麼", h.parts.todo]].filter(([, t]) => t)
           .map(([k, t]) => el("div", {}, el("dt", {}, k), el("dd", {}, t))))
-        : h.why && el("div", { class: "tiny" }, by === "routine" ? h.why : `為什麼列入：${h.why}`),
+        // 舊格式（v3）的理由混著事件 ID、Tier、查證來源，收進「查證細節」（docs/INSIGHTS.md 3.1）
+        : h.why && (by === "routine"
+          ? el("details", { class: "more hl-meta" }, el("summary", {}, "查證細節"), el("div", { class: "tiny" }, h.why))
+          : el("div", { class: "tiny" }, `為什麼列入：${h.why}`)),
       !link && h.eventId && el("button", { class: "linkish", type: "button", onclick: () => openEvent(h.eventId) }, "看明細"))))
     : el("p", { class: "muted" }, "今天沒有需要特別注意的事件。");
   const flags = v.flagged.length
@@ -394,7 +397,7 @@ export function highlightsCard(v, { title = "今天的重點", link = false } = 
       el("strong", {}, `⚠ 有 ${v.flagged.length} 件建議旗標不是 none`),
       v.flagged.map((e) => el("div", {}, codeChips(e.codes, v.ctx), " ", flagBadge(e.flag), " ", firstSentence(e.fact, 50),
         e.reason && el("div", { class: "tiny" }, e.reason))))
-    : el("p", { class: "flag-ok" }, "✓ 旗標全部正常（建議旗標都是 none）");
+    : null; // 旗標都是 none 時不顯示（內部核對用語，docs/INSIGHTS.md 3.1）
   return card(title, list, flags,
     by === "site" && el("p", { class: "tiny" }, "晨報還沒有「重點」列，先由網站依規則挑：非 none 旗標 → 持有標的、Tier 1～2 且已查證 → 必寫事項（保留一格）。"),
     link && el("p", { class: "small" }, el("a", { href: "#/news" }, `看全部新聞（${v.events.length} 件）→`)));

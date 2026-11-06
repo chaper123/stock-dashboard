@@ -284,6 +284,17 @@ export const loadMarketInsti = () => once("market-insti", async () => {
   return out.sort((a, b) => a.date.localeCompare(b.date));
 });
 
+// 集中市場融資融券（chips/tw_margin.csv：date,margin_lots,short_lots,margin_amount_k；融資餘額張、融券餘額張、融資金額仟元）
+export const loadMargin = () => once("margin", async () => {
+  const out = [];
+  for (const r of parseCSV(await fetchText(md("chips/tw_margin.csv"), "融資融券"))) {
+    const [date, lots, shortLots, amountK] = [r[0], ...r.slice(1, 4).map(Number)];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(amountK)) out.push({ date, lots, shortLots, amount: amountK * 1000 });
+  }
+  if (!out.length) throw new DataError("融資融券", "沒有資料");
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+});
+
 // 兩欄（date,value[,…]）的逐日序列
 const loadSeries = (path, src) => once(`series:${path}`, async () => {
   const out = [];
