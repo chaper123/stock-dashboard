@@ -7,8 +7,20 @@ import { isNum, shortDate } from "./fmt.js";
 export const TIER_LABEL = { 1: "官方", 2: "主要媒體", 3: "第一手發言", 4: "其他" };
 const NOT_CODES = new Set(["總經", "市場", "全部", "配置", ""]);
 const CROWD = ["2330", "009816", "00981A"];
-// 不當成事件卡的列：摘要、重點、今日一句另外顯示；情緒列放在情緒區；盤中、紀律（v3）放在總覽
-const HIDE_IN_CARDS = new Set(["摘要", "重點", "今日一句", "情緒", "盤中", "紀律"]);
+// 不當成事件卡的列：摘要、重點、今日一句另外顯示；情緒列放在情緒區；盤中、紀律（v3）放在總覽；
+// 總經總結、展望、經理人方向（v4）放在新聞頁的總經、展望、ETF 區
+const HIDE_IN_CARDS = new Set(["摘要", "重點", "今日一句", "情緒", "盤中", "紀律", "總經總結", "展望", "經理人方向"]);
+
+// 晨報 v4 的重點列理由欄：「對你：…｜為什麼：…｜要做什麼：…」→ { forYou, why, todo }；不是這個格式（v3）回傳 null
+export function splitWhy(reason) {
+  const out = {};
+  const KEY = { 對你: "forYou", 為什麼: "why", 要做什麼: "todo" };
+  for (const part of String(reason || "").split("｜")) {
+    const m = /^\s*(對你|為什麼|要做什麼)\s*[：:]\s*(.+?)\s*$/.exec(part);
+    if (m) out[KEY[m[1]]] = m[2];
+  }
+  return out.forYou || out.todo ? out : null;
+}
 
 // 新聞頁的分區（PIVOT 第 4 節），依序；話題列一律放「市場話題」，其他事件影響持有的代號就放「持股相關」，再依類別欄
 export const SECTIONS = ["持股相關", "產業與供應鏈", "總經與政策", "地緣", "市場話題"];
@@ -88,7 +100,7 @@ function pickHighlights(rows, events, ctx) {
     const seen = new Map();
     for (const r of own) {
       const key = `${r.eventId}|${r.fact}`;
-      if (!seen.has(key)) seen.set(key, { codes: [], text: r.fact, why: r.reason, eventId: r.eventId, flag: r.flag || "none" });
+      if (!seen.has(key)) seen.set(key, { codes: [], text: r.fact, why: r.reason, parts: splitWhy(r.reason), eventId: r.eventId, flag: r.flag || "none" });
       for (const c of splitCodes(r.symbol)) if (!seen.get(key).codes.includes(c)) seen.get(key).codes.push(c);
     }
     return { by: "routine", items: [...seen.values()].slice(0, 3) };
@@ -134,6 +146,9 @@ export async function loadNewsView() {
     todayLine: rows.find((r) => r.category === "今日一句")?.fact || null,
     intradayRows: rows.filter((r) => r.category === "盤中"),
     disciplineRows: rows.filter((r) => r.category === "紀律"),
+    macroSummary: rows.find((r) => r.category === "總經總結") || null,
+    outlookRows: rows.filter((r) => r.category === "展望"),
+    managerRow: rows.find((r) => r.category === "經理人方向" && r.symbol === "00981A") || null,
   };
 }
 

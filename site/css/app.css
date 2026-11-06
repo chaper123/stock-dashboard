@@ -324,6 +324,10 @@ table.nowrap td { white-space: nowrap; }
   border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: .8rem; font-weight: 700; }
 .hl.flagged::before { background: var(--crit); }
 .hl-text { font-size: 1rem; margin: 6px 0 2px; }
+.hl-why { margin: 4px 0 0; display: grid; gap: 2px; font-size: .9rem; }
+.hl-why > div { display: grid; grid-template-columns: 4.5em 1fr; gap: 6px; }
+.hl-why dt { color: var(--ink-2); font-weight: 600; }
+.hl-why dd { margin: 0; }
 .ev-tags { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
 .code { display: inline-flex; align-items: baseline; gap: 4px; padding: 1px 8px; border-radius: 6px; background: var(--surface-2);
   font-weight: 600; font-size: .82rem; }
@@ -553,3 +557,4 @@ details.nsf-more > summary { cursor: pointer; color: var(--accent); font-size: .
 .fund h3 { margin: 0 0 4px; }
 ul.moves { margin: 6px 0; padding-left: 1.2em; font-size: .9rem; line-height: 1.55; }
 ul.moves li { margin: 4px 0; }
+.mv-new { background: color-mix(in srgb, var(--warn) 45%, transparent); color: var(--ink); border-radius: 3px; padding: 0 3px; }

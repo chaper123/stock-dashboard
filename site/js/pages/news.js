@@ -126,6 +126,8 @@ async function nsfView() {
 // ── 你的 ETF 裡面在變什麼（私人 repo 的每日持股，要 GitHub token；本機 ?dev 讀 dev-data/private）
 const FUND_CODES = ["00981A", "009816"];
 const MOVE_LABEL = { new: "新買", add: "加碼", cut: "減碼", exit: "出清" };
+// 新買用黃色標記（使用者 2026-11-06 要求），加碼紅、減碼與出清綠（台股慣例）
+const MOVE_CLASS = { new: "mv-new", add: "up", cut: "down", exit: "down" };
 const lots = (n) => int(n / 1000);
 const pp = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
 
@@ -138,13 +140,14 @@ async function insideView() {
       privateSettings({ open: true }));
   }
   const today = taipeiToday();
-  const [aR, bR, pR, calR] = await Promise.allSettled([loadFund("00981A"), loadFund("009816"), loadPortfolio(), loadCalendar()]);
+  const [aR, bR, pR, calR, nR] = await Promise.allSettled([loadFund("00981A"), loadFund("009816"), loadPortfolio(), loadCalendar(), loadNewsView()]);
+  const mgr = nR.status === "fulfilled" ? nR.value.managerRow : null;
   const err = [aR, bR].find((r) => r.status === "rejected");
   const ok = [aR, bR].filter((r) => r.status === "fulfilled").map((r) => r.value.doc);
   const funds = Object.fromEntries(ok.map((d) => [d.code, d]));
   return card(title,
     err && notice("warn", `讀不到私人持股：${err.reason?.message || "未知原因"}`),
-    aR.status === "fulfilled" && activeFund(aR.value),
+    aR.status === "fulfilled" && activeFund(aR.value, mgr),
     bR.status === "fulfilled" && indexFund(bR.value, calR, today),
     exposure(pR, funds),
     ok.length > 0 && el("p", { class: "tiny" }, `${PRIVATE_NOTE}。出處：`,
@@ -173,19 +176,21 @@ function top10Table(doc, hist) {
     el("thead", {}, el("tr", {}, el("th", {}, "前十大"), el("th", {}, "權重"),
       cmp && el("th", {}, `權重比 ${first}`), cmp && el("th", {}, `股數比 ${first}`))),
     el("tbody", {}, rows.map((r) => el("tr", {}, el("td", {}, r.name), el("td", {}, `${r.weight.toFixed(2)}%`),
-      cmp && el("td", { class: r.dw == null ? "" : tone(r.dw) }, r.isNew ? "新進" : r.dw == null ? "—" : pp(r.dw)),
+      cmp && el("td", { class: r.dw == null ? "" : tone(r.dw) }, r.isNew ? el("span", { class: "mv-new" }, "新進") : r.dw == null ? "—" : pp(r.dw)),
       cmp && el("td", {}, r.ds == null ? "—" : Math.abs(r.ds) < 0.5 ? "沒變" : `${r.ds > 0 ? "+" : "−"}${Math.abs(r.ds).toFixed(0)}%`))))));
 }
 
 // 00981A：經理人這週買賣了什麼、收集以來新增與出清、前十大
-function activeFund({ doc, hist }) {
+function activeFund({ doc, hist }, mgr) {
   const last = hist.dates.at(-1);
   const from = weekStart(hist.dates);
   const { moves, tokens } = from < last ? fundMoves(hist, from, last) : { moves: [], tokens: 0 };
   const sf = sinceFirst(hist);
-  const line = (m) => el("li", {}, el("b", { class: m.kind === "new" || m.kind === "add" ? "up" : "down" }, `${MOVE_LABEL[m.kind]} ${m.name}`), "：", moveText(m));
+  const line = (m) => el("li", {}, el("b", { class: MOVE_CLASS[m.kind] }, `${MOVE_LABEL[m.kind]} ${m.name}`), "：", moveText(m));
   return el("div", { class: "fund" },
     fundHead("00981A", "主動統一台股增長｜經理人選股", fundSummary(doc)),
+    mgr && el("div", { class: "ai" }, el("b", {}, "經理人方向（AI 推論）"), mgr.fact,
+      el("p", { class: "tiny" }, mgr.reason || "AI 從投信公布的每日持股推論，不是經理人說的。")),
     el("p", { class: "small" }, el("b", {}, `這週（${shortDate(from)} → ${shortDate(last)}）經理人調了什麼`),
       el("span", { class: "tiny" }, `（只列股數變化 ${MOVE_PCT}% 以上的）`)),
     from >= last ? el("p", { class: "muted small" }, "持股只收集到一天，還不能比較。")
@@ -236,7 +241,8 @@ function exposure(pR, funds) {
 // ── 展望
 async function outlookView() {
   const today = taipeiToday();
-  const { events, failed } = await outlookEvents(today);
+  const [{ events, failed }, v] = await Promise.all([outlookEvents(today), loadNewsView().catch(() => null)]);
+  const quotes = v?.outlookRows || [];
   const until = (d) => {
     const n = Math.round((Date.parse(d) - Date.parse(today)) / 864e5);
     return n === 0 ? "今天" : n === 1 ? "明天" : `${n} 天後`;
@@ -247,6 +253,10 @@ async function outlookView() {
       el("span", { class: "t" }, e.title, e.estimate && el("span", { class: "mini" }, "預估")),
       el("span", { class: "m" }, e.note))))
       : el("p", { class: "muted" }, "75 天內沒有排定的事件。"),
+    quotes.length > 0 && [el("h3", {}, "法人與媒體怎麼看（引述）"),
+      el("ul", { class: "nsf-list" }, quotes.map((q) => el("li", {}, q.fact,
+        el("span", { class: "k" }, q.url ? ext(q.url, q.source || "出處") : q.source, q.eventTime && `・${q.eventTime}`)))),
+      el("p", { class: "tiny" }, `新聞晨報 ${taipeiTime(v.generatedAt)} 整理，引述主要媒體或法人的說法，不是預測，也不是本站的看法。`)],
     el("div", { class: "ai" }, el("b", {}, "你的計畫什麼時候會變"),
       "只有你的規則會改變動作：每月 6 日入金照 80／20，4 月與 10 月檢查比例。短期漲跌、法人看多看空都不改變計畫。"),
     failed.length > 0 && el("p", { class: "tiny" }, `讀不到：${failed.join("、")}（相關事件沒有列出）。`),
@@ -255,13 +265,16 @@ async function outlookView() {
 
 // ── 總經
 async function macroView() {
-  const { tiles, failed } = await macroTiles();
+  const [{ tiles, failed }, v] = await Promise.all([macroTiles(), loadNewsView().catch(() => null)]);
+  const sum = v?.macroSummary;
   return card("總經",
     el("div", { class: "tiles" }, tiles.map((t) => el("div", { class: "mt" },
       el("div", { class: "n" }, t.name, t.date && el("span", {}, t.date)),
       t.missing ? el("div", { class: "v muted" }, "讀不到")
         : [el("div", { class: `v ${t.tone || ""}` }, t.value, t.change && el("small", {}, t.change)),
           el("div", { class: "x" }, t.text)]))),
+    sum && el("div", { class: "ai" }, el("b", {}, "AI 總結"), sum.fact,
+      el("p", { class: "tiny" }, `新聞晨報 ${taipeiTime(v.generatedAt)}・AI 依上面的數字與新聞整理，只描述現況，不是預測。`, sum.reason ? `資料：${sum.reason}` : "")),
     failed.length > 0 && el("p", { class: "tiny" }, `讀不到：${failed.join("、")}。`),
     el("p", { class: "tiny" }, "數字來自 market-data（美股與原油收盤、匯率、證交所三大法人、國發會景氣燈號、FRED）。說明照固定規則產生，只描述方向。"));
 }
@@ -370,7 +383,10 @@ export function highlightsCard(v, { title = "今天的重點", link = false } = 
     ? el("ol", { class: "hl-list" }, items.map((h) => el("li", { class: `hl ${h.flag !== "none" ? "flagged" : ""}` },
       el("div", { class: "ev-tags" }, codeChips(h.codes, v.ctx), h.flag !== "none" && flagBadge(h.flag)),
       el("div", { class: "hl-text" }, h.text),
-      h.why && el("div", { class: "tiny" }, by === "routine" ? h.why : `為什麼列入：${h.why}`),
+      h.parts ? el("dl", { class: "hl-why" },
+        [["對你", h.parts.forYou], ["為什麼", h.parts.why], ["要做什麼", h.parts.todo]].filter(([, t]) => t)
+          .map(([k, t]) => el("div", {}, el("dt", {}, k), el("dd", {}, t))))
+        : h.why && el("div", { class: "tiny" }, by === "routine" ? h.why : `為什麼列入：${h.why}`),
       !link && h.eventId && el("button", { class: "linkish", type: "button", onclick: () => openEvent(h.eventId) }, "看明細"))))
     : el("p", { class: "muted" }, "今天沒有需要特別注意的事件。");
   const flags = v.flagged.length
