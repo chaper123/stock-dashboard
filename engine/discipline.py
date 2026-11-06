@@ -11,9 +11,12 @@
             「台幣金額」（空白時用「交割金額（原幣，含費）」，再沒有用股數 × 成交價）
   --data：價格與行事曆。價格優先用 intraday.json（今天的盤中快照），否則 tw_<代號>_norm.csv（或 <代號>_norm.csv）最後收盤；
           休市日用 calendar.json 的 tw_market.closed
+  --dca（選用）：帳本「定投金額」'定投金額'!A1:F 的 get_values 回傳；用「生效月份」「每月定投」。
+          某個月的定投金額＝生效月份不晚於這個月的最後一列（比第一列早用第一列）；沒給或讀不到用 CONFIG 的 3,000
 規則（CONFIG）：
-  - 只算台股；核心 009816 80%、衛星 00981A 20%；每月 6 日入金 3,000
-  - 當月台股「買進」台幣金額合計 ≥ 2,700 算已投入
+  - 只算台股；核心 009816 80%、衛星 00981A 20%；每月 6 日入金（定投金額，預設 3,000）
+  - 當月台股「買進」台幣金額合計 ≥ 定投金額的 9 成（3,000 → 2,700）算已投入；超過定投金額的部分是自主加碼
+    （2026-11-05 使用者決定，和網站 site/js/discipline.js 相同）
   - 檢查月 4 月與 10 月（各月 6 日）：偏離超過 5 個百分點時，當月入金全部補偏低的一檔；其他月份照 80／20
   - 偏離＝核心市值比例 − 80（百分點；正數表示核心偏高、衛星偏低）
 輸出 JSON：見 compute() 的回傳；--brief 印給模型與人看的精簡文字。
@@ -87,6 +90,34 @@ def trades(obj):
     return out
 
 
+def dca_list(obj):
+    """帳本「定投金額」→ [(YYYY-MM, 金額)]（舊到新）；格式不對的列略過。"""
+    out = []
+    for r in table(obj):
+        m = str(r.get("生效月份", "")).strip().replace("/", "-")
+        parts = m.split("-")
+        amount = num(r.get("每月定投", ""))
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit() and len(parts[0]) == 4 and amount:
+            out.append((f"{parts[0]}-{int(parts[1]):02d}", int(amount) if amount == int(amount) else amount))
+    return sorted(out)
+
+
+def dca_for(dca, ym):
+    """某個月的定投金額：生效月份不晚於這個月的最後一列；比第一列早用第一列；沒有資料用 CONFIG。"""
+    if not dca:
+        return CONFIG["monthly"]
+    a = dca[0][1]
+    for m, amount in dca:
+        if m <= ym:
+            a = amount
+    return a
+
+
+def min_for(amount):
+    """已投入門檻：定投金額的 9 成（CONFIG 3,000 → 2,700）。"""
+    return round(amount * CONFIG["invested_min"] / CONFIG["monthly"])
+
+
 def month_buys(tr, ym):
     return [t for t in tr if t["market"] == CONFIG["market"] and t["side"] == "買進" and t["date"][:7] == ym
             and t["twd"] is not None]
@@ -150,26 +181,30 @@ def prev_month(ym):
     return f"{y - 1}-12" if m == 1 else f"{y}-{m - 1:02d}"
 
 
-def streak(tr, today, invested_now, month_over):
-    """連續投入月數：本月已投入就從本月往前數；還沒投入但月份還沒結束，從上個月往前數；本月已結束沒投入就是 0。"""
+def streak(tr, today, invested_now, month_over, dca=None):
+    """連續投入月數：本月已投入就從本月往前數；還沒投入但月份還沒結束，從上個月往前數；本月已結束沒投入就是 0。
+    每個月用那個月的定投金額算門檻。"""
     ym = today.strftime("%Y-%m")
     if not invested_now:
         if month_over:
             return 0, []
         ym = prev_month(ym)
     months = []
-    while sum(t["twd"] for t in month_buys(tr, ym)) >= CONFIG["invested_min"]:
+    while sum(t["twd"] for t in month_buys(tr, ym)) >= min_for(dca_for(dca, ym)):
         months.append(ym)
         ym = prev_month(ym)
     return len(months), months
 
 
-def compute(holdings_obj, trades_obj, today, px, closed):
+def compute(holdings_obj, trades_obj, today, px, closed, dca_obj=None):
     ym = today.strftime("%Y-%m")
     tr = trades(trades_obj)
+    dca = dca_list(dca_obj)
+    monthly = dca_for(dca, ym)
+    invested_min = min_for(monthly)
     buys = month_buys(tr, ym)
     invested = round(sum(t["twd"] for t in buys))
-    is_invested = invested >= CONFIG["invested_min"]
+    is_invested = invested >= invested_min
     hold = tw_holdings(holdings_obj)
     warnings = []
     pos = {}
@@ -187,7 +222,6 @@ def compute(holdings_obj, trades_obj, today, px, closed):
     needs = dev is not None and abs(dev) > CONFIG["threshold_pp"]
     under = (sat if dev > 0 else core) if dev else None
     check_month = today.month in CONFIG["check_months"]
-    monthly = CONFIG["monthly"]
     normal = {core: round(monthly * CONFIG["target_pct"][core] / 100), sat: round(monthly * CONFIG["target_pct"][sat] / 100)}
     if needs and check_month:
         plan = {"mode": "rebalance", "amounts": {c: (monthly if c == under else 0) for c in CODES},
@@ -202,10 +236,20 @@ def compute(holdings_obj, trades_obj, today, px, closed):
     last_td = last_trading_day(today.year, today.month, closed)
     pday = plan_day(today.year, today.month)
     month_over = today > last_td
-    n, months = streak(tr, today, is_invested, month_over)
+    n, months = streak(tr, today, is_invested, month_over, dca)
+    if dca_obj is None:
+        dca_source = "CONFIG（沒有給 --dca）"
+    elif not dca:
+        dca_source = "CONFIG（帳本「定投金額」讀不到有效的列）"
+        warnings.append("帳本「定投金額」讀不到有效的列，用預設 3,000")
+    else:
+        dca_source = "帳本「定投金額」"
     return {
         "today": today.isoformat(), "month": ym, "config": CONFIG,
-        "should_invest": monthly, "invested": invested, "invested_min": CONFIG["invested_min"], "is_invested": is_invested,
+        "should_invest": monthly, "dca_source": dca_source, "dca_list": [{"month": m, "amount": a} for m, a in dca],
+        "next_month_dca": dca_for(dca, f"{today.year + 1}-01" if today.month == 12 else f"{today.year}-{today.month + 1:02d}"),
+        "invested": invested, "invested_min": invested_min, "is_invested": is_invested,
+        "dca_part": min(invested, monthly), "extra": max(0, invested - monthly),
         "month_buys": [{k: t[k] for k in ("date", "code", "shares", "price", "twd", "twd_source")} for t in buys],
         "bought_by_code": bought,
         "off_plan_buys": [{k: t[k] for k in ("date", "code", "twd")} for t in buys if t["code"] not in CODES],
@@ -231,8 +275,10 @@ def money(x):
 def brief(o):
     core, sat = CODES
     h, r = o["holdings"], o["ratio_pct"]
-    L = [f"【本月紀律】{o['month']}：應投入 {money(o['should_invest'])}，已投入 {money(o['invested'])}"
-         + (f"（≥ {money(o['invested_min'])}，已完成）" if o["is_invested"] else f"（未達 {money(o['invested_min'])}）"),
+    L = [f"【本月紀律】{o['month']}：應投入 {money(o['should_invest'])}（{o['dca_source']}），已投入 {money(o['invested'])}"
+         + (f"（≥ {money(o['invested_min'])}，已完成）" if o["is_invested"] else f"（未達 {money(o['invested_min'])}）")
+         + (f"；其中定投 {money(o['dca_part'])}、自主加碼 {money(o['extra'])}" if o["extra"] else "")
+         + (f"；下個月定投 {money(o['next_month_dca'])}" if o["next_month_dca"] != o["should_invest"] else ""),
          f"- 本月買進：" + ("、".join(f"{t['date'][5:]} {t['code']} {money(t['twd'])}" for t in o["month_buys"]) or "無")]
     if o["off_plan_buys"]:
         L.append("- ⚠ 計畫外的台股：" + "、".join(f"{t['date'][5:]} {t['code']} {money(t['twd'])}" for t in o["off_plan_buys"]))
@@ -259,12 +305,15 @@ def main(argv=None):
     ap.add_argument("--holdings", required=True, help="帳本「持倉」get_values 回傳 JSON")
     ap.add_argument("--trades", required=True, help="帳本「交易紀錄」get_values 回傳 JSON")
     ap.add_argument("--data", default="data", help="放 intraday.json、tw_<代號>_norm.csv、calendar.json 的目錄")
+    ap.add_argument("--dca", help="帳本「定投金額」get_values 回傳 JSON（選用；沒給用 CONFIG 的 3,000）")
     ap.add_argument("--today", help="YYYY-MM-DD（台北）；不給就用今天")
     ap.add_argument("--out", help="完整 JSON 寫到這個檔案")
     ap.add_argument("--brief", action="store_true", help="印精簡文字；不給就印 JSON")
     a = ap.parse_args(argv)
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(TPE).date()
-    o = compute(read_json(a.holdings), read_json(a.trades), today, prices(a.data, today), closed_days(a.data))
+    # --dca 給了但檔案讀不到（帳本讀取失敗）時當成空表：用預設金額並在 warnings 註明
+    dca_obj = (read_json(a.dca) or {}) if a.dca else None
+    o = compute(read_json(a.holdings), read_json(a.trades), today, prices(a.data, today), closed_days(a.data), dca_obj)
     sys.stdout.reconfigure(encoding="utf-8")
     text = json.dumps(o, ensure_ascii=False)
     if a.out:

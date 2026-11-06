@@ -191,7 +191,8 @@ def test_cli(data, tmp_path):
                         "--data", str(data), "--today", "2026-10-30", "--out", str(out), "--brief"], capture_output=True)
     assert p.returncode == 0, p.stderr.decode("utf-8", "replace")
     text = p.stdout.decode("utf-8")
-    assert "【本月紀律】2026-10：應投入 3,000，已投入 4,255（≥ 2,700，已完成）" in text
+    assert "【本月紀律】2026-10：應投入 3,000（CONFIG（沒有給 --dca）），已投入 4,255（≥ 2,700，已完成）" in text
+    assert "其中定投 3,000、自主加碼 1,255" in text
     assert "偏離 +4.78 個百分點" in text and "【下次檢查】2027-04-06；連續投入 1 個月" in text
     assert "是當月最後一個交易日" in text
     o = json.loads(out.read_text(encoding="utf-8"))
@@ -202,3 +203,66 @@ def test_config_constants():
     c = dp.CONFIG
     assert (c["core"], c["satellite"], c["deposit_day"], c["monthly"], c["check_months"], c["threshold_pp"],
             c["invested_min"], c["market"]) == ("009816", "00981A", 6, 3000, [4, 10], 5, 2700, "台股")
+
+
+# 帳本「定投金額」分頁（2026-11-05 建立；E、F 欄是公式）
+DCA_HEAD = ["生效月份", "每月定投", "設定日期", "備註", "入金次數", "入金合計"]
+
+
+def dca(*rows):
+    return {"values": [DCA_HEAD] + [[m, a, "2026-11-05", "", "", ""] for m, a in rows]}
+
+
+def test_dca_list_and_for():
+    d = dp.dca_list({"values": [DCA_HEAD, ["2026-11", "3,000"], ["2027/1", "5000"], ["", "100"], ["2026-12", ""],
+                                ["說明", "1"]]})
+    assert d == [("2026-11", 3000.0), ("2027-01", 5000.0)]
+    assert [dp.dca_for(d, m) for m in ("2026-10", "2026-11", "2026-12", "2027-01", "2027-06")] == [3000, 3000, 3000, 5000, 5000]
+    assert dp.dca_for([], "2026-11") == 3000 and dp.dca_list(None) == [] and dp.dca_list({}) == []
+    assert (dp.min_for(3000), dp.min_for(5000), dp.min_for(2000)) == (2700, 4500, 1800)
+
+
+def test_dca_changes_plan_threshold_and_extra(data):
+    t = {"values": [TRADE_HEAD, trade("2026-12-08", "009816", 200, 16, twd="3,200"),
+                    trade("2026-12-08", "00981A", 30, 28, twd="840")]}
+    d = dt.date(2026, 12, 10)
+    o = dp.compute(LEDGER_HOLD, t, d, dp.prices(data, d), dp.closed_days(data), dca(("2026-11", "3000"), ("2026-12", "5000")))
+    assert (o["should_invest"], o["invested_min"], o["invested"], o["is_invested"]) == (5000, 4500, 4040, False)
+    assert o["plan"]["amounts"] == {"009816": 4000, "00981A": 1000} and o["dca_source"] == "帳本「定投金額」"
+    assert (o["dca_part"], o["extra"], o["next_month_dca"]) == (4040, 0, 5000)
+    assert "應投入 5,000（帳本「定投金額」），已投入 4,040（未達 4,500）" in dp.brief(o)
+    # 同樣的交易在 3,000 的月份：已投入，超過的 1,040 是自主加碼；下個月改 5,000 時 brief 會寫
+    o = dp.compute(LEDGER_HOLD, t, d, dp.prices(data, d), dp.closed_days(data), dca(("2026-11", "3000"), ("2027-01", "5000")))
+    assert (o["should_invest"], o["is_invested"], o["dca_part"], o["extra"], o["next_month_dca"]) == (3000, True, 3000, 1040, 5000)
+    assert "其中定投 3,000、自主加碼 1,040；下個月定投 5,000" in dp.brief(o)
+
+
+def test_dca_streak_uses_each_month_amount(data):
+    # 11 月定投 3,000 買 2,800（≥ 2,700 算已投入）；12 月改 5,000，買 4,600（≥ 4,500）；1 月改 2,000，買 1,900（≥ 1,800）
+    rows = [trade("2026-11-06", "009816", 1, 1, twd="2800"), trade("2026-12-07", "009816", 1, 1, twd="4600"),
+            trade("2027-01-06", "009816", 1, 1, twd="1900")]
+    t = {"values": [TRADE_HEAD] + rows}
+    d = dt.date(2027, 1, 20)
+    table_ = dca(("2026-11", "3000"), ("2026-12", "5000"), ("2027-01", "2000"))
+    o = dp.compute(LEDGER_HOLD, t, d, dp.prices(data, d), dp.closed_days(data), table_)
+    assert (o["streak_months"], o["streak_list"]) == (3, ["2027-01", "2026-12", "2026-11"])
+    # 12 月改成 6,000 時 4,600 不到 5,400：連續只算 1 月
+    table_ = dca(("2026-11", "3000"), ("2026-12", "6000"), ("2027-01", "2000"))
+    o = dp.compute(LEDGER_HOLD, t, d, dp.prices(data, d), dp.closed_days(data), table_)
+    assert (o["streak_months"], o["streak_list"]) == (1, ["2027-01"])
+
+
+def test_dca_cli_missing_file_falls_back(data, tmp_path):
+    hf, tf = tmp_path / "h.json", tmp_path / "t.json"
+    hf.write_text(json.dumps(LEDGER_HOLD, ensure_ascii=False), encoding="utf-8")
+    tf.write_text(json.dumps(LEDGER_TRADES, ensure_ascii=False), encoding="utf-8")
+    base = [sys.executable, str(ENGINE / "discipline.py"), "--holdings", str(hf), "--trades", str(tf), "--data", str(data),
+            "--today", "2026-11-10"]
+    p = subprocess.run(base + ["--dca", str(tmp_path / "nope.json")], capture_output=True)
+    assert p.returncode == 0, p.stderr.decode("utf-8", "replace")
+    o = json.loads(p.stdout.decode("utf-8"))
+    assert o["should_invest"] == 3000 and o["dca_source"].startswith("CONFIG（帳本") and o["warnings"]
+    df = tmp_path / "dca.json"
+    df.write_text(json.dumps(dca(("2026-11", "4000")), ensure_ascii=False), encoding="utf-8")
+    p = subprocess.run(base + ["--dca", str(df), "--brief"], capture_output=True)
+    assert p.returncode == 0 and "應投入 4,000（帳本「定投金額」）" in p.stdout.decode("utf-8")
