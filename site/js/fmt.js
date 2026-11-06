@@ -54,6 +54,8 @@ export function shortDate(ymd) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ymd || "");
   return m ? `${m[2]}/${m[3]}` : ymd || "—";
 }
+// 跟 ref 同一年只寫月/日，不同年寫完整日期（高點可能在去年）
+export const dateVs = (ymd, ref) => (ymd?.slice(0, 4) === ref?.slice(0, 4) ? shortDate(ymd) : (ymd || "—").replaceAll("-", "/"));
 export function taipeiToday() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei" }).format(new Date());
 }

@@ -248,7 +248,8 @@ export const loadMeta = () => once("meta", () => fetchJson(md("meta.json"), "mar
 
 // 日線：date,volume,open,high,low,close（無表頭）
 export const loadDaily = (market, code) => once(`daily:${market}:${code}`, async () => {
-  const path = market === "us" ? `us/${code}.csv` : `tw/${code}_norm.csv`;
+  // macro：data/macro/<名稱>.csv（TSM、SPX…，格式同美股日線）
+  const path = market === "us" ? `us/${code}.csv` : market === "macro" ? `macro/${code}.csv` : `tw/${code}_norm.csv`;
   const src = `${code} 日線`;
   const bars = [];
   for (const r of parseCSV(await fetchText(md(path), src))) {
@@ -294,6 +295,25 @@ export const loadMargin = () => once("margin", async () => {
   if (!out.length) throw new DataError("融資融券", "沒有資料");
   return out.sort((a, b) => a.date.localeCompare(b.date));
 });
+
+// 無表頭 CSV 的原始列（個股法人、融資、集保股權分散、月營收；第 2 批，docs/INSIGHTS.md 第 7 節）
+const loadRows = (path, src) => once(`rows:${path}`, async () => {
+  const rows = parseCSV(await fetchText(md(path), src)).filter((r) => r.length > 1 && /^\d{4}-\d{2}/.test(r[0]));
+  if (!rows.length) throw new DataError(src, "沒有資料");
+  return rows;
+});
+// date,code,foreign,foreign_dealer,trust,dealer,total（股）
+export const loadStockInsti = (code) => loadRows("chips/tw_insti.csv", "個股三大法人").then((rs) => rs.filter((r) => r[1] === code)
+  .map((r) => ({ date: r[0], foreign: +r[2], foreignDealer: +r[3], trust: +r[4], dealer: +r[5], total: +r[6] })));
+// date,code,margin_lots,short_lots（張）
+export const loadStockMargin = (code) => loadRows("chips/tw_stock_margin.csv", "個股融資融券").then((rs) => rs.filter((r) => r[1] === code)
+  .map((r) => ({ date: r[0], margin: +r[2], short: +r[3] })));
+// date,code,level,people,shares,pct（集保戶股權分散表，每週）
+export const loadHolders = (code) => loadRows("chips/tw_holders.csv", "集保股權分散").then((rs) => rs.filter((r) => r[1] === code)
+  .map((r) => ({ date: r[0], level: +r[2], people: +r[3], shares: +r[4], pct: +r[5] })));
+// month,code,revenue（元）
+export const loadRevenue = (code) => loadRows("fundamentals/tw_revenue.csv", "月營收").then((rs) => rs.filter((r) => r[1] === code)
+  .map((r) => ({ month: r[0], revenue: +r[2] })));
 
 // 兩欄（date,value[,…]）的逐日序列
 const loadSeries = (path, src) => once(`series:${path}`, async () => {

@@ -12,6 +12,7 @@ const ROUTES = {
   record: { title: "記帳", load: () => import("./pages/record.js") },
   funds: { title: "資金", load: () => import("./pages/funds.js") },
   news: { title: "新聞", load: () => import("./pages/news.js") },
+  analysis: { title: "分析", load: () => import("./pages/analysis.js") },
   reports: { title: "報告歷史", load: () => import("./pages/reports.js") },
   charts: { title: "K 線", load: () => import("./pages/charts.js") },
 };

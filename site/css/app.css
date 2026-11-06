@@ -339,6 +339,13 @@ table.nowrap td { white-space: nowrap; }
   border: 1px solid color-mix(in srgb, var(--crit) 55%, transparent); background: color-mix(in srgb, var(--crit) 10%, var(--surface)); }
 .flag-alert > div { margin-top: 6px; }
 .tag.up { color: var(--up); } .tag.down { color: var(--down); }
+/* 風險燈號（2026-11-07） */
+.lt { display: inline-block; width: .8em; height: .8em; border-radius: 50%; background: var(--muted); flex: none; margin-top: .35em; }
+.lt-green { background: var(--good); } .lt-yellow { background: var(--warn); } .lt-red { background: var(--crit); }
+.lt-info { background: var(--accent); } .lt-gray { background: var(--muted); opacity: .6; }
+.risk-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.risk-list li { display: flex; gap: 8px; align-items: flex-start; }
+td .lt { margin-top: 0; }
 /* 市場狀態：修正、熊市（2026-11-07） */
 .tag.st-warn { background: color-mix(in srgb, var(--warn) 30%, transparent); color: var(--ink); }
 .tag.st-crit { background: color-mix(in srgb, var(--crit) 30%, transparent); color: var(--ink); }

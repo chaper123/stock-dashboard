@@ -7,8 +7,8 @@ import { el, taipeiToday } from "./fmt.js";
 const KEY = "fugle.apiKey";
 const BASE = "https://api.fugle.tw/marketdata/v1.0/stock/intraday/quote/";
 export const FUGLE_NOTE = "富果行情，僅供本人參考，請勿轉發";
-// 網站要查的代號：兩檔 ETF 與加權指數（富果的指數代號 IX0001）
-export const FUGLE_SYMBOLS = ["009816", "00981A", "IX0001"];
+// 網站要查的代號：兩檔 ETF、加權指數（富果的指數代號 IX0001）、台積電（分析頁，2026-11-07 加）
+export const FUGLE_SYMBOLS = ["009816", "00981A", "IX0001", "2330"];
 
 export function getKey() {
   try {

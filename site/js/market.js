@@ -4,7 +4,7 @@
 import { loadIndex, loadDaily, loadMarketInsti, loadMargin } from "./data.js";
 import { fugleQuote, fugleUsable, fugleClosed } from "./fugle.js";
 import { loadNewsView } from "./news.js";
-import { el, price, shortDate, taipeiTime } from "./fmt.js";
+import { el, price, shortDate, dateVs, taipeiTime } from "./fmt.js";
 import { card } from "./ui.js";
 import { TRACK, NAMES } from "./config.js";
 
@@ -62,8 +62,8 @@ async function withFugle(series, symbol) {
 }
 
 export async function marketCard() {
-  const [ixR, instR, marR, newsR, ...etfR] = await Promise.allSettled([
-    loadIndex("TAIEX"), loadMarketInsti(), loadMargin(), loadNewsView(),
+  const [ixR, krR, instR, marR, newsR, ...etfR] = await Promise.allSettled([
+    loadIndex("TAIEX"), loadDaily("macro", "KOSPI"), loadMarketInsti(), loadMargin(), loadNewsView(),
     ...TRACK.tw.map((c) => loadDaily("tw", c))]);
   const rows = [];
   const failed = [];
@@ -72,6 +72,8 @@ export async function marketCard() {
     ix = await withFugle(ixR.value, "IX0001");
     rows.push(["加權指數", ix]);
   } else failed.push("加權指數");
+  if (krR.status === "fulfilled") rows.push(["韓國綜合指數", { series: krR.value.map((b) => ({ date: b.time, value: b.close })), note: null }]);
+  else failed.push("韓國綜合指數");
   for (const [i, c] of TRACK.tw.entries()) {
     const r = etfR[i];
     if (r.status !== "fulfilled") {
@@ -86,7 +88,7 @@ export async function marketCard() {
     const [cls, text] = STATE[s.state];
     return el("div", { class: "kv" },
       el("span", { class: "k" }, label,
-        el("div", { class: "tiny" }, `${shortDate(s.last.date)} ${note || "收盤"} ${price(+s.last.value.toFixed(2))}；高點 ${shortDate(s.peak.date)} ${price(+s.peak.value.toFixed(2))}`)),
+        el("div", { class: "tiny" }, `${shortDate(s.last.date)} ${note || "收盤"} ${price(+s.last.value.toFixed(2))}；高點 ${dateVs(s.peak.date, s.last.date)} ${price(+s.peak.value.toFixed(2))}`)),
       el("span", { class: "v" }, el("strong", { class: s.dd < 0 ? "down" : "" }, `${s.dd < 0 ? "−" : ""}${Math.abs(s.dd).toFixed(1)}%`),
         el("div", {}, el("span", { class: `tag ${cls}` }, text))));
   });
@@ -133,5 +135,5 @@ export async function marketCard() {
       el("p", { class: "tiny" }, `新聞晨報 ${taipeiTime(v.generatedAt)}・AI 依數字與新聞整理，只描述現況，不是預測。`)),
     history,
     failed.length > 0 && el("p", { class: "tiny" }, `讀不到：${failed.join("、")}。`),
-    el("p", { class: "tiny" }, `「修正」「熊市」是常見定義（從歷史高點跌 ${CORRECTION}%、${BEAR}%），只描述現況；ETF 的高點從上市起算。外資是集中市場外資及陸資買賣超，融資是集中市場融資金額。`));
+    el("p", { class: "tiny" }, `「修正」「熊市」是常見定義（從歷史高點跌 ${CORRECTION}%、${BEAR}%），只描述現況；ETF 的高點從上市起算，韓國綜合指數只有近 2 年資料。外資是集中市場外資及陸資買賣超，融資是集中市場融資金額。`));
 }
