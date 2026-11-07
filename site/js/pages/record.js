@@ -89,7 +89,7 @@ function connectionCard() {
     el("details", { class: "set-box", open: !cfg },
       el("summary", {}, `⚙ 記帳連線：${cfg ? `已設定（密鑰 …${cfg.key.slice(-4)}）` : "未設定"}`),
       el("p", { class: "tiny" }, "寫入走你自己部署、綁在帳本上的 Google Apps Script。網址與密鑰只存在這台裝置的瀏覽器，只送到 script.google.com；每台裝置要各自設定，清除瀏覽器資料就會不見。設定步驟：",
-        el("a", { href: DOC, target: "_blank", rel: "noopener noreferrer" }, "docs/LEDGER_WRITE.md"), "。"),
+        el("a", { href: DOC, target: "_blank", rel: "noopener noreferrer" }, "記帳連線設定說明 ↗"), "。"),
       el("div", { class: "row" }, urlIn),
       el("div", { class: "row" }, keyIn, gen),
       el("div", { class: "row" }, save, test, clear)),
