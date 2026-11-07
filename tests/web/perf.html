@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>R08 組合績效</title></head>
+<body>
+<h1>R08 組合績效口徑（site/js/perf.js 的 computePerf）</h1>
+<p>改進報告第 8 節：只有入金不變好、等值除息不憑空損失、賣出不當成績效、首筆與休市有定義；另外驗證股利只發給除息前一天的持股。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { computePerf, xirr } from "/site/js/perf.js";
+
+const buy = (date, code, n, price, market = "tw", extra = {}) => ({ date, market, code, side: "買進", shares: n, price, twd: market === "tw" ? n * price : null, settle: market === "us" ? n * price : null, ...extra });
+const sell = (date, code, n, price) => ({ date, market: "tw", code, side: "賣出", shares: n, price, twd: n * price });
+const bars = (rows) => rows.map(([time, close]) => ({ time, open: close, high: close, low: close, close }));
+const days = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"];
+
+test("只有入金、價格不動：時間加權報酬 0、XIRR 0", () => {
+  const p = computePerf({ trades: [buy(days[0], "A", 100, 10), buy(days[2], "A", 50, 10)], bars: { A: bars(days.map((d) => [d, 10])) } });
+  near(p.twr, 0, 1e-12);
+  near(p.xirr, 0, 1e-6);
+  eq(p.invested, 1500);
+});
+test("等值除息：股價扣掉 0.5、股利 0.5，報酬不憑空下降", () => {
+  const divs = { etfs: { A: { events: [{ ex_date: days[2], cash: 0.5 }] } } };
+  const p = computePerf({ trades: [buy(days[0], "A", 100, 10)], bars: { A: bars([[days[0], 10], [days[1], 10], [days[2], 9.5], [days[3], 9.5]]) }, divs });
+  near(p.twr, 0, 1e-12, "含股利的報酬");
+  eq(p.divTotal, 50);
+  eq(p.dividends.map((x) => [x.code, x.exDate, x.shares]), [["A", days[2], 100]]);
+  near(p.xirr, 0, 1e-6, "股利算拿回的錢");
+});
+test("沒有配息資料時就是價格報酬（對照：除息那天看起來跌 5%）", () => {
+  const p = computePerf({ trades: [buy(days[0], "A", 100, 10)], bars: { A: bars([[days[0], 10], [days[1], 10], [days[2], 9.5]]) }, divs: null });
+  near(p.twr, -0.05, 1e-12);
+  eq(p.divsKnown, false);
+});
+test("除息日當天才買進的股數領不到股利", () => {
+  const divs = { etfs: { A: { events: [{ ex_date: days[2], cash: 0.5 }] } } };
+  const p = computePerf({ trades: [buy(days[0], "A", 100, 10), buy(days[2], "A", 100, 9.5)], bars: { A: bars([[days[0], 10], [days[1], 10], [days[2], 9.5]]) }, divs });
+  eq(p.divTotal, 50, "只有原本的 100 股");
+  near(p.twr, 0, 1e-12);
+});
+test("第一筆買進之前的除息不算", () => {
+  const divs = { etfs: { A: { events: [{ ex_date: "2026-09-16", cash: 0.63 }] } } };
+  const p = computePerf({ trades: [buy(days[0], "A", 100, 10)], bars: { A: bars(days.map((d) => [d, 10])) }, divs });
+  eq(p.divTotal, 0);
+});
+test("賣出收盤價：錢回到可用資金，不算成虧損或提款造成的報酬", () => {
+  const p = computePerf({ trades: [buy(days[0], "A", 100, 10), sell(days[2], "A", 50, 12)], bars: { A: bars([[days[0], 10], [days[1], 12], [days[2], 12], [days[3], 12]]) } });
+  near(p.twr, 0.2, 1e-12, "只反映 10 → 12 的漲幅");
+  eq(p.invested, 1000 - 600);
+});
+test("首筆成交日：從那天收盤起算，成交價到收盤價的差不算", () => {
+  const p = computePerf({ trades: [buy(days[0], "A", 100, 10)], bars: { A: bars([[days[0], 11], [days[1], 12.1]]) } });
+  near(p.twr, 12.1 / 11 - 1, 1e-12);
+  eq(p.first, days[0]);
+});
+test("之後的買進：成交價到收盤價的差算在當天", () => {
+  const p = computePerf({ trades: [buy(days[0], "A", 100, 10), buy(days[1], "A", 100, 9)], bars: { A: bars([[days[0], 10], [days[1], 10]]) } });
+  near(p.twr, (2000 - 900) / 1000 - 1, 1e-12, "用 9 元買到收盤 10 元的那一天 +10%");
+});
+test("美股休市、匯率沒變：沿用最後一個美國收盤，報酬 0", () => {
+  const trades = [buy(days[0], "A", 100, 10), buy(days[0], "V", 1, 100, "us")];
+  const fx = days.map((d) => ({ date: d, value: 32 }));
+  const p = computePerf({ trades, bars: { A: bars(days.map((d) => [d, 10])), V: bars([[days[0], 100], [days[1], 100]]) }, fxRows: fx });
+  near(p.twr, 0, 1e-12);
+  eq(p.asOf.us, days[1], "美股最後收盤日");
+});
+test("美元價格不動、匯率 32 → 33.6：台幣報酬 +5%（匯差在 TWR 裡）", () => {
+  const trades = [buy(days[0], "V", 1, 100, "us")];
+  const fx = [{ date: days[0], value: 32 }, { date: days[1], value: 33.6 }];
+  const p = computePerf({ trades, bars: { V: bars([[days[0], 100], [days[1], 100]]) }, fxRows: fx });
+  near(p.twr, 0.05, 1e-12);
+});
+test("XIRR：一年後 1000 → 1100 約 10%", () => {
+  near(xirr([{ date: "2025-01-01", amount: -1000 }, { date: "2026-01-01", amount: 1100 }]), 0.1, 1e-4);
+});
+test("沒有交易時明確失敗", () => {
+  let err = null;
+  try {
+    computePerf({ trades: [], bars: {} });
+  } catch (e) {
+    err = e.message;
+  }
+  ok(err && err.includes("沒有交易紀錄"), String(err));
+});
+report();
+</script>
+</body>
+</html>

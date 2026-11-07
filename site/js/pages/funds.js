@@ -257,20 +257,22 @@ async function buffettCard() {
   const annual = (x) => Math.pow(1 + x, 1 / perf.years) - 1;
   return card("和巴菲特的差距",
     under1
-      ? [kv(`你的累積報酬（${months} 個月，扣掉入金影響）`, el("strong", { class: perf.twr >= 0 ? "up" : "down" }, pct(perf.twr * 100))),
+      ? [kv(`你的累積報酬（已投入部位、${months} 個月，扣掉入金影響）`, el("strong", { class: perf.twr >= 0 ? "up" : "down" }, pct(perf.twr * 100))),
         kv("同期台股加權報酬指數（含股利）", bench == null ? "資料準備中" : pct(bench * 100)),
         el("p", {}, "投資未滿一年，只比累積報酬；滿一年後改比年化報酬。")]
-      : [kv("你的年化報酬（扣掉入金影響）", el("strong", {}, pct(annual(perf.twr) * 100))),
+      : [kv("你的年化報酬（已投入部位，扣掉入金影響）", el("strong", {}, pct(annual(perf.twr) * 100))),
         kv("同期台股加權報酬指數（含股利，年化）", bench == null ? "資料準備中" : pct(annual(bench) * 100))],
     kv(`波克夏 ${B.period} 年化`, pct(B.brk * 100, 1, false)),
     kv(`S&P 500 ${B.period} 年化`, pct(B.spx * 100, 1, false)),
     perf.xirr != null && kv("照每筆錢投入時間與金額算的年化報酬（XIRR）", pct(perf.xirr * 100)),
     el("h3", {}, "如果每筆錢都有巴菲特的報酬"),
-    kv("你的持倉現值（台股收盤、美股換台幣）", twd(perf.value)),
+    kv("你的持倉現值（台股收盤、美股換台幣，不含可用資金）", twd(perf.value)),
+    perf.divTotal > 0 && kv("加上已領的台股 ETF 股利（稅前）", twd(perf.value + perf.divTotal)),
     kv(`每筆都照波克夏 ${pct(B.brk * 100, 1, false)}`, twd(brkV)),
     kv(`每筆都照 S&P 500 ${pct(B.spx * 100, 1, false)}`, twd(spxV)),
     el("p", {}, "巴菲特的數字是 60 年的平均，短期拿來比只是好玩，不代表你該期待這個報酬。"),
-    el("p", { class: "tiny" }, `出處：${B.source}（${B.period} 每股市值年化與 S&P 500 含股利年化）。投入金額 ${twd(perf.invested)}，算到 ${perf.last}。`));
+    el("p", { class: "tiny" }, `你的報酬只算已投入的持股（不含可用資金）：時間加權報酬，台股 ETF 含現金股利、美股只有價格（股利沒算進來）；組合有美股，跟台股大盤的差距也包含台美配置與匯率。`
+      + `算法與假設見 K 線頁「組合對大盤」。出處：${B.source}（${B.period} 每股市值年化與 S&P 500 含股利年化）。投入金額 ${twd(perf.invested)}，算到 ${perf.last}。`));
 }
 
 // ── 財富自由計算機 ──
