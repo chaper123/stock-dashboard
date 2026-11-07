@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>R09 含匯差損益</title></head>
+<body>
+<h1>R09 含匯差損益（site/js/portfolio.js）</h1>
+<p>用假的帳本與行情（攔截 fetch）跑 loadPortfolio：美元價格不動、只有匯率變時，「不含匯差」是 0、「含匯差」等於匯率造成的差；
+分清實際台幣成本與參考匯率；部分賣出用平均成本法；缺資料不補造成本。</p>
+<script type="module">
+import { test, eq, near, ok, report, results } from "./harness.js";
+import { loadPortfolio, twdCostBasis } from "/site/js/portfolio.js";
+import { clearCache } from "/site/js/data.js";
+
+const H_HEAD = "市場,代號,名稱,股數（券商確認）,總成本（原幣，含費）,幣別,平均成本,交易紀錄股數,股數差異,確認日,來源";
+const T_HEAD = "日期,市場,代號,買賣,股數,成交價,幣別,手續費,交割金額（原幣，含費）,匯率（USD/TWD）,台幣金額,計入資金池,台幣金額來源,備註,成交時間,交易稅";
+const holding = (code, shares, cost) => `美股,${code},${code},${shares},${cost},USD,${(cost / shares).toFixed(2)},${shares},0,2026-11-01,測試`;
+// [日期, 買賣, 股數, 成交價, 交割金額, 匯率, 台幣金額, 台幣金額來源]
+const trade = ([date, side, n, px, settle, fx = "", twd = "", src = "未提供"]) => `${date},美股,VOO,${side},${n},${px},USD,0,${settle},${fx},${twd},否,${src},,,`;
+const daily = (rows) => rows.map(([d, c]) => `${d},1000,${c},${c},${c},${c}`).join("\n");
+const fxCsv = (rows) => rows.map(([d, v]) => `${d},${v}`).join("\n");
+
+let world = {};
+const realFetch = window.fetch;
+window.fetch = async (url, opt) => {
+  const u = String(url);
+  const body = u.includes("gid=2") ? world.holdings : u.includes("gid=1") ? world.trades
+    : u.includes("us/VOO.csv") ? world.voo : u.includes("fx/usdtwd_mid.csv") ? world.fx : null;
+  if (body == null) return realFetch(url, opt);
+  return new Response(body, { status: 200 });
+};
+async function run(w) {
+  world = w;
+  clearCache();
+  return loadPortfolio();
+}
+
+const base = {
+  voo: daily([["2026-11-05", 100], ["2026-11-06", 100]]),
+  fx: fxCsv([["2026-04-17", 32], ["2026-11-05", 32], ["2026-11-06", 33]]),
+};
+const cases = [];
+
+// 1. 實際台幣成本：買進時 1 美元＝32 台幣，花 3,200 台幣；現在 VOO 還是 100 美元，匯率 33
+cases.push(["只有匯率變（實際成本）：不含匯差 0、含匯差 ＝ 100 ×（33 − 32）", async () => {
+  const pf = await run({ ...base, holdings: `${H_HEAD}\n${holding("VOO", 1, 100)}`,
+    trades: `${T_HEAD}\n${trade(["2026-04-17", "買進", 1, 100, 100, "", 3200, "券商對帳單"])}` });
+  const p = pf.positions[0];
+  near(p.pnlTwd, 0, 1e-9, "不含匯差");
+  near(p.pnlTwdFx, 100, 1e-9, "含匯差");
+  near(p.fxEffect, 100, 1e-9, "匯率造成的部分");
+  eq(p.fxBasis.kind, "actual");
+  eq([pf.totals.withFx.complete, pf.totals.withFx.kind], [true, "actual"]);
+}]);
+
+// 2. 帳本有成交匯率、沒有台幣金額：交割金額 × 帳本匯率，也算實際
+cases.push(["帳本有成交匯率：交割金額 × 匯率算實際成本", async () => {
+  const pf = await run({ ...base, holdings: `${H_HEAD}\n${holding("VOO", 1, 100)}`,
+    trades: `${T_HEAD}\n${trade(["2026-04-17", "買進", 1, 100, 100, 32.5, "", "券商對帳單"])}` });
+  const p = pf.positions[0];
+  near(p.costTwdHist, 3250, 1e-9);
+  eq(p.fxBasis.kind, "actual");
+}]);
+
+// 3. 帳本沒有台幣金額也沒有匯率：用買進當天的市場中間價當參考成本，標參考
+cases.push(["沒有實際台幣金額：用買進當天參考匯率，標「參考」", async () => {
+  const pf = await run({ ...base, holdings: `${H_HEAD}\n${holding("VOO", 1, 100)}`,
+    trades: `${T_HEAD}\n${trade(["2026-04-17", "買進", 1, 100, 100])}` });
+  const p = pf.positions[0];
+  near(p.costTwdHist, 3200, 1e-9);
+  near(p.pnlTwd, 0, 1e-9);
+  near(p.pnlTwdFx, 100, 1e-9);
+  eq([p.fxBasis.kind, p.fxBasis.refDates], ["ref", ["2026-04-17"]]);
+  eq(pf.totals.withFx.kind, "ref");
+}]);
+
+// 4. 部分賣出：2 股 @ 32（6,000 台幣）＋ 2 股 @ 32（6,400 台幣），平均 3,100／股；賣 2 股剩 6,200
+cases.push(["部分賣出用平均成本法：剩下 2 股的台幣成本 6,200", async () => {
+  const pf = await run({ ...base, holdings: `${H_HEAD}\n${holding("VOO", 2, 200)}`,
+    trades: `${T_HEAD}\n${[["2026-04-17", "買進", 2, 100, 200, "", 6000, "對帳單"], ["2026-05-04", "買進", 2, 100, 200, "", 6400, "對帳單"],
+      ["2026-06-01", "賣出", 2, 110, 220, "", 7000, "對帳單"]].map(trade).join("\n")}` });
+  const p = pf.positions[0];
+  near(p.costTwdHist, 6200, 1e-9);
+  near(p.pnlTwdFx, 2 * 100 * 33 - 6200, 1e-9);
+  near(p.pnlTwd, 0, 1e-9, "美元成本 200、市值 200");
+}]);
+
+// 5. 實際與參考混在一起
+cases.push(["一筆實際、一筆參考：標「部分參考」", async () => {
+  const pf = await run({ ...base, holdings: `${H_HEAD}\n${holding("VOO", 2, 200)}`,
+    trades: `${T_HEAD}\n${[["2026-04-17", "買進", 1, 100, 100, "", 3150, "對帳單"], ["2026-11-05", "買進", 1, 100, 100]].map(trade).join("\n")}` });
+  const p = pf.positions[0];
+  near(p.costTwdHist, 3150 + 3200, 1e-9);
+  eq(p.fxBasis.kind, "mixed");
+  eq(pf.totals.withFx.kind, "mixed");
+}]);
+
+// 6. 沒有台幣金額、也查不到買進當天的匯率：不補造成本，合計標缺
+cases.push(["查不到匯率：不補造成本，含匯差合計標缺", async () => {
+  const pf = await run({ ...base, fx: fxCsv([["2026-11-05", 32], ["2026-11-06", 33]]), holdings: `${H_HEAD}\n${holding("VOO", 1, 100)}`,
+    trades: `${T_HEAD}\n${trade(["2026-04-17", "買進", 1, 100, 100])}` });
+  const p = pf.positions[0];
+  eq(p.pnlTwdFx, undefined);
+  ok(p.fxBasis.error.includes("2026-04-17"), p.fxBasis.error);
+  eq(pf.totals.withFx.complete, false);
+  near(p.pnlTwd, 0, 1e-9, "不含匯差照算");
+}]);
+
+// 7. 交易紀錄跟持倉股數對不起來：不算
+cases.push(["交易紀錄股數跟持倉不符：不算含匯差", async () => {
+  const pf = await run({ ...base, holdings: `${H_HEAD}\n${holding("VOO", 3, 300)}`,
+    trades: `${T_HEAD}\n${trade(["2026-04-17", "買進", 1, 100, 100, "", 3200, "對帳單"])}` });
+  ok(pf.positions[0].fxBasis.error.includes("對不起來"), pf.positions[0].fxBasis.error);
+  eq(pf.totals.withFx.complete, false);
+}]);
+
+test("twdCostBasis：賣超過持有直接報錯", () => {
+  const b = twdCostBasis([{ date: "2026-01-02", side: "買進", shares: 1, price: 10, twd: 320 }, { date: "2026-01-03", side: "賣出", shares: 2, price: 10 }], () => 32);
+  ok(b.error && b.error.includes("超過"), b.error);
+});
+
+for (const [name, fn] of cases) {
+  try {
+    await fn();
+    results.push([name, true, ""]);
+  } catch (e) {
+    results.push([name, false, e.message]);
+  }
+}
+window.fetch = realFetch;
+report();
+</script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 import {
   loadSettings, loadTrades, loadDca, loadMeta, loadFearGreed, loadNavHistory, loadIndex, loadDaily, loadCalendar, loadFx, loadHoldings, loadDividends,
 } from "../data.js";
-import { loadPortfolio } from "../portfolio.js";
+import { loadPortfolio, FX_KIND_LABEL } from "../portfolio.js";
 import { marketCard } from "../market.js";
 import { riskCard } from "../checkup.js";
 import { loadFugle, getKey, fugleSettings, fugleUsable, quoteTime, FUGLE_NOTE } from "../fugle.js";
@@ -93,11 +93,24 @@ async function assetsCard() {
       el("span", { class: tone(t.dayChgTwd) }, signed(t.dayChgTwd, twd))),
     kv(el("span", {}, "未實現損益", el("div", { class: "tiny" }, "證券損益折台幣，不含匯差")),
       el("span", { class: tone(t.pnlTwd) }, `${signed(t.pnlTwd, twd)}（${pct(t.pnlPct)}）`)),
+    // R09：含匯差＝現在的台幣市值 − 歷史台幣成本；美股成本沒有實際台幣金額就標參考匯率
+    hasUs && fxPnlRow(t.withFx),
     kv("持倉市值", `${twd(t.mvTwd)}（台股 ${twd(t.tw.mvTwd)}・美股 ${twd(t.us.mvTwd)}）`),
     kv("可用資金", pool == null ? "讀不到" : twd(pool)),
     kv("下次入金", st instanceof Error || !st.nextDeposit ? "—" : `${shortDate(st.nextDeposit)}（${daysBetween(today, st.nextDeposit)} 天後）`),
     el("p", { class: "tiny" }, `資料時間：${when || "—"}。`,
-      "美股成本與市值用同一個匯率換算，所以損益不含匯差；持股與可用資金來自帳本（Google 試算表發布版，約 5 分鐘延遲）。"));
+      "未實現損益的美股成本與市值用同一個匯率換算，所以不含匯差；含匯差的算法見持倉頁。持股與可用資金來自帳本（Google 試算表發布版，約 5 分鐘延遲）。"));
+}
+
+function fxPnlRow(w) {
+  if (!w?.complete) {
+    return kv(el("span", {}, "含匯差損益", el("div", { class: "tiny" }, "現在的台幣市值 − 當初的台幣成本")),
+      el("span", { class: "muted" }, `缺 ${w?.lack?.map((x) => x.code).join("、") || "資料"} 的台幣成本`));
+  }
+  return kv(el("span", {}, `含匯差損益${w.kind === "actual" ? "" : "（參考）"}`,
+    el("div", { class: "tiny" }, `現在的台幣市值 − 當初的台幣成本；${FX_KIND_LABEL[w.kind]}`)),
+  el("span", {}, el("span", { class: tone(w.pnl) }, `${signed(w.pnl, twd)}（${pct(w.pnlPct)}）`),
+    el("div", { class: "tiny" }, `其中匯率 ${signed(w.fxEffect, twd)}`)));
 }
 
 async function disciplineCard() {

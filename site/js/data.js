@@ -130,6 +130,8 @@ export const loadTrades = () => once("trades", async () => {
     price: num(col(r, "成交價")),
     currency: col(r, "幣別"),
     twd: num(col(r, "台幣金額")),
+    fx: num(col(r, "匯率")), // 美股成交時的實際匯率（帳本有填才有）
+    twdSource: col(r, "台幣金額來源"),
     settle: num(col(r, "交割金額")), // 原幣、含費（美股是美元）
     inPool: col(r, "計入資金池") === "是",
     note: col(r, "備註"),

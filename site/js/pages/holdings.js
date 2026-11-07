@@ -1,6 +1,6 @@
 // 持倉：每檔股數、成本、現價、市值、未實現損益與報酬率，以及交易紀錄。
 import { loadTrades } from "../data.js";
-import { loadPortfolio } from "../portfolio.js";
+import { loadPortfolio, FX_KIND_LABEL } from "../portfolio.js";
 import { el, twd, usd, price, pct, shares, shortDate, signed, tone, int } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { MARKET_LABEL } from "../config.js";
@@ -24,15 +24,21 @@ async function positionsView() {
   const summary = card("合計（台幣）",
     el("div", { class: "grid three" },
       kv("持倉市值", el("strong", {}, twd(t.mvTwd))),
-      kv("成本", twd(t.costTwd)),
+      kv(hasUs ? el("span", {}, "成本", el("div", { class: "tiny" }, "美股用現在的匯率換算")) : "成本", twd(t.costTwd)),
       kv(el("span", {}, "未實現損益", el("div", { class: "tiny" }, "證券損益折台幣，不含匯差")),
-        el("span", { class: tone(t.pnlTwd) }, `${signed(t.pnlTwd, twd)}（${pct(t.pnlPct)}）`))),
+        el("span", { class: tone(t.pnlTwd) }, `${signed(t.pnlTwd, twd)}（${pct(t.pnlPct)}）`)),
+      hasUs && kv(el("span", {}, `含匯差損益${t.withFx.complete && t.withFx.kind !== "actual" ? "（參考）" : ""}`,
+        el("div", { class: "tiny" }, "現在的台幣市值 − 當初的台幣成本")),
+      t.withFx.complete ? el("span", {}, el("span", { class: tone(t.withFx.pnl) }, `${signed(t.withFx.pnl, twd)}（${pct(t.withFx.pnlPct)}）`),
+        el("div", { class: "tiny" }, `其中匯率 ${signed(t.withFx.fxEffect, twd)}`))
+        : el("span", { class: "muted" }, `缺 ${t.withFx.lack.map((x) => x.code).join("、")} 的台幣成本`))),
     !pf.complete && notice("warn", `合計只算讀得到的部分，缺：${pf.missing.join("、")}。`),
     status,
     pf.warnings.map((w) => notice("warn", w)),
+    hasUs && fxNote(pf),
     el("p", { class: "tiny" },
       "損益未扣賣出手續費與稅。",
-      pf.fx ? `美股以 ${price(pf.fx.rate)}（${shortDate(pf.fx.date)} 美元兌台幣中間價）換算，成本也用同一匯率換算，所以台幣損益不含匯差。` : ""));
+      pf.fx ? `未實現損益的美股市值與成本都用 ${price(pf.fx.rate)}（${shortDate(pf.fx.date)} 美元兌台幣中間價）換算，所以不含匯差。` : ""));
   const cards = ["tw", "us"].map((m) => {
     const list = pf.positions.filter((p) => p.market === m);
     if (!list.length) return null;
@@ -60,8 +66,28 @@ function position(p) {
       cell("總成本", money(m, p.cost)),
       cell("市值", money(m, p.mv)),
       m === "us" && cell("市值（台幣）", twd(p.mvTwd)),
+      m === "us" && cell(p.fxBasis?.kind === "actual" ? "台幣成本（實際）" : "台幣成本（參考匯率）", p.costTwdHist != null ? twd(p.costTwdHist) : "—"),
+      m === "us" && cell("含匯差損益", p.pnlTwdFx != null
+        ? el("span", {}, el("span", { class: tone(p.pnlTwdFx) }, signed(p.pnlTwdFx, twd)), el("span", { class: "tiny" }, `（匯率 ${signed(p.fxEffect, twd)}）`)) : "—"),
       cell("確認日", shortDate(p.confirmed))),
     p.note && el("div", { class: "tiny" }, `價格來源：${p.note}`));
+}
+
+// 含匯差的口徑（R09）：分清實際台幣成本與參考匯率換算的成本；缺資料就說缺，不補造
+function fxNote(pf) {
+  const us = pf.positions.filter((p) => p.market === "us" && !p.error);
+  const ref = us.filter((p) => p.fxBasis && !p.fxBasis.error && p.fxBasis.kind !== "actual");
+  const bad = us.filter((p) => p.fxBasis?.error);
+  const w = pf.totals.withFx;
+  return el("div", {},
+    ref.length > 0 && notice("info", el("strong", {}, "實際台幣成本尚缺"),
+      `：帳本 ${ref.map((p) => `${p.code}（${p.fxBasis.refDates.map(shortDate).join("、")} 買進）`).join("、")} 沒有台幣金額與成交匯率，`
+      + "含匯差先用買進當天的美元兌台幣市場中間價換算，是參考值，不是你實際換匯花的台幣（銀行或券商的匯率還有價差）。帳本補上台幣金額後會改用實際成本。"),
+    bad.map((p) => notice("warn", `${p.code} 的含匯差算不出來：${p.fxBasis.error}。`)),
+    el("p", { class: "tiny" }, "兩種損益：「未實現損益」是美元損益換成台幣（成本與市值用同一個現在的匯率），不含匯差；",
+      "「含匯差損益」是現在的台幣市值 − 剩餘持股當初的台幣成本，美元漲跌與匯率變化都在裡面，「其中匯率」是兩者的差。",
+      "部分賣出用平均成本法：賣出照當時的平均台幣成本扣掉，剩下的持股沿用原本的平均成本。",
+      w.complete && w.kind === "actual" ? `${FX_KIND_LABEL.actual}。` : ""));
 }
 
 async function tradesCard() {
