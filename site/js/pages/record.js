@@ -1,6 +1,7 @@
 // 記帳（2026-11-05 使用者提出）：在網站記一筆台股成交，寫進共用帳本「交易紀錄」並更新「持倉」的股數與總成本；
 // 也可以改每月定投金額（從下個月生效）。寫入走使用者自己部署的 Apps Script（docs/LEDGER_WRITE.md）。
 // 先「檢查這筆」（Apps Script 試算、不寫入）再「確認寫入」；同一筆有請求編號，重送不會重複寫入。
+// 送出前把這筆的請求編號與內容記在這台裝置（不含密鑰）：回應遺失或頁面被關掉，重開記帳頁可以用原編號確認結果。
 // 網站讀帳本用「發布到網路」的 CSV，寫入後約 5 分鐘才看得到。
 // 自主加碼＝當月台股買進（含手續費與稅）超過當月定投金額的部分，不影響下個月的定投。第一版只做台股新增。
 import { loadTrades, loadHoldings, loadDca } from "../data.js";
@@ -10,6 +11,7 @@ import { slot, card, pageHeader, kv, notice, loading, openDialog } from "../ui.j
 import { NAMES, TRACK, DISCIPLINE as D } from "../config.js";
 import {
   writeConfig, validUrl, saveConfig, clearConfig, newSecret, newRequestId, callLedger, MIN_SECRET,
+  savePending, loadPending, clearPending, PENDING_STALE_MS,
 } from "../ledger_write.js";
 
 const DOC = "https://github.com/chaper123/stock-dashboard/blob/main/docs/LEDGER_WRITE.md";
@@ -125,6 +127,7 @@ async function tradeCard() {
   const taxHint = el("div", { class: "tiny", hidden: true });
   const sumBox = el("div", { class: "sum-box", role: "status" });
   const result = el("div");
+  const recover = el("div");
   const submit = el("button", { class: "btn primary", type: "submit", disabled: !cfg }, "檢查這筆");
   const form = el("form", { class: "form-grid", autocomplete: "off" },
     field("成交日期", f.date), field("成交時間", f.time),
@@ -185,7 +188,7 @@ async function tradeCard() {
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
-    if (!writeConfig()) return;
+    if (!writeConfig() || loadPending()) return;
     const c = code();
     const data = {
       date: f.date.value, time: f.time.value, code: c, name: nameOf(c, holds), side: side(),
@@ -225,7 +228,7 @@ async function tradeCard() {
       pending = null;
       result.replaceChildren(notice("err", err.message));
     } finally {
-      submit.disabled = false;
+      submit.disabled = !!loadPending();
     }
   });
 
@@ -234,28 +237,101 @@ async function tradeCard() {
     const { id, data } = pending;
     confirm.disabled = cancel.disabled = true;
     status.replaceChildren(loading("寫入中…"));
+    // 先記在這台裝置：回應遺失、逾時或頁面被關掉，重開記帳頁還能用原編號確認（不存密鑰）
+    const stored = savePending(id, data, writeConfig()?.url || "");
     try {
       const out = await callLedger("addTrade", data, id);
       pending = null;
-      const t = out.trade;
-      trades?.push({ date: t.date, market: "tw", code: t.code, side: t.side, shares: t.shares, price: t.price, twd: t.settle });
-      held.set(t.code, out.holding.after.shares);
-      result.replaceChildren(doneView(out));
-      for (const k of ["shares", "price", "amount", "fee", "tax", "note"]) f[k].value = "";
-      amountTouched = false;
-      f.time.value = nowHHMM();
-      update();
+      clearPending();
+      done(out, true);
     } catch (err) {
+      if (err.outcome === "unknown" && stored) {
+        // 不知道有沒有寫入：改成「上次送出的這筆還沒確認結果」，用原編號確認，不鼓勵重填一筆
+        pending = null;
+        result.replaceChildren();
+        showRecover(err.message);
+        recover.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      if (err.outcome !== "unknown") clearPending(); // 明確沒處理或被拒絕：這台裝置不用再記著
       confirm.disabled = cancel.disabled = false; // 同一個請求編號再按一次不會重複寫入
       status.replaceChildren(notice("err", err.message));
     }
   }
 
+  // 寫入成功（或重送拿到上次的結果）：本機先算進剛寫入的這筆；repeated 不算，發布的 CSV 可能已經有了
+  function done(out, resetForm) {
+    const t = out.trade;
+    if (!out.repeated) {
+      trades?.push({ date: t.date, market: "tw", code: t.code, side: t.side, shares: t.shares, price: t.price, twd: t.settle });
+      held.set(t.code, out.holding.after.shares);
+    }
+    result.replaceChildren(doneView(out));
+    if (resetForm) {
+      for (const k of ["shares", "price", "amount", "fee", "tax", "note"]) f[k].value = "";
+      amountTouched = false;
+      f.time.value = nowHHMM();
+    }
+    update();
+  }
+
+  // 上次送出、還沒確認結果的那一筆（記在這台裝置，重開頁面也在）。處理完之前不能記新的一筆
+  function showRecover(errMsg = "") {
+    const p = loadPending();
+    submit.disabled = !cfg || !!p;
+    if (!p) return recover.replaceChildren();
+    const d = p.data;
+    const stale = Date.now() - p.at > PENDING_STALE_MS;
+    const otherUrl = cfg && cfg.url !== p.url;
+    const sentAt = new Intl.DateTimeFormat("zh-TW", { timeZone: "Asia/Taipei", month: "numeric", day: "numeric",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(p.at));
+    const why = stale
+      ? "送出已超過 5 小時：Apps Script 的重複保護只有 6 小時，再送可能重複寫入，所以不再重送。請先到帳本「交易紀錄」找這筆：有就按「放棄」；沒有就按「放棄」後重新填一筆。"
+      : !cfg ? "先在上面的「記帳連線」設定網址與密鑰，才能確認。"
+        : otherUrl ? "這筆是送到另一個 Apps Script 網址（例如測試帳本），和現在的記帳連線不同，不能從這裡確認。請改回原本的網址，或到那個帳本確認後按「放棄」。"
+          : "可能已經寫入，也可能沒有。按「用原編號確認寫入結果」會用同一個請求編號再送一次：已經寫入就只回報結果、不會重複寫；還沒寫入就這次寫入。請不要重新填一筆。";
+    const retry = el("button", { class: "btn primary", type: "button", disabled: stale || !cfg || otherUrl }, "用原編號確認寫入結果");
+    const drop = el("button", { class: "btn", type: "button" }, "放棄");
+    const st = el("div", { role: "status" }, errMsg && notice("err", errMsg));
+    retry.addEventListener("click", async () => {
+      const now = loadPending();
+      if (!now || now.id !== p.id || writeConfig()?.url !== p.url) return showRecover();
+      retry.disabled = drop.disabled = true;
+      st.replaceChildren(loading("用原編號確認中…"));
+      try {
+        const out = await callLedger("addTrade", p.data, p.id);
+        clearPending();
+        showRecover();
+        done(out, false);
+      } catch (err) {
+        if (err.outcome === "rejected") {
+          clearPending();
+          showRecover();
+          result.replaceChildren(notice("err", `Apps Script 拒絕了這次重送：${err.message}。不確定第一次有沒有寫入的話，請到帳本「交易紀錄」確認。`));
+        } else {
+          retry.disabled = drop.disabled = false; // 還是不知道結果（或密鑰、連線要先修好）：記錄留著，可以再按
+          st.replaceChildren(notice("err", err.message));
+        }
+      }
+    });
+    drop.addEventListener("click", () => {
+      clearPending();
+      showRecover();
+      result.replaceChildren(notice("info", "已放棄：只刪掉這台裝置上的紀錄，帳本沒有變動。"));
+    });
+    recover.replaceChildren(notice("warn",
+      el("strong", {}, "上次送出的這筆還沒確認結果"),
+      el("div", {}, `${d.date} ${d.side} ${d.code} ${shares(d.shares)} 股 × ${price(d.price)}，成交價金 ${int(d.amount)}（${sentAt} 送出）`),
+      el("div", { class: "small" }, why),
+      el("div", { class: "row" }, retry, drop), st));
+  }
+
   update();
+  showRecover();
   return card("記一筆成交",
     !cfg && notice("warn", "先在上面的「記帳連線」貼上 Apps Script 網址與密鑰，才能寫入帳本。"),
-    form, result,
-    el("p", { class: "tiny" }, "第一版只記台股；記錯請到試算表直接改。手續費沒有就填 0；交易稅買進通常是 0。網站讀的是試算表的發布版本，寫入後約 5 分鐘才看得到，本月合計也要等那時才含剛寫入的筆數（這一頁連續記的會先算進去）。"));
+    recover, form, result,
+    el("p", { class: "tiny" }, "第一版只記台股；記錯請到試算表直接改。手續費沒有就填 0；交易稅買進通常是 0。網站讀的是試算表的發布版本，寫入後約 5 分鐘才看得到，本月合計也要等那時才含剛寫入的筆數（這一頁連續記的會先算進去）。送出後沒收到結果時，這台裝置會記下這筆的請求編號與內容（不含密鑰），重開記帳頁可以用原編號確認。"));
 }
 
 function previewView(out) {
@@ -275,7 +351,7 @@ function previewView(out) {
 function doneView(out) {
   const t = out.trade, h = out.holding;
   return notice("info",
-    el("strong", {}, out.repeated ? "這筆剛才已經寫入過，這次沒有重複寫。" : `✓ 已寫入交易紀錄第 ${out.rowNumber} 列。`),
+    el("strong", {}, out.repeated ? `這筆之前已經寫入過（當時是交易紀錄第 ${out.rowNumber} 列），這次沒有重複寫。` : `✓ 已寫入交易紀錄第 ${out.rowNumber} 列。`),
     ` ${t.date} ${t.side} ${t.code} ${shares(t.shares)} 股，交割 ${twd(t.settle)}；持倉 ${shares(h.after.shares)} 股。`,
     "約 5 分鐘後按「↻ 重新整理」，其他頁面才看得到。");
 }
@@ -412,5 +488,5 @@ async function monthlyCard() {
     el("div", { class: "grid two" }, kv(`本月（${monthName(ym)}）`, twd(cur)), kv(`下個月（${monthName(next)}）起`, twd(nxt))),
     el("div", { class: "row dca-row" }, input, btn),
     out,
-    el("p", { class: "tiny" }, "改金額從下個月生效，這個月不變；超過定投金額的買進算自主加碼，不會改變下個月的定投。帳本的可用資金照「定投金額」分頁逐月加總。注意：新聞晨報的「本月紀律」（engine/discipline.py）目前固定用 3,000 計算，改金額後要另外更新排程。"));
+    el("p", { class: "tiny" }, "改金額從下個月生效，這個月不變；超過定投金額的買進算自主加碼，不會改變下個月的定投。帳本的可用資金照「定投金額」分頁逐月加總。新聞晨報（平日早上、中午）每次都直接讀「定投金額」分頁，不用另外更新排程：生效月份的第一個平日起，晨報紀律的「本月應投入」就是新金額。晨報正常時只寫金額、不另外標來源；讀不到這個分頁時暫用預設 3,000，並在摘要註明「定投金額未取得」。"));
 }

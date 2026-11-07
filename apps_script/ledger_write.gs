@@ -1,5 +1,6 @@
 // 共用帳本的寫入服務：Google Apps Script 網頁應用程式，綁在「投資共用帳本」試算表上（docs/LEDGER_WRITE.md）。
 // 網站「記帳」頁用 POST 送 JSON（Content-Type: text/plain，不會有 CORS 預檢），這裡核對密鑰後：
+// （本機測試：tests/apps_script/ledger_write_test.html，用假的 SpreadsheetApp 等服務跑這一份程式）
 //   - addTrade：在「交易紀錄」加一列台股成交，並更新「持倉」的股數與總成本
 //   - setMonthly：改每月定投金額，從下個月生效（寫在「定投金額」分頁）
 //   - ping：測試連線，不寫入
@@ -19,6 +20,8 @@ const SOURCE = "網站輸入";
 const MAX_FAILS = 10;        // 密鑰錯 10 次就暫停 10 分鐘
 const FAIL_WINDOW_S = 600;
 const DEDUPE_S = 21600;      // 同一個請求編號 6 小時內重送，回傳上次的結果，不會重複寫入
+// 快取 req:<id> 存 { v: 2, hash, out }：hash 是這筆請求內容（action＋data）的 SHA-256，同編號不同內容就拒絕。
+// CacheService 是盡力保存，可能不到 6 小時就被清掉；持久化的請求紀錄是第 B 批（docs/LEDGER_WRITE.md「已知限制」）。
 
 class UserError extends Error {}
 
@@ -33,38 +36,52 @@ function doPost(e) {
   } catch (err) {
     return json_({ ok: false, error: "請求格式錯誤" });
   }
+  // retry: true＝這次還沒處理到這筆（密鑰、暫停、帳本忙碌），修好後可以用同一個請求編號再送
   const cache = CacheService.getScriptCache();
   const fails = Number(cache.get("fails") || 0);
-  if (fails >= MAX_FAILS) return json_({ ok: false, error: "密鑰錯太多次，10 分鐘後再試" });
+  if (fails >= MAX_FAILS) return json_({ ok: false, retry: true, error: "密鑰錯太多次，10 分鐘後再試" });
   const want = PropertiesService.getScriptProperties().getProperty("WRITE_KEY");
-  if (!want || want.length < 20) return json_({ ok: false, error: "Apps Script 還沒設定指令碼屬性 WRITE_KEY（至少 20 個字元）" });
+  if (!want || want.length < 20) return json_({ ok: false, retry: true, error: "Apps Script 還沒設定指令碼屬性 WRITE_KEY（至少 20 個字元）" });
   if (!sameKey_(String(req.key || ""), want)) {
     cache.put("fails", String(fails + 1), FAIL_WINDOW_S);
-    return json_({ ok: false, error: "密鑰不對" });
+    return json_({ ok: false, retry: true, error: "密鑰不對" });
   }
 
   const data = req.data || {};
   const dry = data.dryRun === true;
   const id = /^[A-Za-z0-9_-]{8,64}$/.test(String(req.id || "")) ? String(req.id) : null;
-  if (id && !dry) {
-    const hit = cache.get("req:" + id);
-    if (hit) return json_(Object.assign(JSON.parse(hit), { repeated: true }));
+  // 只有真的寫入（不是試算、不是 ping）才查重；hash 用來分辨「同一筆重送」和「編號被拿去送另一筆」
+  const hash = id && !dry && req.action !== "ping" ? requestHash_(req.action, data) : null;
+  if (hash) {
+    const hit = cachedReply_(cache, id, hash); // 快速路徑：不用排隊等鎖
+    if (hit) return hit;
   }
 
   const lock = LockService.getScriptLock();
   try {
     lock.waitLock(20000);
   } catch (err) {
-    return json_({ ok: false, error: "帳本正在寫入別的資料，稍後再試" });
+    return json_({ ok: false, retry: true, error: "帳本正在寫入別的資料，稍後再試" });
   }
   try {
+    if (hash) {
+      // 鎖內再查一次：兩個相同請求可能都在鎖外查不到，先拿到鎖的那個已經寫完，這個就不能再寫
+      const hit = cachedReply_(cache, id, hash);
+      if (hit) return hit;
+    }
     let out;
     if (req.action === "ping") out = ping_();
     else if (req.action === "addTrade") out = addTrade_(data, dry);
     else if (req.action === "setMonthly") out = setMonthly_(data, dry);
     else throw new UserError("不支援的動作");
     out.ok = true;
-    if (id && !dry && req.action !== "ping") cache.put("req:" + id, JSON.stringify(out), DEDUPE_S);
+    if (hash) {
+      try {
+        cache.put("req:" + id, JSON.stringify({ v: 2, hash, out }), DEDUPE_S);
+      } catch (err) {
+        console.error(err); // 已經寫進帳本了，快取失敗不能回報成寫入失敗
+      }
+    }
     return json_(out);
   } catch (err) {
     if (err instanceof UserError) return json_({ ok: false, error: err.message });
@@ -228,6 +245,36 @@ function setMonthly_(d, dry) {
 
 function json_(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// 快取裡有這個請求編號：內容相同回傳上次的結果（repeated: true）；內容不同就拒絕；沒有回傳 null
+function cachedReply_(cache, id, hash) {
+  const raw = cache.get("req:" + id);
+  if (!raw) return null;
+  const hit = JSON.parse(raw);
+  // 舊版（更新部署前）存的是結果本身、沒有 hash：照舊回傳，最多 6 小時後就不會再出現
+  if (hit.v !== 2) return json_(Object.assign(hit, { repeated: true }));
+  if (hit.hash !== hash) {
+    return json_({ ok: false, conflict: true,
+      error: "這個請求編號 6 小時內已經寫入另一筆內容不同的資料，這次沒有寫入。請重新按「檢查這筆」再送。" });
+  }
+  return json_(Object.assign(hit.out, { repeated: true }));
+}
+
+// 請求內容的 SHA-256（十六進位）：action＋data，物件的鍵排序後再序列化，dryRun 不算
+function requestHash_(action, data) {
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256,
+    canon_({ action: String(action), data }), Utilities.Charset.UTF_8);
+  return bytes.map((b) => (b & 0xff).toString(16).padStart(2, "0")).join(""); // Apps Script 的位元組是 -128～127
+}
+
+function canon_(v) {
+  if (Array.isArray(v)) return "[" + v.map(canon_).join(",") + "]";
+  if (v && typeof v === "object") {
+    return "{" + Object.keys(v).filter((k) => k !== "dryRun" && v[k] !== undefined).sort()
+      .map((k) => JSON.stringify(k) + ":" + canon_(v[k])).join(",") + "}";
+  }
+  return JSON.stringify(v === undefined ? null : v);
 }
 
 function sameKey_(a, b) {

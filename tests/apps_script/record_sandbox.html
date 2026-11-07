@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>記帳頁沙盒</title>
+<link rel="stylesheet" href="../../site/css/app.css">
+<style>
+  .sandbox { border: 2px dashed #d4a017; border-radius: 8px; padding: 10px 12px; margin: 12px 16px; font-size: 14px; }
+  .sandbox h1 { font-size: 16px; margin: 0 0 6px; }
+  .sandbox .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+  .sandbox pre { white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 6px 0 0; }
+</style>
+</head>
+<body>
+<div class="sandbox">
+  <h1>記帳頁沙盒（假的 Apps Script 與假帳本，不連 Google）</h1>
+  <div class="row">
+    <label>下一次正式寫入：
+      <select id="mode">
+        <option value="normal">正常回應</option>
+        <option value="lose">回應遺失（已寫入，回應在路上不見）</option>
+        <option value="drop">沒送到（連線失敗，沒寫入）</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <button id="reopen" class="btn small" type="button">模擬重開記帳頁</button>
+    <button id="age" class="btn small" type="button">把上次送出時間改成 6 小時前</button>
+    <button id="reset" class="btn small" type="button">清除沙盒的本機紀錄</button>
+  </div>
+  <pre id="state"></pre>
+</div>
+<main id="view" tabindex="-1"></main>
+<script type="module" src="record_sandbox.js"></script>
+</body>
+</html>
