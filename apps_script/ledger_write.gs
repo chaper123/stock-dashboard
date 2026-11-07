@@ -840,7 +840,10 @@ function settings_() {
   const vals = sh.getRange(1, 1, n, 2).getValues();
   disp.forEach((r, i) => {
     const label = String(r[0]).trim();
-    if (label === "基準日") out.basis = normYmd_(r[1]) || null;
+    if (label === "基準日") {
+      const v = vals[i][1];
+      out.basis = normYmd_(r[1]) || (v instanceof Date ? Utilities.formatDate(v, TZ, "yyyy-MM-dd") : null);
+    }
     else if (label.startsWith("基準日後買入合計")) out.buys = num_(vals[i][1]);
     else if (label.startsWith("基準日後賣出回收")) out.sells = num_(vals[i][1]);
   });

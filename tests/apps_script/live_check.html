@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>測試帳本實測（第 B 批）</title>
+<style>
+  :root { color-scheme: light dark; --ok: #1a7f37; --bad: #cf222e; --warn: #9a6700; --line: #8884; }
+  body { font: 15px/1.6 system-ui, "Microsoft JhengHei", sans-serif; margin: 16px; max-width: 760px; background: Canvas; color: CanvasText; }
+  h1 { font-size: 19px; margin: 0 0 6px; }
+  h2 { font-size: 16px; margin: 18px 0 4px; }
+  .warn { border: 2px solid var(--warn); border-radius: 8px; padding: 8px 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+  input { flex: 1; min-width: 14em; font: inherit; padding: 6px 8px; }
+  button { font: inherit; padding: 6px 12px; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: .5; }
+  .step { border-top: 1px solid var(--line); padding-top: 6px; }
+  .out { white-space: pre-wrap; word-break: break-all; font-size: 13px; margin: 4px 0; }
+  .pass { color: var(--ok); font-weight: 700; }
+  .fail { color: var(--bad); font-weight: 700; }
+  .todo { background: color-mix(in srgb, var(--warn) 15%, Canvas); border-radius: 6px; padding: 6px 10px; }
+</style>
+</head>
+<body>
+<h1>測試帳本實測：記帳一致性（第 B 批）</h1>
+<p class="warn">只能用<strong>「投資共用帳本（測試）」</strong>這種副本：連線後帳本名稱沒有「測試」兩個字，這頁就不會送任何寫入。網址與密鑰只放在這一頁的輸入欄，不會存起來；重新整理就要重貼。步驟見 <code>docs/LEDGER_WRITE.md</code>「用測試帳本驗證」。</p>
+
+<div class="row"><input id="url" type="url" autocomplete="off" spellcheck="false" placeholder="測試帳本的 Apps Script 網址 https://script.google.com/macros/s/…/exec"></div>
+<div class="row"><input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="測試帳本的 WRITE_KEY"></div>
+
+<div class="step"><h2>0. 連線</h2>
+  <div class="row"><button id="s0">測試連線</button></div><div id="o0" class="out"></div></div>
+<div class="step"><h2>1. 同一筆同時送兩次（案例 1）</h2>
+  <p>用同一個請求編號同時送兩個一樣的請求（買 1 股 009816，成交價 10）：交易紀錄只能多一列。</p>
+  <div class="row"><button id="s1" disabled>同時送兩次</button></div><div id="o1" class="out"></div></div>
+<div class="step"><h2>2. 同編號不同內容（案例 3）</h2>
+  <div class="row"><button id="s2" disabled>用第 1 步的編號送 2 股</button></div><div id="o2" class="out"></div></div>
+<div class="step"><h2>3. 查詢寫入結果（案例 2）</h2>
+  <div class="row"><button id="s3" disabled>查第 1 步那筆、再查一個沒送過的編號</button></div><div id="o3" class="out"></div></div>
+<div class="step"><h2>4. 交易列寫了、持倉沒更新（案例 4）</h2>
+  <p>先正常記一筆，再請你在測試帳本手動做出「中途壞掉」的樣子，然後用原編號查詢，看程式會不會補好。</p>
+  <div class="row"><button id="s4a" disabled>記一筆（買 1 股 009816）</button></div><div id="o4a" class="out"></div>
+  <div class="row"><button id="s4b" disabled>改好了，用原編號查詢</button></div><div id="o4b" class="out"></div></div>
+<div class="step"><h2>5. 沖銷（案例 5）</h2>
+  <div class="row"><button id="s5" disabled>沖銷第 1 步那一列</button></div><div id="o5" class="out"></div></div>
+<div class="step"><h2>6. 對帳（案例 6）</h2>
+  <div class="row"><button id="s6" disabled>對帳</button></div><div id="o6" class="out"></div></div>
+
+<script type="module" src="live_check.js"></script>
+</body>
+</html>
