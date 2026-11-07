@@ -7,7 +7,8 @@ import { el } from "./fmt.js";
 import { IS_DEV } from "./config.js";
 
 const KEY = "github.privateToken";
-const API = "https://api.github.com/repos/chaper123/market-data-private/contents/data/";
+const REPO = "https://api.github.com/repos/chaper123/market-data-private/";
+const API = `${REPO}contents/data/`;
 const TIMEOUT_MS = 20000;
 export const PRIVATE_NOTE = "持股資料來自投信網站，僅供本人參考，請勿轉發";
 
@@ -31,7 +32,7 @@ export const hasPrivate = () => IS_DEV || !!getToken();
 
 export class PrivateError extends Error {}
 
-async function fetchPrivate(path) {
+async function fetchPrivate(path, { url = API + path, accept = "application/vnd.github.raw+json" } = {}) {
   const token = getToken();
   if (!IS_DEV && !token) throw new PrivateError("還沒設定 GitHub token");
   const ctl = new AbortController();
@@ -41,8 +42,8 @@ async function fetchPrivate(path) {
     try {
       res = IS_DEV
         ? await fetch(`dev-data/private/${path}`, { cache: "no-store", signal: ctl.signal })
-        : await fetch(API + path, {
-          headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.raw+json" },
+        : await fetch(url, {
+          headers: { Authorization: `Bearer ${token}`, Accept: accept },
           cache: "no-store", signal: ctl.signal,
         });
     } catch (e) {
@@ -84,6 +85,35 @@ export function loadFund(code) {
 }
 export function clearPrivate() {
   memo.clear();
+  unitsMemo.clear();
+}
+
+// 某個資料日的流通單位數（改進報告 R06）：歷史 CSV 只有股數與權重，單位數只在每天的 <代號>.json 裡。
+// 收集程式每次執行都 commit 那天的 JSON，所以從私人 repo 的 git 歷史找那天的版本（同一個 token、Contents 唯讀就夠）：
+// 列出那天到之後 4 天內改過這個檔的 commit，由舊到新最多看 4 個，找 JSON 的 date 等於那天的。找不到回傳 null。
+// 本機 ?dev 改讀 dev-data/private/holdings/<代號>@<日期>.json（沒有這個檔就是 null）
+const unitsMemo = new Map();
+const tpeMidnight = (d) => new Date(`${d}T00:00:00+08:00`).toISOString();
+const plusDays = (d, n) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+export function loadUnitsOn(code, date) {
+  const key = `${code}@${date}`;
+  if (!unitsMemo.has(key)) {
+    const p = (async () => {
+      const pick = (doc) => (doc?.date === date && doc.units > 0 ? { date, units: doc.units, nav: doc.nav ?? null } : null);
+      if (IS_DEV) return pick(JSON.parse(await fetchPrivate(`holdings/${key}.json`).catch(() => "null")));
+      const q = new URLSearchParams({ path: `data/holdings/${code}.json`, since: tpeMidnight(date), until: tpeMidnight(plusDays(date, 4)), per_page: "20" });
+      const commits = JSON.parse(await fetchPrivate("", { url: `${REPO}commits?${q}`, accept: "application/vnd.github+json" }));
+      for (const c of (Array.isArray(commits) ? commits : []).slice().reverse().slice(0, 4)) {
+        const doc = JSON.parse(await fetchPrivate(`holdings/${code}.json`, { url: `${API}holdings/${code}.json?ref=${encodeURIComponent(c.sha)}` }));
+        if (pick(doc)) return pick(doc);
+        if (doc?.date > date) break;
+      }
+      return null;
+    })();
+    unitsMemo.set(key, p);
+    p.catch(() => unitsMemo.get(key) === p && unitsMemo.delete(key));
+  }
+  return unitsMemo.get(key);
 }
 
 // 設定欄：輸入、更換、清除 token（畫面只顯示末四碼）。改了之後發出 refresh-request，外殼會重讀資料

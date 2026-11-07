@@ -11,7 +11,7 @@ import { TABS, holdTags, sortItems, hotList, nsfNews, nsfStatus, ago, timeOf } f
 import { macroTiles } from "../macro.js";
 import { outlookEvents, review009816, dayLabel } from "../outlook.js";
 import { loadPortfolio } from "../portfolio.js";
-import { loadFund, hasPrivate, privateSettings, PRIVATE_NOTE } from "../private.js";
+import { loadFund, loadUnitsOn, hasPrivate, privateSettings, PRIVATE_NOTE } from "../private.js";
 import { MOVE_PCT, weekStart, fundMoves, sinceFirst, lastSetChange, top10Rows, fundSummary, lookThrough } from "../inside.js";
 import { loadStatus, newsKind, statusLine } from "../status.js";
 
@@ -123,9 +123,11 @@ async function nsfView() {
 
 // ── 你的 ETF 裡面在變什麼（私人 repo 的每日持股，要 GitHub token；本機 ?dev 讀 dev-data/private）
 const FUND_CODES = ["00981A", "009816"];
-const MOVE_LABEL = { new: "新買", add: "股數增加", cut: "股數減少", exit: "出清" }; // R06：基金規模變大時股數也會增加，不直接叫加碼
-// 新買用黃色標記（使用者 2026-11-06 要求），股數增加紅、股數減少與出清綠（台股慣例）
-const MOVE_CLASS = { new: "mv-new", add: "up", cut: "down", exit: "down" };
+// R06：有兩天的流通單位數時看「每單位持股」（扣掉基金規模變化）；沒有時只能寫股數增加／減少，不叫加碼
+const MOVE_LABEL = { new: "新買", add: "股數增加", cut: "股數減少", exit: "出清", split: "疑似分割或合併", rename: "代號異動" };
+const UNIT_LABEL = { add: "每單位持股增加", cut: "每單位持股減少" };
+// 新買用黃色標記（使用者 2026-11-06 要求），增加紅、減少與出清綠（台股慣例）；分割與代號異動不是買賣，不上色
+const MOVE_CLASS = { new: "mv-new", add: "up", cut: "down", exit: "down", split: "", rename: "" };
 const lots = (n) => int(n / 1000);
 const pp = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
 
@@ -143,9 +145,11 @@ async function insideView() {
   const err = [aR, bR].find((r) => r.status === "rejected");
   const ok = [aR, bR].filter((r) => r.status === "fulfilled").map((r) => r.value.doc);
   const funds = Object.fromEntries(ok.map((d) => [d.code, d]));
+  // 這週起點那天的流通單位數（私人 repo 的 git 歷史）；最新一天的在 <代號>.json。讀不到就退回只看股數
+  const units = aR.status === "fulfilled" ? await weekUnits(aR.value) : null;
   return card(title,
     err && notice("warn", `讀不到私人持股：${err.reason?.message || "未知原因"}`),
-    aR.status === "fulfilled" && activeFund(aR.value, mgr),
+    aR.status === "fulfilled" && activeFund(aR.value, mgr, units),
     bR.status === "fulfilled" && indexFund(bR.value, calR, today),
     exposure(pR, funds),
     ok.length > 0 && el("p", { class: "tiny" }, `${PRIVATE_NOTE}。出處：`,
@@ -160,10 +164,22 @@ function fundHead(code, label, s) {
       s.aum ? `｜規模 ${int(s.aum / 1e8)} 億` : "")];
 }
 
-function moveText(m) {
+async function weekUnits({ doc, hist }) {
+  const last = hist.dates.at(-1), from = weekStart(hist.dates);
+  if (from >= last || doc.date !== last || !(doc.units > 0)) return { from, a: null, b: null, why: "最新一天沒有流通單位數" };
+  const a = await loadUnitsOn(doc.code || "00981A", from).catch((e) => ({ error: e.message }));
+  return { from, a: a?.units ?? null, b: doc.units, why: a?.error ? `讀不到 ${shortDate(from)} 的流通單位數（${a.error}）` : a ? null : `${shortDate(from)} 沒有流通單位數的紀錄` };
+}
+
+const sp = (v) => (Math.abs(v) < 0.5 ? "±0%" : `${v > 0 ? "+" : "−"}${Math.abs(v).toFixed(0)}%`);
+function moveText(m, perUnit) {
   if (m.kind === "new") return `${shortDate(m.since)} 起，現在 ${lots(m.b)} 張（權重 ${m.wb.toFixed(2)}%）`;
   if (m.kind === "exit") return `原本 ${lots(m.a)} 張（權重 ${m.wa.toFixed(2)}%）`;
-  return `${lots(m.a)} → ${lots(m.b)} 張（${m.pct > 0 ? "+" : "−"}${Math.abs(m.pct).toFixed(0)}%），權重 ${m.wa.toFixed(2)}% → ${m.wb.toFixed(2)}%`;
+  if (m.kind === "rename") return `${m.from} → ${m.code}，${lots(m.a)} → ${lots(m.b)} 張（同一個名稱換了代號，不算買賣）`;
+  if (m.kind === "split") return `${lots(m.a)} → ${lots(m.b)} 張，股數剛好變成整數倍、權重 ${m.wa.toFixed(2)}% → ${m.wb.toFixed(2)}% 幾乎沒變（不算買賣）`;
+  const w = `權重 ${m.wa.toFixed(2)}% → ${m.wb.toFixed(2)}%`;
+  return perUnit ? `每單位 ${sp(m.pct)}（股數 ${Math.abs(m.raw) < 0.5 ? `${lots(m.b)} 張沒變` : `${lots(m.a)} → ${lots(m.b)} 張，${sp(m.raw)}`}），${w}`
+    : `${lots(m.a)} → ${lots(m.b)} 張（${sp(m.pct)}），${w}`;
 }
 
 function top10Table(doc, hist) {
@@ -179,19 +195,26 @@ function top10Table(doc, hist) {
 }
 
 // 00981A：經理人這週買賣了什麼、收集以來新增與出清、前十大
-function activeFund({ doc, hist }, mgr) {
+function activeFund({ doc, hist }, mgr, units) {
   const last = hist.dates.at(-1);
   const from = weekStart(hist.dates);
-  const { moves, tokens } = from < last ? fundMoves(hist, from, last) : { moves: [], tokens: 0 };
+  const r = from < last ? fundMoves(hist, from, last, units) : { moves: [], tokens: 0, perUnit: false };
+  const { moves, tokens, perUnit } = r;
   const sf = sinceFirst(hist);
-  const line = (m) => el("li", {}, el("b", { class: MOVE_CLASS[m.kind] }, `${MOVE_LABEL[m.kind]} ${m.name}`), "：", moveText(m));
+  const label = (m) => (perUnit && UNIT_LABEL[m.kind]) || MOVE_LABEL[m.kind];
+  const line = (m) => el("li", {}, el("b", { class: MOVE_CLASS[m.kind] }, `${label(m)} ${m.name}`), "：", moveText(m, perUnit));
   return el("div", { class: "fund" },
     fundHead("00981A", "主動統一台股增長｜經理人選股", fundSummary(doc)),
     mgr && el("div", { class: "ai" }, el("b", {}, "經理人方向（AI 推論）"), mgr.fact,
       el("p", { class: "tiny" }, mgr.reason || "AI 從投信公布的每日持股推論，不是經理人說的。")),
-    el("p", { class: "small" }, el("b", {}, `這週（${shortDate(from)} → ${shortDate(last)}）持有股數的變化`),
-      el("span", { class: "tiny" }, `（只列股數變化 ${MOVE_PCT}% 以上的）`)),
-    el("p", { class: "tiny" }, "股數增加不一定是經理人更看好：有人申購、基金規模變大時，照原比例買進股數也會增加。要扣掉發行單位數的變化才看得出主動調整，這裡還沒有這項資料。"),
+    el("p", { class: "small" }, el("b", {}, perUnit ? `這週（${shortDate(from)} → ${shortDate(last)}）每單位持股的變化` : `這週（${shortDate(from)} → ${shortDate(last)}）持有股數的變化`),
+      el("span", { class: "tiny" }, perUnit ? `（每單位持股變化 ${MOVE_PCT}% 以上的）` : `（只列股數變化 ${MOVE_PCT}% 以上的）`)),
+    perUnit
+      ? el("p", { class: "tiny" }, `已扣掉基金規模的變化：流通單位數 ${sp(r.unitPct)}，每單位持股＝持股股數 ÷ 流通單位數。有人申購、照原比例買進時每單位持股不變，不會列成增加；`
+        + "只有股價漲跌、股數沒變的也不會列。這只是持股的變化，不代表經理人的看法；單位數與持股的入帳時間可能差一天，所以小幅變化不列。"
+        + (Math.abs(r.median ?? 0) >= 3 ? `大部分持股的每單位變化都在 ${sp(r.median)} 左右（中位數）：比較像申購或贖回的錢還沒買賣完（現金比重跟著變），個別股票要跟這個數字比，不一定是經理人賣出或加碼。` : ""))
+      : el("p", { class: "tiny" }, "股數增加不一定是經理人更看好：有人申購、基金規模變大時，照原比例買進股數也會增加。要扣掉流通單位數的變化才看得出主動調整，"
+        + `這次沒辦法扣：${units?.why || "沒有流通單位數"}（單位數只有私人 repo 每天的持股檔裡有，從 2026-11-05 開始保留），所以只列股數變化。`),
     from >= last ? el("p", { class: "muted small" }, "持股只收集到一天，還不能比較。")
       : moves.length ? el("ul", { class: "moves" }, moves.slice(0, 8).map(line))
         : el("p", { class: "muted small" }, `這週沒有股數變化 ${MOVE_PCT}% 以上的。`),
