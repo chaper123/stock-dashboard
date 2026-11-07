@@ -6,6 +6,12 @@
       "runtimeExecutable": "py",
       "runtimeArgs": ["-3.14", "-m", "http.server", "8765", "--directory", "site"],
       "port": 8765
+    },
+    {
+      "name": "tests",
+      "runtimeExecutable": "py",
+      "runtimeArgs": ["-3.14", "-m", "http.server", "8771", "--bind", "127.0.0.1"],
+      "port": 8771
     }
   ]
 }
