@@ -1,8 +1,20 @@
 // 報告歷史：依日期與市場列出晨報全文。Markdown 用 marked 轉換，結果一律經 DOMPurify 過濾後才放進頁面。
+// 兩個買點晨報已在 2026-11-03 正式停用，這裡只當歷史紀錄保留查詢（舊報告內容不改寫）。
 import { loadArchive, oneLiner } from "../data.js";
 import { el, taipeiTime, shortDate } from "../fmt.js";
 import { slot, pageHeader, notice } from "../ui.js";
 import { MARKET_LABEL } from "../config.js";
+
+// 停用紀錄（docs/PROGRESS.md「下一步」第 8、10 項、docs/PIVOT.md 第 1、7 節）：
+// - 2026-10-29 回測：買區規則與每月定期定額幾乎一樣（台股每年 −0.02、SPY +0.02 個百分點），加 KD 止跌確認更差
+// - 2026-10-30 使用者決定轉型：每月定投、台股 009816 80%／00981A 20%，4、10 月檢查；買點晨報的額度移給新聞晨報
+// - 2026-11-03 09:20、10:17 兩次執行一開始就被帳號的 7 天用量上限拒絕（claude.ai 排程執行紀錄），沒有報告
+// - 2026-11-03 17:38～17:41 新聞晨報 v3 切換正式排程時，美股 v2.1、台股 v2.1 兩個排程用 API 停用
+const RETIRED = { date: "2026-11-03" };
+// 晨報版本：存檔從 v2 開始（v1 沒有寫存檔）；2026-10-29 起是 v2.1（改讀新聞分頁，買區規則不變）
+const routineVer = (r) => (r.generatedAt.slice(0, 10) >= "2026-10-29" ? "v2.1" : "v2");
+const ruleVer = (r) => /engine-(v[\d.]+)/.exec(r.engine || "")?.[1] || "版本不明";
+const strategyText = (r) => `買區監測規則 ${ruleVer(r)}・晨報 ${routineVer(r)}`;
 
 let hooked = false;
 function purifier() {
@@ -60,7 +72,8 @@ export function renderMarkdown(md) {
 }
 
 export async function render(root, { arg }) {
-  root.append(pageHeader("報告歷史", "兩個晨報每次執行的報告全文（排程寫進儀表板試算表的「報告存檔」）。"));
+  root.append(pageHeader("報告歷史", "轉型前兩個買點晨報（美股、台股）的報告全文，保留查詢用。這兩種報告已經停止產生，內容不代表現行計畫。"));
+  slot(root, status);
   const filter = ["us", "tw"].includes(arg) ? arg : "all";
   root.append(el("div", { class: "chips", role: "group", "aria-label": "市場" },
     [["all", "全部"], ["tw", "台股"], ["us", "美股"]].map(([k, label]) =>
@@ -68,35 +81,59 @@ export async function render(root, { arg }) {
   slot(root, () => list(filter));
 }
 
+// 置頂說明：這類報告還有沒有在產生、最後一份是哪天、為什麼停止。停用的事實寫死；最後一份從存檔算
+async function status() {
+  const rows = await loadArchive().then((a) => a.filter((r) => r.report), () => null);
+  const lastOf = (m) => rows?.filter((r) => r.market === m).at(-1);
+  const lastText = (m) => {
+    const r = lastOf(m);
+    return r ? `${MARKET_LABEL[m]} ${taipeiTime(r.generatedAt, true)}（資料日 ${shortDate(r.dataDate)}）` : `${MARKET_LABEL[m]} 沒有`;
+  };
+  const after = rows?.filter((r) => r.generatedAt.slice(0, 10) > RETIRED.date) || [];
+  return notice("warn",
+    el("strong", {}, "這兩種晨報已經停止產生"),
+    el("p", {}, "美股晨報、台股晨報（買點監測）在 2026-11-03 下午正式停用。這是計畫改變，不是排程故障，之後不會再有新的報告。"),
+    el("ul", { class: "notes" },
+      el("li", {}, "最後一份：", rows ? `${lastText("us")}、${lastText("tw")}。` : "這次讀不到存檔，無法顯示日期（停用日期不受影響）。"),
+      el("li", {}, "為什麼停：2026-10-29 用 2008 年起的歷史資料回測，原本「等股價跌到買區才買」的規則，結果跟每月固定投入幾乎一樣（每年只差約 0.02 個百分點），加上止跌確認的版本反而更差。所以 10/30 改成現行計畫：每月定期投入，台股 009816 佔 80%、00981A 佔 20%，每年 4 月、10 月檢查比例；原本這兩個晨報用的額度改給新聞晨報。"),
+      el("li", {}, "11/03 為什麼沒有報告：那天早上兩個排程還沒停用，但帳號當週的用量額度已經用完，兩次執行一開始就被拒絕，所以沒有產生；同一天下午正式停用。"),
+      el("li", {}, "現在每天還在產生的：新聞晨報（平日 08:40 晨間、11:30 午間），內容在",
+        el("a", { href: "#/news" }, "新聞"), "頁和", el("a", { href: "#/overview" }, "總覽"), "；這個月該投入多少，看總覽的「本月紀律」。"),
+      el("li", {}, "下面的舊報告是舊策略的歷史紀錄：裡面的第一買區、第二買區、深度買區和「規則參考金額」是當時的規則算的，不是今天要做的事。")),
+    after.length > 0 && el("p", {}, el("strong", {}, `注意：停用日之後還有 ${after.length} 份新報告`),
+      `（最新 ${taipeiTime(after.at(-1).generatedAt, true)}），跟停用紀錄不一致，可能有排程被重新啟用。`));
+}
+
 async function list(filter) {
   const rows = (await loadArchive()).filter((r) => r.report && (filter === "all" || r.market === filter)).reverse();
-  if (!rows.length) return notice("info", "還沒有報告。");
+  if (!rows.length) return notice("info", "沒有報告。");
   const out = [];
   let lastDay = null;
-  rows.forEach((r, i) => {
+  for (const r of rows) {
     const day = r.generatedAt.slice(0, 10);
     if (day !== lastDay) {
       out.push(el("h2", { class: "date-head" }, `${day.replace(/-/g, "/")}`));
       lastDay = day;
     }
     const body = el("div", { class: "md" });
+    const line = oneLiner(r.report);
     const item = el("details", { class: "report-item" },
       el("summary", {},
         el("div", { class: "spread" },
           el("span", { class: "t" }, `${MARKET_LABEL[r.market] || r.market}晨報`),
           el("span", { class: "tiny" }, `產生 ${taipeiTime(r.generatedAt)}・資料日 ${shortDate(r.dataDate)}`)),
-        el("div", { class: "p" }, oneLiner(r.report) || "（點開看全文）")),
+        el("div", {}, el("span", { class: "badge b-warn" }, "舊策略的歷史紀錄，不代表現行計畫"), " ",
+          el("span", { class: "tag" }, strategyText(r))),
+        el("div", { class: "p" }, line ? `當時的一句話：${line}` : "（點開看全文）")),
       body);
-    // 點開才轉換，第一篇預設打開
+    // 一律收合，點開才轉換；全文上面再提醒一次
     const fill = () => {
-      if (!body.childNodes.length) body.append(...[renderMarkdown(r.report)].flat());
+      if (body.childNodes.length) return;
+      body.append(notice("warn", `這是 2026-10-30 轉型前的舊策略報告（${strategyText(r)}）。裡面的買區、狀態與金額是當時的規則算的，不代表現行計畫，也不是今天要做的事。`),
+        ...[renderMarkdown(r.report)].flat());
     };
     item.addEventListener("toggle", () => item.open && fill());
-    if (i === 0) {
-      item.open = true;
-      fill();
-    }
     out.push(item);
-  });
+  }
   return out;
 }

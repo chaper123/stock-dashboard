@@ -4,9 +4,16 @@ import { loadSettings, loadTrades, loadDividends, loadDaily, loadIndex, loadDca 
 import { dcaFor } from "../discipline.js";
 import { loadPortfolio } from "../portfolio.js";
 import { loadPerformance } from "../perf.js";
-import { el, twd, pct, int, isNum, taipeiToday } from "../fmt.js";
+import { el, twd, pct, int, isNum, taipeiToday, extLink } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { FUNDS as F, NAMES } from "../config.js";
+
+// 官方說明（2026-11-07 確認網址有效）
+const LINKS = {
+  bengen: "https://www.financialplanningassociation.org/sites/default/files/2021-04/MAR04%20Determining%20Withdrawal%20Rates%20Using%20Historical%20Data.pdf",
+  twseDividend: "https://www.twse.com.tw/zh/ETFortune/dividendList",
+  nhi: "https://www.nhi.gov.tw/ch/cp-3283-34642-2589-1.html",
+};
 
 export async function render(root) {
   root.append(pageHeader("資金", "看得到的進度：撲滿、20 年後、和巴菲特比、財富自由要多少。這一頁都是試算，不是投資建議。"));
@@ -50,13 +57,35 @@ function store(k, v) {
 }
 const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// 每月投入金額：帳本「定投金額」這個月的金額（讀不到用 config 的 3,000）
-const monthlyDeposit = async () => dcaFor(await loadDca().catch(() => null), taipeiToday().slice(0, 7));
-
-async function totalAssets() {
-  const [pf, st] = await Promise.all([loadPortfolio(), loadSettings().catch(() => null)]);
-  return pf.totals.mvTwd + (st?.pool || 0);
+// 每月投入金額：帳本「定投金額」這個月的金額（讀不到用 config 的 3,000，known 是 false）
+async function monthlyDeposit() {
+  const dca = await loadDca().catch(() => null);
+  return { amount: dcaFor(dca, taipeiToday().slice(0, 7)), known: !!dca };
 }
+const depositNote = (d) => (d.known ? "" : `（讀不到帳本的定投金額，先用計畫的 ${int(d.amount)} 元）`);
+
+// 總資產＝持倉市值＋可用資金。缺匯率、某檔價格或可用資金時 complete 是 false、missing 列出缺什麼，
+// value 只加讀得到的部分（部分資產）；只有帳本寫的是 0 才算 0。
+// 判斷用 loadPortfolio() 既有的 warnings 與每檔的台幣市值（portfolio.js 之後會另外回傳 complete、missing）
+async function totalAssets() {
+  const [pf, st] = await Promise.all([loadPortfolio(), loadSettings().then((v) => ({ v }), (e) => ({ e }))]);
+  const missing = [];
+  const noFx = pf.positions.filter((p) => !p.error && p.market === "us" && !isNum(p.mvTwd));
+  if (noFx.length) missing.push(`美元兌台幣匯率（${noFx.map((p) => p.code).join("、")} 沒算進來）`);
+  for (const p of pf.positions) {
+    if (p.error) missing.push(`${p.code} 的價格`);
+    else if (!isNum(p.mvTwd) && !noFx.includes(p)) missing.push(`${p.code} 的市值`);
+  }
+  if (pf.warnings?.length && !missing.length) missing.push(...pf.warnings);
+  const pool = st.v?.pool;
+  if (!isNum(pool)) missing.push(st.e ? "可用資金（帳本「設定」讀不到）" : "可用資金（帳本「設定」沒有數字）");
+  return { value: pf.totals.mvTwd + (isNum(pool) ? pool : 0), complete: !missing.length, missing };
+}
+const missingText = (t) => t.missing.join("；");
+// 缺資料時的說明：主值標「部分資產」並列出缺什麼，衍生試算停算
+const partialNotice = (t, stopped, list = true) => notice("warn",
+  list && el("strong", {}, "部分資產"), list && `，缺：${missingText(t)}。`,
+  `缺的部分沒有算進來，這不是完整的總資產；${stopped}。重新整理再試一次，資料齊了就會照常計算。`);
 
 // 滑桿＋數值
 function range(label, { min, max, step, value, fmt }, onInput) {
@@ -71,30 +100,42 @@ function range(label, { min, max, step, value, fmt }, onInput) {
 
 // ── 小豬撲滿 ──
 async function piggyCard() {
-  const deposit = await monthlyDeposit();
-  const [total, trades] = await Promise.all([totalAssets(), loadTrades().catch(() => [])]);
+  const dep = await monthlyDeposit();
+  const [tot, trades] = await Promise.all([totalAssets(), loadTrades().catch(() => [])]);
+  const total = tot.value;
   const B = F.bucket;
-  const full = Math.floor(total / B);
-  const fill = (total - full * B) / B;
-  // 這台裝置上次打開時的交易筆數與撲滿數（第一次打開不播動畫）
+  const full = Math.max(0, Math.floor(total / B));
+  const fill = Math.min(1, Math.max(0, (total - full * B) / B));
+  // 這台裝置上次打開時的交易筆數與撲滿數（第一次打開不播動畫）。
+  // 資料不完整時不更新撲滿數，免得補齊後被誤判成「剛裝滿一隻」
   const prev = store("piggy.seen");
-  store("piggy.seen", { trades: trades.length, bucket: full });
+  store("piggy.seen", { trades: trades.length, bucket: tot.complete ? full : prev?.bucket ?? null });
   const newTrades = prev ? Math.max(0, trades.length - prev.trades) : 0;
-  const crossed = prev ? full > prev.bucket : false;
+  const crossed = tot.complete && prev?.bucket != null && full > prev.bucket;
   const motion = !reduceMotion();
 
   const pig = pigSvg(fill);
   const stage = el("div", { class: "pig-stage" }, pig);
   if (motion && newTrades) stage.append(...coins(Math.min(newTrades, 5)));
   if (motion && crossed) stage.append(fireworks());
-  const eta = F.scenarios.map((r) => `${Math.round(r * 100)}% 約 ${yearsText(monthsToReach((full + 1) * B, total, deposit, r))}`);
+  const eta = F.scenarios.map((r) => `${Math.round(r * 100)}% 約 ${yearsText(monthsToReach((full + 1) * B, total, dep.amount, r))}`);
+  const trade = newTrades > 0 && el("div", { class: "small up" }, `上次打開後有 ${newTrades} 筆新交易${motion ? "" : "（已關閉動畫）"}`);
+  if (!tot.complete) {
+    return card("小豬撲滿", stage,
+      el("div", { class: "pig-text" },
+        el("div", { class: "value" }, twd(total)),
+        el("div", {}, el("span", { class: "badge b-warn" }, "部分資產"), ` 缺：${missingText(tot)}`),
+        trade),
+      partialNotice(tot, "撲滿進度和裝滿要多久先不算", false));
+  }
   return card("小豬撲滿", stage,
     el("div", { class: "pig-text" },
       el("div", { class: "value" }, twd(total)),
       el("div", { class: "small" }, `第 ${full + 1} 隻撲滿：${twd(total - full * B)}／${int(B)}（${pct(fill * 100, 1, false)}）${full ? `・已經裝滿 ${full} 隻` : ""}`),
-      newTrades > 0 && el("div", { class: "small up" }, `上次打開後有 ${newTrades} 筆新交易${motion ? "" : "（已關閉動畫）"}`),
+      trade,
       crossed && el("div", { class: "small up" }, `恭喜裝滿第 ${full} 隻！換下一隻。`)),
-    el("p", { class: "tiny" }, `裝的是總資產（持倉市值＋可用資金），市場跌時撲滿也會變少。照每月 ${int(deposit)} 元裝滿這一隻：${eta.join("、")}。`));
+    el("p", {}, "裝的是總資產（持倉市值＋可用資金），市場跌時撲滿也會變少。"),
+    el("p", { class: "small muted" }, `照每月 ${int(dep.amount)} 元${depositNote(dep)}裝滿這一隻，用固定年報酬試算：${eta.join("、")}。`));
 }
 
 function pigSvg(fill) {
@@ -139,8 +180,12 @@ function fireworks() {
 
 // ── 20 年後 ──
 async function futureCard() {
-  const pv = await totalAssets();
-  const state = { pmt: await monthlyDeposit(), years: 20, custom: 0.07 };
+  const tot = await totalAssets();
+  // 起始本金不完整就不算：拿部分資產算出來的 20 年後看起來完整，其實偏低或偏高
+  if (!tot.complete) return card("20 年後", partialNotice(tot, "20 年後的試算要從完整的總資產開始，所以先不算"));
+  const pv = tot.value;
+  const dep = await monthlyDeposit();
+  const state = { pmt: dep.amount, years: 20, custom: 0.07 };
   const outBox = el("div");
   const draw = () => {
     const n = state.years * 12;
@@ -158,7 +203,8 @@ async function futureCard() {
     range("年數", { min: 5, max: 40, step: 1, value: state.years, fmt: (v) => `${v} 年` }, (v) => { state.years = v; draw(); }),
     range("自訂年報酬", { min: 0, max: 15, step: 0.5, value: 7, fmt: (v) => `${v.toFixed(1)}%` }, (v) => { state.custom = v / 100; draw(); }),
     outBox,
-    el("p", { class: "tiny" }, `從目前總資產 ${twd(pv)} 開始、每月月底投入，用固定年報酬試算；實際報酬每年不同。不用未滿一年的實際報酬推估。`));
+    el("p", {}, `從目前總資產 ${twd(pv)} 開始、每月月底投入，用固定年報酬試算；實際報酬每年不同，有的年份會虧損，結果不保證。`),
+    el("p", { class: "tiny" }, `每月投入預設是這個月的定投金額${depositNote(dep)}。不用你未滿一年的實際報酬推估。`));
 }
 
 function futureChart(pv, state, rows) {
@@ -211,24 +257,28 @@ async function buffettCard() {
   const annual = (x) => Math.pow(1 + x, 1 / perf.years) - 1;
   return card("和巴菲特的差距",
     under1
-      ? [kv(`你的累積報酬（${months} 個月，時間加權）`, el("strong", { class: perf.twr >= 0 ? "up" : "down" }, pct(perf.twr * 100))),
-        kv("同期台股加權報酬指數", bench == null ? "資料準備中" : pct(bench * 100)),
-        el("p", { class: "tiny" }, "投資未滿一年，只比累積報酬；滿一年後改比年化報酬。")]
-      : [kv("你的年化報酬（時間加權）", el("strong", {}, pct(annual(perf.twr) * 100))),
-        kv("同期台股加權報酬指數（年化）", bench == null ? "資料準備中" : pct(annual(bench) * 100))],
+      ? [kv(`你的累積報酬（${months} 個月，扣掉入金影響）`, el("strong", { class: perf.twr >= 0 ? "up" : "down" }, pct(perf.twr * 100))),
+        kv("同期台股加權報酬指數（含股利）", bench == null ? "資料準備中" : pct(bench * 100)),
+        el("p", {}, "投資未滿一年，只比累積報酬；滿一年後改比年化報酬。")]
+      : [kv("你的年化報酬（扣掉入金影響）", el("strong", {}, pct(annual(perf.twr) * 100))),
+        kv("同期台股加權報酬指數（含股利，年化）", bench == null ? "資料準備中" : pct(annual(bench) * 100))],
     kv(`波克夏 ${B.period} 年化`, pct(B.brk * 100, 1, false)),
     kv(`S&P 500 ${B.period} 年化`, pct(B.spx * 100, 1, false)),
-    perf.xirr != null && kv("資金加權報酬 XIRR（年化）", pct(perf.xirr * 100)),
+    perf.xirr != null && kv("照每筆錢投入時間與金額算的年化報酬（XIRR）", pct(perf.xirr * 100)),
     el("h3", {}, "如果每筆錢都有巴菲特的報酬"),
     kv("你的持倉現值（台股收盤、美股換台幣）", twd(perf.value)),
     kv(`每筆都照波克夏 ${pct(B.brk * 100, 1, false)}`, twd(brkV)),
     kv(`每筆都照 S&P 500 ${pct(B.spx * 100, 1, false)}`, twd(spxV)),
-    el("p", { class: "tiny" }, `出處：${B.source}（${B.period} 每股市值年化與 S&P 500 含股利年化）。巴菲特的數字是 60 年平均，短期比較只是好玩。投入金額 ${twd(perf.invested)}，算到 ${perf.last}。`));
+    el("p", {}, "巴菲特的數字是 60 年的平均，短期拿來比只是好玩，不代表你該期待這個報酬。"),
+    el("p", { class: "tiny" }, `出處：${B.source}（${B.period} 每股市值年化與 S&P 500 含股利年化）。投入金額 ${twd(perf.invested)}，算到 ${perf.last}。`));
 }
 
 // ── 財富自由計算機 ──
 async function fireCard() {
-  const pv = await totalAssets();
+  const tot = await totalAssets();
+  // 起始本金不完整時，「需要本金」照算（跟目前資產無關），「照目前速度」「每月要投」停算
+  const pv = tot.complete ? tot.value : null;
+  const dep = await monthlyDeposit();
   const div = await loadDividends().catch(() => null);
   // 高股息 ETF 近 12 個月實際配息 ÷ 最新收盤
   const etfs = await Promise.all(F.fire.etfs.map(async (c) => {
@@ -238,22 +288,23 @@ async function fireCard() {
     return { code: c, ttm: e?.ttm_cash, n: e?.ttm_count, close, yield: e?.ttm_cash && close ? e.ttm_cash / close : null };
   }));
   const ok = etfs.filter((x) => isNum(x.yield));
-  const state = { monthly: F.fire.monthly, ret: 0.07, pmt: await monthlyDeposit(), years: 20, w: Object.fromEntries(ok.map((x) => [x.code, 1])) };
+  const state = { monthly: F.fire.monthly, ret: 0.07, pmt: dep.amount, years: 20, w: Object.fromEntries(ok.map((x) => [x.code, 1])) };
   const outBox = el("div");
   const weighted = () => {
     const sw = ok.reduce((s, x) => s + state.w[x.code], 0);
     return sw ? ok.reduce((s, x) => s + (state.w[x.code] / sw) * x.yield, 0) : null;
   };
-  const row = (name, rate) => {
+  const row = (name, rate, pre = "") => {
     if (!isNum(rate) || rate <= 0) return el("tr", {}, el("td", {}, name), el("td", { class: "r", colspan: 3 }, "資料準備中"));
     const need = (state.monthly * 12) / rate;
-    return el("tr", {}, el("td", {}, `${name}（${pct(rate * 100, 2, false)}）`), el("td", { class: "r" }, wan(need)),
-      el("td", { class: "r" }, yearsText(monthsToReach(need, pv, state.pmt, state.ret))),
-      el("td", { class: "r" }, twd(pmtFor(need, pv, state.ret, state.years * 12))));
+    const stop = el("td", { class: "r muted" }, "缺資料，先不算");
+    return el("tr", {}, el("td", {}, `${name}（${pre}${pct(rate * 100, 2, false)}）`), el("td", { class: "r" }, wan(need)),
+      pv == null ? stop : el("td", { class: "r" }, yearsText(monthsToReach(need, pv, state.pmt, state.ret))),
+      pv == null ? stop.cloneNode(true) : el("td", { class: "r" }, twd(pmtFor(need, pv, state.ret, state.years * 12))));
   };
   const draw = () => outBox.replaceChildren(el("div", { class: "table-wrap" }, el("table", {},
     el("thead", {}, el("tr", {}, ["方法", "需要本金", "照目前速度", `${state.years} 年達成每月要投`].map((h, i) => el("th", { class: i ? "r" : "" }, h)))),
-    el("tbody", {}, row("高股息配息", weighted()), row("4% 法則", F.fire.rule)))));
+    el("tbody", {}, row("高股息配息", weighted(), "稅前 "), row("4% 法則", F.fire.rule)))));
   draw();
   const set = (k) => (v) => {
     state[k] = v;
@@ -268,11 +319,17 @@ async function fireCard() {
     ok.length ? ok.map((x) => range(`${x.code} ${NAMES[x.code] || ""}：殖利率 ${pct(x.yield * 100, 2, false)}（${x.n} 次 ${x.ttm} 元／收盤 ${x.close}）`,
       { min: 0, max: 100, step: 10, value: 100, fmt: (v) => `比重 ${v}` }, (v) => { state.w[x.code] = v; draw(); }))
       : notice("info", "高股息 ETF 配息資料準備中。"),
+    !tot.complete && partialNotice(tot, "「需要本金」照算，「照目前速度」和「每月要投」要從完整的總資產開始，所以先不算"),
     outBox,
-    el("ul", { class: "tiny notes" },
+    el("ul", { class: "notes" },
+      el("li", {}, "配息的數字都是稅前。ETF 的收益分配可能來自股利、利息、資本利得或收益平準金等不同組成，要繳多少所得稅和二代健保補充保費，要看每次配息的實際組成和你自己的條件（例如單次金額、投保身分），這裡不精算。"),
       el("li", {}, "配息不是多出來的錢：除息當天股價會扣掉配息金額。"),
       el("li", {}, "配息每年會變，近 12 個月的殖利率不代表以後。"),
-      el("li", {}, `股利要併入綜合所得；單筆股利 ${int(F.nhiThreshold)} 元以上要扣二代健保補充保費 ${(F.nhiRate * 100).toFixed(2)}%。`),
-      el("li", {}, "4% 法則（Bengen 1994）：每年提領本金 4%，依美國歷史資料 30 年大致不會用完；不保證。"),
-      el("li", {}, `從目前總資產 ${twd(pv)} 開始試算。這是試算，不是投資建議。`)));
+      el("li", {}, "4% 法則（Bengen 1994）：退休第一年提領起始資產的 4%，之後每年照通膨調整這個金額（不是每年重新領當時餘額的 4%）。這是用美國股債歷史資料做的研究，不保證未來，也不是提領建議。"),
+      el("li", {}, pv == null ? "這是試算，不是投資建議。"
+        : `從目前總資產 ${twd(pv)} 開始試算；每月投入預設是這個月的定投金額${depositNote(dep)}，可用滑桿改。這是試算，不是投資建議。`)),
+    el("p", { class: "tiny" }, "官方說明（2026-11-07 查核網址）：",
+      extLink(LINKS.twseDividend, "證交所 ETF 配息清單"), "（每檔的收益分配標準與歷次配息）、",
+      extLink(LINKS.nhi, "健保署補充保險費計算公式"), "（股利、利息所得的門檻、上限與例外）、",
+      extLink(LINKS.bengen, "Bengen 原始研究（重刊）"), "。"));
 }
