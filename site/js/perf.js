@@ -122,6 +122,8 @@ async function build() {
     flows: days.filter((x) => x.flow).map((x) => ({ date: x.date, amount: x.flow })),
     years: (Date.parse(last.date) - Date.parse(days[0].date)) / (365 * 86400000),
     markets: Object.fromEntries([...tw.map((c) => [c, "tw"]), ...us.map((c) => [c, "us"])]),
+    // 資料時間（R14）：美股最舊的最後收盤、匯率最後一天；之後的日子沿用這些值
+    asOf: { us: us.length ? us.map((c) => px[c].dates.at(-1)).sort()[0] : null, fx: us.length ? fx.dates.at(-1) : null },
   };
 }
 

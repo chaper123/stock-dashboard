@@ -8,6 +8,7 @@ import { loadCheckup, checkupTable, loadRisks, riskList, LIGHT_NOTE } from "../c
 import { sortItems, timeOf, ago } from "../headlines.js";
 import { el, price, int, shortDate, dateVs, extLink } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
+import { loadStatus, statusLine } from "../status.js";
 
 export async function render(root) {
   root.append(pageHeader("分析", "台積電、風險燈號、持股體檢。數字從公開資料與你的帳本計算，只描述已發生的事；燈號是「該檢討了」的提醒，不是買賣訊號。"));
@@ -15,9 +16,23 @@ export async function render(root) {
   const ck = loadCheckup();
   slot(root, async () => card("風險燈號", riskList(await loadRisks(await ck)),
     el("p", { class: "tiny" }, LIGHT_NOTE)));
-  slot(root, async () => card("持股體檢", checkupTable(await ck),
+  slot(root, async () => card("持股體檢", checkupStatus(await ck, await loadStatus()), checkupTable(await ck),
     el("p", { class: "tiny" }, "報酬：台股 ETF 含息（除息日把現金股利加回），美股只有價格；加權報酬指數含息，標普 500 是價格指數。期間是近 1 年，資料不夠就從兩邊都有資料的第一天起。",
       "燈號：落後第一個基準超過 10 個百分點、近 1 年六成以上交易日在 200 日均線下，各算一項；一項黃燈、兩項紅燈；只評估到一項（例如還沒有 200 日均線）是半綠，不是完整綠燈。離高點的回落幅度只列出來，不在燈號條件裡。200 日均線要上市滿 200 個交易日才有（不夠就寫上市幾個交易日）；算得出來但不到一年的，括號寫實際算了幾天。")));
+}
+
+// R14：持股體檢每檔算到哪一天；不是正常（沿用、讀不到）時標出來
+function checkupStatus(list, S) {
+  const ok = list.filter((c) => !c.error);
+  const kinds = ok.map((c) => (c.market === "us" ? S.us(c.today) : S.tw(c.today)));
+  const items = [];
+  const stale = ok.filter((_, i) => kinds[i] === "stale");
+  if (stale.length) items.push({ kind: "stale", what: "日線", when: stale.map((c) => `${c.code} ${shortDate(c.today)}`).join("、"), note: "沒有更新到應有的日期，報酬算到這一天" });
+  const bad = list.filter((c) => c.error);
+  if (bad.length) items.push({ kind: "fail", what: "讀不到", when: bad.map((c) => c.code).join("、") });
+  const closed = ok.filter((_, i) => kinds[i] === "closed");
+  if (closed.length && !stale.length) items.push({ kind: "closed", what: "日線", when: `算到 ${[...new Set(closed.map((c) => shortDate(c.today)))].join("、")}`, note: "休市日用最近交易日的收盤" });
+  return statusLine(items);
 }
 
 const lots = (shares) => shares / 1000;
@@ -28,6 +43,7 @@ async function tsmcCard() {
   const [barsR, instR, marR, holdR, revR, adrR, fxR, fqR, hR] = await Promise.allSettled([
     loadDaily("tw", "2330"), loadStockInsti("2330"), loadStockMargin("2330"), loadHolders("2330"), loadRevenue("2330"),
     loadDaily("macro", "TSM"), loadFx(), fugleQuote("2330"), loadHeadlines()]);
+  const S = await loadStatus();
   const title = "台積電（2330）";
   if (barsR.status !== "fulfilled") return card(title, notice("warn", `讀不到台積電日線（${barsR.reason?.message || "未知原因"}）`));
   const failed = [];
@@ -126,11 +142,15 @@ async function tsmcCard() {
     }
   }
 
-  return card(title,
+  // R14：股價日期與讀不到的項目，標在卡片上方
+  const kind = S.tw(last.time);
+  const status = statusLine([{ kind, what: "股價", when: `${shortDate(last.time)} ${qNote || "收盤"}`,
+    note: kind === "stale" ? `應該已經有 ${shortDate(S.expect.tw)} 的收盤，先用舊的` : kind === "closed" ? "今天台股休市，用最近交易日的收盤" : null },
+  failed.length > 0 && { kind: "fail", what: "讀不到", when: failed.join("、"), note: "這幾項先不顯示" }]);
+  return card(title, status,
     who.length > 0 && el("p", { class: "small" }, el("strong", {}, "誰在買賣："), who.join("；"), "。"),
     rows, news,
-    failed.length > 0 && el("p", { class: "tiny" }, `讀不到：${failed.join("、")}。`),
-    el("p", { class: "tiny" }, `資料：日線、三大法人、融資融券、月營收來自證交所與公開資訊觀測站（經 FinMind）；大戶與散戶來自集保結算所開放資料（金管會證期局，政府資料開放授權條款第 1 版）；ADR 來自 Yahoo、匯率台灣銀行。${qNote ? `${FUGLE_NOTE}。` : ""}只描述已發生的事，法人與大戶的「看法」讀不到，只看實際買賣與持股變化。`));
+    el("p", { class: "tiny" }, `資料：日線、三大法人、融資融券、月營收來自證交所與公開資訊觀測站（經 FinMind）；大戶與散戶來自集保結算所開放資料（金管會證期局，政府資料開放授權條款第 1 版）；ADR 來自 Yahoo、匯率是美元兌台幣市場中間價（Yahoo）。${qNote ? `${FUGLE_NOTE}。` : ""}只描述已發生的事，法人與大戶的「看法」讀不到，只看實際買賣與持股變化。`));
 }
 
 const kv = (k, v, sub) => el("div", { class: "kv" }, el("span", { class: "k" }, k, sub && el("div", { class: "tiny" }, sub)), el("span", { class: "v" }, v));

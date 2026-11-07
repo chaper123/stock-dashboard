@@ -218,6 +218,11 @@ main { max-width: 1040px; margin: 0 auto; padding: 16px 16px 24px; outline: none
 .st-ok::before { content: "● "; color: var(--good); }
 .st-stale::before { content: "▲ "; color: var(--warn); }
 .st-fail::before { content: "✕ "; color: var(--crit); }
+.st-off::before { content: "◌ "; color: var(--muted); }
+/* 卡片裡的資料狀態列（R14）：只在不是正常時出現 */
+.st-line { list-style: none; margin: 6px 0; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); font-size: .82rem; color: var(--ink-2); }
+.st-line li { padding: 2px 0; overflow-wrap: anywhere; }
+.st-line li > span:first-child { font-weight: 600; white-space: nowrap; }
 
 /* 今日計畫：每檔一張卡 */
 .tickers { display: grid; gap: 12px; grid-template-columns: 1fr; }

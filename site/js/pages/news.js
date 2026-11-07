@@ -13,6 +13,7 @@ import { outlookEvents, review009816, dayLabel } from "../outlook.js";
 import { loadPortfolio } from "../portfolio.js";
 import { loadFund, hasPrivate, privateSettings, PRIVATE_NOTE } from "../private.js";
 import { MOVE_PCT, weekStart, fundMoves, sinceFirst, lastSetChange, top10Rows, fundSummary, lookThrough } from "../inside.js";
+import { loadStatus, newsKind, statusLine } from "../status.js";
 
 const PARTS = [["brief", "今天的重點"], ["nsf", "國安基金"], ["outlook", "展望"], ["macro", "總經"], ["inside", "ETF 裡面在變什麼"], ["feed", "持股新聞"], ["more", "晨報事件與情緒"]];
 
@@ -42,11 +43,11 @@ export async function render(root, { arg }) {
 
 // ── 今天跟你有關的（新聞晨報的重點列；晨報 v4 之後改成「對你／為什麼／要做什麼」）
 async function briefView() {
-  const v = await loadNewsView();
+  const [v, st] = await Promise.all([loadNewsView(), loadStatus()]);
   if (!v.rows.length) return notice("info", "新聞晨報還沒有資料。");
   return [
     v.ctx.missing.length > 0 && notice("warn", `讀不到${v.ctx.missing.join("、")}，「持有」的標示可能不完整。`),
-    highlightsCard(v, { title: "今天跟你有關的", later: await laterNsf(v).catch(() => null) }),
+    highlightsCard(v, { title: "今天跟你有關的", later: await laterNsf(v).catch(() => null), st }),
   ];
 }
 
@@ -376,9 +377,14 @@ function topicTable(t) {
 
 // 今天的重點與旗標（總覽也用）
 // later：晨報之後的官方發展（news.js laterNsf），標在相關的那一條下面
-export function highlightsCard(v, { title = "今天的重點", link = false, later = null } = {}) {
+// st：status.js 的 loadStatus()，有給就在卡片上標晨報的資料狀態（R14：週末、休市看到最近交易日的晨報是休市正常）
+export function highlightsCard(v, { title = "今天的重點", link = false, later = null, st = null } = {}) {
   const { by, items } = v.highlights;
   const w = newsWhen(v);
+  const kind = st && newsKind(st, v);
+  const status = kind && statusLine([{ kind, what: "新聞晨報", when: w ? `${w.name}，${w.at} 產生` : null,
+    note: kind === "closed" ? "晨報只在平日產生，休市日看到最近一份是正常的" : kind === "stale" ? "還沒有最新一份（可能還沒產生或寫入失敗）"
+      : kind === "missing" ? "還沒有資料" : null }]);
   const list = items.length
     ? el("ol", { class: "hl-list" }, items.map((h) => el("li", { class: `hl ${h.flag !== "none" ? "flagged" : ""}` },
       el("div", { class: "ev-tags" }, codeChips(h.codes, v.ctx), h.flag !== "none" && flagBadge(h.flag)),
@@ -400,6 +406,7 @@ export function highlightsCard(v, { title = "今天的重點", link = false, lat
         e.reason && el("div", { class: "tiny" }, e.reason))))
     : null; // 旗標都是 none 時不顯示（內部核對用語，docs/INSIGHTS.md 3.1）
   return card(w && !w.fresh ? `${w.name}的重點` : title,
+    status,
     w && !w.fresh && notice("info", w.note),
     list, flags,
     w && el("p", { class: "tiny" }, `新聞晨報 ${w.at} 產生・資料日 ${w.day}${w.fresh ? "" : "（最近一份；晨報只在平日產生）"}`),

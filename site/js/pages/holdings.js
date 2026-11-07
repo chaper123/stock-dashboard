@@ -4,6 +4,7 @@ import { loadPortfolio } from "../portfolio.js";
 import { el, twd, usd, price, pct, shares, shortDate, signed, tone, int } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { MARKET_LABEL } from "../config.js";
+import { loadStatus, marketItem, statusLine } from "../status.js";
 
 export async function render(root) {
   root.append(pageHeader("持倉", "股數與成本來自共用帳本「持倉」分頁（券商確認）。"));
@@ -14,8 +15,12 @@ export async function render(root) {
 const money = (market, v) => (market === "us" ? usd(v) : twd(v));
 
 async function positionsView() {
-  const pf = await loadPortfolio();
+  const [pf, S] = await Promise.all([loadPortfolio(), loadStatus()]);
   const t = pf.totals;
+  const hasUs = pf.positions.some((p) => p.market === "us");
+  // R14：價格與匯率不是正常時，在合計旁邊標狀態與資料時間
+  const status = statusLine([marketItem(S, pf.positions, "tw", "台股"), marketItem(S, pf.positions, "us", "美股"),
+    hasUs && (pf.fx ? { kind: S.fx(pf.fx.date), what: "匯率", when: shortDate(pf.fx.date) } : { kind: "fail", what: "匯率", note: "讀不到，美股沒有換算成台幣" })]);
   const summary = card("合計（台幣）",
     el("div", { class: "grid three" },
       kv("持倉市值", el("strong", {}, twd(t.mvTwd))),
@@ -23,6 +28,7 @@ async function positionsView() {
       kv(el("span", {}, "未實現損益", el("div", { class: "tiny" }, "證券損益折台幣，不含匯差")),
         el("span", { class: tone(t.pnlTwd) }, `${signed(t.pnlTwd, twd)}（${pct(t.pnlPct)}）`))),
     !pf.complete && notice("warn", `合計只算讀得到的部分，缺：${pf.missing.join("、")}。`),
+    status,
     pf.warnings.map((w) => notice("warn", w)),
     el("p", { class: "tiny" },
       "損益未扣賣出手續費與稅。",

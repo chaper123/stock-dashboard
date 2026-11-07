@@ -4,10 +4,11 @@
 import { loadDaily, loadTrades, loadIndex, DataError } from "../data.js";
 import { fugleQuote, fugleUsable, fugleClosed, fugleBar, quoteTime, FUGLE_NOTE } from "../fugle.js";
 import { loadPerformance, attribution } from "../perf.js";
-import { el, price, shares, pct, twd, tone } from "../fmt.js";
+import { el, price, shares, pct, twd, tone, shortDate } from "../fmt.js";
 import { sma, rsi14, macd, dmi, bias, volAvg, fmtVol, describe } from "../ta.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
 import { MA, NAMES, MARKET_LABEL, TRACK } from "../config.js";
+import { loadStatus, statusLine } from "../status.js";
 
 const LW_URL = "https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js";
 const LW_SRI = "sha384-KkYqTZlM13Zya6fVUF3IGCBOQ1ehFeJVVgxaVvD/0MebineF9EI8Jkd3NnWNChqN";
@@ -53,7 +54,7 @@ function periodStart(key, first, last) {
 }
 
 async function perfView(alive) {
-  const [LW, perf, tr] = await Promise.all([loadLW(), loadPerformance(), loadIndex("TAIEX_TR").catch((e) => e)]);
+  const [LW, perf, tr, S] = await Promise.all([loadLW(), loadPerformance(), loadIndex("TAIEX_TR").catch((e) => e), loadStatus()]);
   const box = el("div", { class: "perf-box", role: "img", "aria-label": "組合與加權報酬指數的累積報酬折線圖" });
   const stats = el("div", { class: "chart-legend" });
   const chips = el("div", { class: "chips", style: { margin: "4px 0 0" } });
@@ -139,7 +140,14 @@ async function perfView(alive) {
     };
     document.addEventListener("themechange", onTheme);
   }, 0);
-  return card("組合對大盤", chips, box, stats, why,
+  // R14：組合算到哪一天、美股收盤與匯率停在哪一天（不是正常才顯示）
+  const asOf = perf.asOf || {};
+  const perfStatus = statusLine([
+    { kind: S.tw(perf.last), what: "組合算到", when: perf.last.replaceAll("-", "/") },
+    asOf.us && { kind: S.us(asOf.us), what: "美股收盤", when: shortDate(asOf.us), note: S.us(asOf.us) === "stale" ? "之後的日子沿用這天的價格" : null },
+    asOf.fx && { kind: S.fx(asOf.fx), what: "匯率", when: shortDate(asOf.fx) },
+    trOk && { kind: S.tw(tr.at(-1).date), what: "加權報酬指數", when: shortDate(tr.at(-1).date) }], { closed: false });
+  return card("組合對大盤", chips, perfStatus, box, stats, why,
     !trOk && notice("warn", `讀不到加權報酬指數（${tr.message}）`),
     el("p", { class: "tiny" }, `曲線是時間加權報酬（扣掉每次投入的影響，GIPS 的比較方式）：台股用日線收盤、美股用日線收盤 × 當天美元兌台幣；大盤是含股利的台股加權報酬指數。XIRR 是資金加權報酬（考慮投入時點）。算到 ${perf.last}。`));
 }
@@ -174,10 +182,11 @@ async function view(arg, alive) {
     ohlc, box, legend, fugleNote, taBox, note, table);
 
   // 資料與函式庫都到齊才畫；其中一項失敗就在圖的位置顯示原因
-  const [LW, daily, tradesR, fq] = await Promise.all([
+  const [LW, daily, tradesR, fq, S] = await Promise.all([
     loadLW(), loadDaily(pick.market, pick.code),
     loadTrades().then((v) => ({ v }), (e) => ({ e })),
     pick.market === "tw" ? fugleQuote(pick.code) : null,
+    loadStatus(),
   ]);
   // 富果比 market-data 新的那天：收盤了就補一根 K 棒（market-data 隔天早上更新後換成正式資料），盤中只畫虛線
   const lastDate = daily.at(-1)?.time;
@@ -189,6 +198,13 @@ async function view(arg, alive) {
     fugleNote.textContent = `${extra.time.slice(5).replace("-", "/")} 這根來自富果（${FUGLE_NOTE}）；market-data 隔天早上更新後換成正式資料。`;
     fugleNote.hidden = false;
   }
+  // R14：最後一根 K 棒的日期不是正常時標在圖上方（休市用最近交易日是正常的）
+  const lastBar = bars.at(-1).time;
+  const kind = pick.market === "us" ? S.us(lastBar) : S.tw(lastBar);
+  const exp = pick.market === "us" ? S.expect.us : S.expect.tw;
+  const st = statusLine([{ kind, what: "日線", when: `最後一根 ${shortDate(lastBar)}${extra ? "（富果）" : ""}`,
+    note: kind === "stale" ? `應該已經有 ${shortDate(exp)} 的收盤，market-data 還沒更新` : kind === "closed" ? (pick.market === "us" ? "美股週末或假日休市" : "今天台股休市") : null }]);
+  if (st) head.after(st);
   const mas = MA[pick.market];
   const lines = describe(bars, pick.market, mas);
   if (lines.length) {

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>R14 資料狀態</title></head>
+<body>
+<h1>R14 資料狀態分類（site/js/status.js）</h1>
+<p>改進報告第 8 節「休市行情」：週末讀最近正式收盤要顯示休市正常、資料日期保留交易日；新的應該已經有卻還是舊的才算沿用。</p>
+<script type="module">
+import { test, eq, report } from "./harness.js";
+import { expectedDates, byDate, datasetKind, newsKind, statusLine, marketItem, priceKind, worst } from "/site/js/status.js";
+
+const cal = { tw_market: { closed: ["2026-10-26", "2026-12-25"] } };
+const at = (s) => new Date(`${s}+08:00`);
+// loadStatus() 的同步版本（不讀網路）
+const ctx = (now) => {
+  const ex = expectedDates(cal, at(now));
+  return { ...ex, expect: ex, tw: (d) => byDate(d, ex.tw, !ex.twOpenToday), us: (d) => byDate(d, ex.us, ex.closedUs) };
+};
+
+test("週六晚上：台股應有週五收盤，今天休市", () => {
+  const e = expectedDates(cal, at("2026-11-07T21:00:00"));
+  eq([e.tw, e.us, e.twOpenToday, e.closedUs], ["2026-11-06", "2026-11-06", false, false]);
+  eq(byDate("2026-11-06", e.tw, !e.twOpenToday), "closed", "週五收盤是休市正常");
+});
+test("週日：美股週五收盤是休市正常", () => {
+  const S = ctx("2026-11-08T10:00:00");
+  eq(S.us("2026-11-06"), "closed");
+  eq(S.tw("2026-11-06"), "closed");
+});
+test("週一早上 8 點：還不要求週一的資料，週五收盤是正常", () => {
+  const S = ctx("2026-11-09T08:00:00");
+  eq([S.expect.tw, S.twOpenToday], ["2026-11-06", true]);
+  eq(S.tw("2026-11-06"), "ok");
+});
+test("週二 10 點：應有週一收盤，還停在週五就是沿用", () => {
+  const S = ctx("2026-11-10T10:00:00");
+  eq(S.expect.tw, "2026-11-09");
+  eq(S.tw("2026-11-06"), "stale");
+  eq(S.tw("2026-11-09"), "ok");
+});
+test("台股假日（10/26 休市）隔天：前一個交易日是 10/23", () => {
+  const S = ctx("2026-10-27T10:00:00");
+  eq(S.expect.tw, "2026-10-23");
+  eq(S.tw("2026-10-23"), "ok");
+});
+test("美國感恩節（11/26）隔天：美股 11/25 收盤是休市正常", () => {
+  const S = ctx("2026-11-27T10:00:00");
+  eq([S.expect.us, S.closedUs], ["2026-11-25", true]);
+  eq(S.us("2026-11-25"), "closed");
+  eq(S.us("2026-11-24"), "stale");
+});
+test("沒有日期是缺失", () => eq(byDate(null, "2026-11-06"), "missing"));
+test("meta：停用、沒有這項、沿用、日期太舊", () => {
+  const meta = { datasets: { "tw/nav": { status: "disabled" }, "us/VOO": { status: "ok", last: "2026-11-04" }, "x/y": { status: "stale" }, "z/f": { status: "fail" } } };
+  eq(datasetKind(meta, "tw/nav", "2026-11-06"), "disabled");
+  eq(datasetKind(meta, "no/such", "2026-11-06"), "missing");
+  eq(datasetKind(meta, "x/y"), "stale");
+  eq(datasetKind(meta, "z/f"), "fail");
+  eq(datasetKind(meta, "us/VOO", "2026-11-06"), "stale");
+  eq(datasetKind(meta, "us/VOO", null), "ok", "不檢查日期的資料只看 meta 狀態");
+});
+test("新聞晨報：週六看到週五的是休市正常；週二 10 點還是週一以前的是沿用", () => {
+  eq(newsKind(ctx("2026-11-07T21:00:00"), { dataDate: "2026-11-06" }), "closed");
+  eq(newsKind(ctx("2026-11-10T10:00:00"), { dataDate: "2026-11-09" }), "stale");
+  eq(newsKind(ctx("2026-11-10T08:00:00"), { dataDate: "2026-11-09" }), "ok");
+  eq(newsKind(ctx("2026-11-10T10:00:00"), { dataDate: null }), "missing");
+});
+test("持倉價格：讀不到是失敗；同市場合成一項取最差", () => {
+  const S = ctx("2026-11-10T10:00:00");
+  const ps = [
+    { market: "tw", code: "009816", priceDate: "2026-11-09", asOf: "11/09 收盤" },
+    { market: "tw", code: "00981A", priceDate: "2026-11-06", asOf: "11/06 收盤" },
+    { market: "us", code: "VOO", error: "讀不到價格" },
+  ];
+  eq(priceKind(S, ps[2]), "fail");
+  const tw = marketItem(S, ps, "tw", "台股");
+  eq([tw.kind, tw.when], ["stale", "11/09 收盤、11/06 收盤"]);
+  eq(marketItem(S, ps, "us", "美股").kind, "fail");
+  eq(marketItem(S, ps, "hk", "港股"), null, "沒有這個市場的持倉不列");
+});
+test("最差狀態的順序", () => {
+  eq(worst(["ok", "closed"]), "closed");
+  eq(worst(["closed", "disabled", "stale"]), "stale");
+  eq(worst(["missing", "fail", "ok"]), "fail");
+});
+test("狀態列：全部正常不顯示；休市可以選擇不顯示", () => {
+  eq(statusLine([{ kind: "ok", what: "a" }]), null);
+  eq(statusLine([{ kind: "closed", what: "a" }], { closed: false }), null);
+  const node = statusLine([{ kind: "stale", what: "台股價格", when: "11/06 收盤", note: "先用舊的" }]);
+  eq(node.textContent, "沿用：台股價格（11/06 收盤）。先用舊的");
+});
+report();
+</script>
+</body>
+</html>

@@ -11,18 +11,18 @@ async function twQuote(code) {
   const bars = barsR.status === "fulfilled" ? barsR.value : null;
   // 富果今天的報價，或比 market-data 最後收盤新的那天（收盤後到隔天早上、週末）；market-data 讀不到時有富果就用
   if (q && (bars ? fugleUsable(q, bars.at(-1)?.time) : true)) {
-    return { price: q.price, prev: q.prev, at: q.date === taipeiToday() ? quoteTime(q) : q.date, note: FUGLE_NOTE,
+    return { price: q.price, prev: q.prev, at: q.date === taipeiToday() ? quoteTime(q) : q.date, priceDate: q.date, note: FUGLE_NOTE,
       asOf: q.date === taipeiToday() ? `富果 ${quoteTime(q)}` : `${shortDate(q.date)} 收盤（富果）` };
   }
   if (!bars) throw barsR.reason;
   const b = bars.at(-1);
-  return { price: b.close, prev: bars.at(-2)?.close, at: b.time, note: "收盤", asOf: `${shortDate(b.time)} 收盤` };
+  return { price: b.close, prev: bars.at(-2)?.close, at: b.time, priceDate: b.time, note: "收盤", asOf: `${shortDate(b.time)} 收盤` };
 }
 
 async function usQuote(code) {
   const bars = await loadDaily("us", code);
   const b = bars.at(-1);
-  return { price: b.close, prev: bars.at(-2)?.close, at: b.time, note: "收盤", asOf: `${shortDate(b.time)} 收盤（美國）` };
+  return { price: b.close, prev: bars.at(-2)?.close, at: b.time, priceDate: b.time, note: "收盤", asOf: `${shortDate(b.time)} 收盤（美國）` };
 }
 
 // complete／missing（改進報告 R07）：有持倉卻缺匯率或價格時，合計只是部分資產，呼叫端要標示、衍生結果不能當完整的用
