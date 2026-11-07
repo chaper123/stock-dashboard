@@ -8,7 +8,7 @@ import { marketCard } from "../market.js";
 import { riskCard } from "../checkup.js";
 import { loadFugle, getKey, fugleSettings, fugleUsable, quoteTime, FUGLE_NOTE } from "../fugle.js";
 import { discipline, dcaFor, nextDepositDate, nextCheckDate } from "../discipline.js";
-import { loadNewsView, sentimentParts } from "../news.js";
+import { loadNewsView, sentimentParts, newsWhen, laterNsf } from "../news.js";
 import { highlightsCard } from "./news.js";
 import { cnnReading, gaugeBlock, pocketBlock } from "../gauge.js";
 import {
@@ -23,7 +23,10 @@ export async function render(root) {
   root.append(grid);
   slot(grid, assetsCard);
   slot(grid, disciplineCard);
-  slot(root, async () => highlightsCard(await loadNewsView(), { link: true }));
+  slot(root, async () => {
+    const v = await loadNewsView();
+    return highlightsCard(v, { link: true, later: await laterNsf(v).catch(() => null) });
+  });
   const grid2 = el("div", { class: "grid two" });
   root.append(grid2);
   slot(grid2, twCard);
@@ -34,6 +37,13 @@ export async function render(root) {
   slot(root, riskCard); // 風險燈號（3.3）
   slot(root, healthCard);
 }
+
+// 台股今天有沒有開盤：週末與行事曆的休市日沒有（週末看到週五收盤是正常的）
+function twOpen(today, cal) {
+  const wd = new Date(`${today}T00:00:00Z`).getUTCDay();
+  return wd !== 0 && wd !== 6 && !(cal?.tw_market?.closed || []).includes(today);
+}
+const uniq = (xs) => [...new Set(xs.filter(Boolean))];
 
 // 台北時間的小時
 function taipeiHour() {
@@ -47,32 +57,44 @@ async function greetingCard() {
   const wd = new Intl.DateTimeFormat("zh-TW", { timeZone: "Asia/Taipei", weekday: "long" }).format(new Date());
   const v = await loadNewsView().catch(() => null);
   const line = v?.todayLine;
+  const w = v && newsWhen(v);
+  const old = w && !w.fresh; // R01：不是今天的晨報，標出是哪一天寫的
   return el("section", { class: "card greet" },
     el("div", { class: "greet-hello" }, `${hello}！`),
     el("div", { class: "small muted" }, `${today.replace(/-/g, "/")} ${wd}`),
-    line ? el("p", { class: "greet-line" }, line)
+    line ? el("p", { class: `greet-line${old ? " muted" : ""}` }, old ? `${w.name}：${line}` : line)
       : el("p", { class: "greet-line muted" }, "今日一句：新聞晨報 11:30 版上線後顯示。"),
     el("p", { class: "disclaimer-line" }, "內容是依自訂規則的提醒與資訊整理，不是投資建議。"));
 }
 
+// 我的資產（R07、R09、R14）：缺匯率、價格或可用資金時標「部分資產」，不把缺的當 0；
+// 損益是證券損益折台幣（成本與市值用同一匯率，不含匯差）；資料時間標在卡片上
 async function assetsCard() {
-  const [pf, st] = await Promise.all([loadPortfolio(), loadSettings().catch((e) => e)]);
+  const [pf, st, cal] = await Promise.all([loadPortfolio(), loadSettings().catch((e) => e), loadCalendar().catch(() => null)]);
   const pool = st instanceof Error ? null : st.pool;
   const t = pf.totals;
   const total = t.mvTwd + (pool || 0);
   const today = taipeiToday();
+  const missing = [...pf.missing, ...(pool == null ? ["可用資金（帳本讀不到）"] : [])];
+  const partial = missing.length > 0;
+  const ok = (m) => pf.positions.filter((p) => p.market === m && !p.error);
+  const twAs = uniq(ok("tw").map((p) => p.asOf)), usAs = uniq(ok("us").map((p) => p.asOf));
+  const when = [twAs.length && `台股 ${twAs.join("、")}`, usAs.length && `美股 ${usAs.join("、")}`,
+    pf.fx && `匯率 ${price(pf.fx.rate)}（${shortDate(pf.fx.date)}，台灣銀行）`].filter(Boolean).join("；");
   return card("我的資產",
     el("div", { class: "tile" },
-      el("div", { class: "label" }, "總資產（持倉市值＋可用資金）"),
-      el("div", { class: "value" }, twd(total))),
-    kv("今天漲跌", el("span", { class: tone(t.dayChgTwd) }, signed(t.dayChgTwd, twd))),
-    kv("未實現損益", el("span", { class: tone(t.pnlTwd) }, `${signed(t.pnlTwd, twd)}（${pct(t.pnlPct)}）`)),
+      el("div", { class: "label" }, partial ? "部分資產：有資料讀不到，這不是完整總額" : "總資產（持倉市值＋可用資金）"),
+      el("div", { class: `value${partial ? " muted" : ""}` }, twd(total))),
+    partial && notice("warn", `讀不到：${missing.join("、")}。合計、漲跌與損益都只算讀得到的部分（原因見持倉頁）。`),
+    kv(el("span", {}, "最近交易日漲跌", el("div", { class: "tiny" }, "各市場最近一個交易日對前一日，折台幣")),
+      el("span", { class: tone(t.dayChgTwd) }, signed(t.dayChgTwd, twd))),
+    kv(el("span", {}, "未實現損益", el("div", { class: "tiny" }, "證券損益折台幣，不含匯差")),
+      el("span", { class: tone(t.pnlTwd) }, `${signed(t.pnlTwd, twd)}（${pct(t.pnlPct)}）`)),
     kv("持倉市值", `${twd(t.mvTwd)}（台股 ${twd(t.tw.mvTwd)}・美股 ${twd(t.us.mvTwd)}）`),
     kv("可用資金", pool == null ? "讀不到" : twd(pool)),
     kv("下次入金", st instanceof Error || !st.nextDeposit ? "—" : `${shortDate(st.nextDeposit)}（${daysBetween(today, st.nextDeposit)} 天後）`),
-    el("p", { class: "tiny" }, "今天漲跌：台股是現價對昨收，美股是最後一個交易日對前一日。",
-      pf.fx ? ` 美股以 ${price(pf.fx.rate)}（${shortDate(pf.fx.date)}）換台幣。` : ""),
-    pf.warnings.map((w) => notice("warn", w)));
+    el("p", { class: "tiny" }, `資料時間：${when || "—"}`, twOpen(today, cal) ? "。" : "。今天台股休市，用最近交易日的收盤，這是正常的。",
+      "美股成本與市值用同一個匯率換算，所以損益不含匯差；持股與可用資金來自帳本（Google 試算表發布版，約 5 分鐘延遲）。"));
 }
 
 async function disciplineCard() {
@@ -99,15 +121,20 @@ async function disciplineCard() {
     el("div", { class: "small muted" }, d.done
       ? `本月已買：${bought}；建議是 ${d.plan.items.map(([c, a]) => `${c} ${twd(a)}`).join("、")}`
       : planText),
+    // R04：只留一個現在的答案（現在的價格即時算）；門檻用沒有四捨五入的數字判斷，顯示到小數兩位
     w ? [
-      kv("核心：衛星（市值）", `${Math.round(w.core * 100)}：${Math.round(w.sat * 100)}（目標 ${target(D.core)}：${target(D.satellite)}）`),
+      kv("核心：衛星（市值）", `${(w.core * 100).toFixed(1)}：${(w.sat * 100).toFixed(1)}（目標 ${target(D.core)}：${target(D.satellite)}）`),
       kv("偏離", el("span", { class: Math.abs(w.devPts) > D.bandPts ? "badge b-warn" : "" },
-        `${w.devPts >= 0 ? "+" : "−"}${Math.abs(w.devPts).toFixed(1)} 個百分點（門檻 ±${D.bandPts}）`)),
+        `${w.devPts >= 0 ? "+" : "−"}${Math.abs(w.devPts).toFixed(2)} 個百分點（門檻 ±${D.bandPts}）`)),
+      el("p", { class: "tiny" }, `比例用現在的價格算：${[D.core, D.satellite].map((c) => `${c} ${pf.positions.find((p) => p.code === c)?.asOf || ""}`).join("、")}。`),
     ] : kv("核心：衛星", "讀不到兩檔的市值"),
     kv("下次檢查", `${d.nextCheck.replace(/-/g, "/")}（${daysBetween(today, d.nextCheck)} 天後）`),
     kv("連續投入", `${d.streak} 個月`),
-    v?.disciplineRows?.length > 0 && el("div", { class: "small", style: { marginTop: "6px" } },
-      el("strong", {}, "新聞晨報："), v.disciplineRows.map((r) => el("div", {}, r.fact))),
+    // 晨報寫的紀律是它產生當時的價格算的，收成有時間的歷史快照，不跟上面的現在數字並列
+    v?.disciplineRows?.length > 0 && el("details", { class: "more" },
+      el("summary", {}, `新聞晨報當時的紀律快照（${taipeiTime(v.disciplineRows.reduce((m, r) => (r.generatedAt > m ? r.generatedAt : m), ""))}）`),
+      v.disciplineRows.map((r) => el("div", { class: "small" }, r.fact)),
+      el("p", { class: "tiny" }, "這是晨報產生當時的價格算的，比例和偏離會跟上面不同；現在的狀態以上面為準。")),
     el("p", { class: "tiny" }, `當月台股買進合計（含手續費）達 ${int(d.investedMin)} 元（定投金額 9 成）算已投入，超過定投金額的部分算自主加碼，不影響下個月的定投；檢查月（${D.checkMonths.join("、")} 月）偏離超過 ${D.bandPts} 個百分點時，當月入金整筆補偏低的一檔，其他月份照目標比例，不賣出。美股不算進比例。`));
 }
 
@@ -169,8 +196,9 @@ async function twCard() {
       getKey() && refreshBtn),
     rows,
     el("p", { class: "tiny" }, prem ? `收盤折溢價（${shortDate(latestNav)}）：${prem}` : "ETF 淨值資料停止更新，不顯示折溢價。"),
-    v?.intradayRows?.length > 0 && el("div", { class: "small", style: { marginTop: "8px" } },
-      el("strong", {}, "新聞晨報："), v.intradayRows.map((r) => el("div", {}, r.fact))),
+    // 晨報的盤中摘要只在今天的晨報顯示；舊的盤中快照（例如週六看到週五的「今早盤中」）放在新聞頁
+    v?.intradayRows?.length > 0 && newsWhen(v)?.fresh && el("div", { class: "small", style: { marginTop: "8px" } },
+      el("strong", {}, `新聞晨報（${newsWhen(v).at}）：`), v.intradayRows.map((r) => el("div", {}, r.fact))),
     fugleSettings());
 }
 
@@ -260,26 +288,36 @@ async function backgroundCard() {
     el("p", { class: "tiny" }, "這些只是背景參考，不改變每月投入與配置紀律。"));
 }
 
-const ST_LABEL = { ok: "正常", stale: "沿用舊檔", fail: "從未成功" };
+const ST_LABEL = { ok: "正常", stale: "沿用舊檔", fail: "從未成功", disabled: "照計畫停用" };
 
+// 資料狀態（R14）：正常、休市正常、沿用、失敗、照計畫停用分開；重新整理只是重讀檔案，資料時間以各檔為準
 async function healthCard() {
-  const [metaR, newsR, setR] = await Promise.allSettled([loadMeta(), loadNewsView(), loadSettings()]);
+  const [metaR, newsR, setR, calR] = await Promise.allSettled([loadMeta(), loadNewsView(), loadSettings(), loadCalendar()]);
+  const today = taipeiToday();
+  const open = twOpen(today, calR.status === "fulfilled" ? calR.value : null);
   const items = [];
   const li = (st, name, val) => el("li", {}, el("span", { class: `st-${st}` }, name), el("span", { class: "muted nums" }, val));
   if (metaR.status === "fulfilled") {
     const meta = metaR.value, ds = meta.datasets || {};
-    const counts = { ok: 0, stale: 0, fail: 0 };
+    const counts = { ok: 0, stale: 0, fail: 0, disabled: 0 };
     for (const d of Object.values(ds)) counts[d.status] = (counts[d.status] || 0) + 1;
     const worst = counts.fail ? "fail" : counts.stale ? "stale" : "ok";
-    items.push(li(worst, "行情資料", `${meta.generated_at_taipei}・正常 ${counts.ok}／沿用 ${counts.stale}／失敗 ${counts.fail}`));
-    const bad = Object.entries(ds).filter(([, d]) => d.status !== "ok");
-    if (bad.length) items.push(li("stale", "不是正常的資料集", bad.map(([k, d]) => `${k}（${ST_LABEL[d.status] || d.status}）`).join("、")));
+    items.push(li(worst, "行情資料", `${meta.generated_at_taipei} 抓取・正常 ${counts.ok}／沿用 ${counts.stale}／失敗 ${counts.fail}`
+      + (counts.disabled ? `／照計畫停用 ${counts.disabled}` : "") + (open ? "" : "（今天台股休市，日線停在最近交易日是正常的）")));
+    const bad = Object.entries(ds).filter(([, d]) => d.status === "stale" || d.status === "fail");
+    if (bad.length) items.push(li("stale", "沿用舊檔或失敗", bad.map(([k, d]) => `${k}（${ST_LABEL[d.status]}）`).join("、")));
+    const off = Object.entries(ds).filter(([, d]) => d.status === "disabled");
+    // 照計畫停用的（R14）跟沿用、失敗分開，原因用 market-data meta 記的
+    if (off.length) items.push(el("li", {}, el("details", { class: "more" }, el("summary", { class: "st-ok" }, `照計畫停用 ${off.length} 項（不影響其他資料）`),
+      el("ul", { class: "small" }, off.map(([k, d]) => el("li", {}, `${k}：${d.reason || "停用"}`))))));
   } else items.push(li("fail", "行情資料", metaR.reason.message));
   if (newsR.status === "fulfilled" && newsR.value.generatedAt) {
-    const n = newsR.value;
-    items.push(li(n.dataDate === taipeiToday() ? "ok" : "stale", "新聞晨報", `${taipeiTime(n.generatedAt)}（${n.label}）`));
+    const n = newsR.value, w = newsWhen(n);
+    const st = w.fresh ? "ok" : !open && daysBetween(n.dataDate, today) <= 4 ? "ok" : "stale";
+    items.push(li(st, "新聞晨報", `${w.name} ${w.at} 產生（${n.label}）`
+      + (w.fresh ? "" : st === "ok" ? "・晨報只在平日產生，今天休市是正常的" : "・不是今天的")));
   } else items.push(li("fail", "新聞晨報", newsR.reason?.message || "沒有資料"));
-  items.push(setR.status === "fulfilled" ? li("ok", "共用帳本", "讀取成功") : li("fail", "共用帳本", setR.reason.message));
+  items.push(setR.status === "fulfilled" ? li("ok", "共用帳本", "讀取成功（Google 試算表發布版，約 5 分鐘延遲）") : li("fail", "共用帳本", setR.reason.message));
   return el("details", { class: "card more" }, el("summary", {}, "資料狀態"), el("ul", { class: "health" }, items),
-    el("p", { class: "tiny" }, "● 正常　▲ 沿用舊檔或不是今天　✕ 失敗"));
+    el("p", { class: "tiny" }, "● 正常（含休市日、照計畫停用）　▲ 沿用舊檔或不是今天　✕ 失敗。「↻ 更新」只是重新讀取檔案，不會讓上游產生新資料。"));
 }

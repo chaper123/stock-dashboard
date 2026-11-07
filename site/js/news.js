@@ -1,8 +1,10 @@
 // 新聞整理：把新聞分頁（一件事件影響幾個標的就有幾列）合併成事件、依重要性排序、分區、挑出「今天的重點」。
 // 新聞頁與總覽共用。內容一律以純文字放進頁面（呼叫端用 el()），網址只接受 http/https。
 // 2026-10-30 轉型：不再看晨報買區，「相關」只看帳本持有的代號。
-import { loadNews, loadHoldings, loadFearGreed } from "./data.js";
-import { isNum, shortDate } from "./fmt.js";
+import { loadNews, loadHoldings, loadFearGreed, loadNsf, loadHeadlines } from "./data.js";
+import { isNum, shortDate, taipeiTime, taipeiToday } from "./fmt.js";
+import { dayLabel } from "./outlook.js";
+import { nsfNews, nsfStatus, sortItems, timeOf } from "./headlines.js";
 
 export const TIER_LABEL = { 1: "官方", 2: "主要媒體", 3: "第一手發言", 4: "其他" };
 const NOT_CODES = new Set(["總經", "市場", "全部", "配置", ""]);
@@ -150,6 +152,35 @@ export async function loadNewsView() {
     outlookRows: rows.filter((r) => r.category === "展望"),
     managerRow: rows.find((r) => r.category === "經理人方向" && r.symbol === "00981A") || null,
   };
+}
+
+// 晨報的時效（改進報告 R01）：資料日不是今天時，標題寫那一天的版本，並說明文中的「今天」指那一天。
+// 週末、休市日看到最近一個交易日的晨報是正常的，只是要講清楚是哪一天、什麼時候寫的。
+export function newsWhen(v, today = taipeiToday()) {
+  if (!v?.dataDate) return null;
+  const edition = /^午間/.test(v.summaryRow?.fact || "") ? "午間" : "晨間";
+  const day = dayLabel(v.dataDate);
+  const fresh = v.dataDate === today;
+  return {
+    fresh, edition, day, at: taipeiTime(v.generatedAt),
+    name: fresh ? `今天${edition}晨報` : `${day}${edition}晨報`,
+    note: fresh ? null : `這是 ${taipeiTime(v.generatedAt)} 寫的${edition}晨報：文中的「今天」「今早」「今天下午」都是指 ${day}，`
+      + "不是現在。之後的發展以各區的最新資料為準。",
+  };
+}
+
+// 晨報之後的官方發展（R01）：目前只看國安基金。重點提到國安基金、護盤、救市時，在那一條下面標最新狀態，
+// 避免舊晨報的「今天下午將宣布」看起來像現在還沒公布。回傳 { re, text } 或 null
+const NSF_RE = /國安基金|護盤|救市|國安/;
+const NSF_LINE = { active: "國安基金已決定進場護盤", considering: "有進場的消息，但還沒正式決定", stopped: "國安基金已停止護盤" };
+export async function laterNsf(v) {
+  if (!v?.dataDate) return null;
+  const [nsfR, hR] = await Promise.allSettled([loadNsf(), loadHeadlines()]);
+  const now = Date.now();
+  const media = hR.status === "fulfilled" ? nsfNews(sortItems(hR.value.items || [])).filter((x) => now - timeOf(x) < 72 * 3600e3) : [];
+  const st = nsfStatus(nsfR.status === "fulfilled" ? nsfR.value.items || [] : null, media, taipeiToday(), now);
+  if (!NSF_LINE[st.state] || !st.date || st.date < v.dataDate) return null;
+  return { re: NSF_RE, text: `最新狀態（${st.by} ${shortDate(st.date)}${st.media ? "，財政部還沒公告" : ""}）：${NSF_LINE[st.state]}` };
 }
 
 // 口袋晨報的恐懼貪婪：新聞晨報寫一列（類別「情緒」、標的「口袋恐懼貪婪」），

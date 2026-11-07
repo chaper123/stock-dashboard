@@ -81,8 +81,10 @@ async function checkPair(p, divs) {
   const main = benches[0];
   const lag = main && !main.error ? main.mine - main.bench : null;
   const hits = [lag != null && lag < -LAG_PP, under != null && under >= UNDER_SHARE].filter(Boolean).length;
-  const light = lag == null ? "gray" : hits === 2 ? "red" : hits === 1 ? "yellow" : "green";
-  return { ...p, today, benches, peak, dd, under, underDays: win.length, n: bars.length, lag, light, withDiv: mine.withDiv };
+  const evaluated = [lag != null, under != null].filter(Boolean).length;
+  // R10：綠燈只代表兩項都評估過而且都沒觸發；只評估到一項時是「部分評估」，不給完整綠燈
+  const light = lag == null ? "gray" : hits === 2 ? "red" : hits === 1 ? "yellow" : evaluated < 2 ? "partial" : "green";
+  return { ...p, today, benches, peak, dd, under, underDays: win.length, n: bars.length, lag, light, evaluated, withDiv: mine.withDiv };
 }
 
 export async function loadCheckup() {
@@ -91,7 +93,7 @@ export async function loadCheckup() {
   return rs.map((r, i) => (r.status === "fulfilled" ? r.value : { ...PAIRS[i], error: r.reason?.message || "讀不到" }));
 }
 
-const LIGHT = { green: "綠燈", yellow: "黃燈", red: "紅燈", gray: "資料不足", info: "提醒" };
+const LIGHT = { green: "綠燈：評估過、沒觸發", yellow: "黃燈", red: "紅燈", gray: "資料不足", info: "提醒", partial: "沒觸發，但只評估了部分條件" };
 export const dot = (light) => el("span", { class: `lt lt-${light}`, role: "img", "aria-label": LIGHT[light] });
 const pp = (x) => `${x >= 0 ? "+" : "−"}${Math.abs(x).toFixed(1)}`;
 const fullDate = (d) => d.replaceAll("-", "/");
@@ -149,7 +151,8 @@ export async function loadRisks(checkup) {
   if (a && !a.error) {
     const b = a.benches[0];
     out.push({ key: "00981A", light: a.light, label: "00981A 主動式 ETF",
-      text: `${fullDate(b.start)} 起 ${pp(b.mine)}%，0050 ${pp(b.bench)}%（差 ${pp(b.mine - b.bench)} 個百分點）；200 日線下 ${underText(a)}。落後超過 ${LAG_PP} 個百分點、或六成以上交易日在 200 日線下各算一項，一項黃燈、兩項紅燈。` });
+      text: `${a.light === "partial" ? `只評估了 ${a.evaluated}／2 項：` : ""}${fullDate(b.start)} 起 ${pp(b.mine)}%，0050 ${pp(b.bench)}%（差 ${pp(b.mine - b.bench)} 個百分點）；200 日線下 ${underText(a)}。`
+        + `落後超過 ${LAG_PP} 個百分點、或六成以上交易日在 200 日線下各算一項，一項黃燈、兩項紅燈。另外離高點 −${Math.abs(a.dd).toFixed(1)}%，回落幅度不在這盞燈的條件裡。` });
   } else out.push({ key: "00981A", light: "gray", label: "00981A 主動式 ETF", text: `讀不到（${a?.error || "未知原因"}）。` });
 
   // 3. 009816 成分股審核
@@ -175,10 +178,15 @@ export async function loadRisks(checkup) {
   if (sR.status === "fulfilled" && sR.value.pool != null) {
     const pool = sR.value.pool;
     out.push({ key: "pool", light: pool < 0 ? "red" : "green", label: "可用資金（帳本）",
-      text: pool < 0 ? `${twd(pool)}：投入超過入金，帳上是負的。` : `${twd(pool)}。投入後接近 0 是正常的；變成負的才亮紅燈。` });
+      text: (pool < 0 ? `${twd(pool)}：投入超過入金，帳上是負的。` : `${twd(pool)}。投入後接近 0 是正常的；變成負的才亮紅燈。`)
+        + "這是帳本裡的投資資金池，不代表生活預備金夠不夠。" });
   }
   return out;
 }
+
+// 燈號的意思（R10）：只代表自訂條件有沒有觸發，不是整體安全評估
+export const LIGHT_NOTE = "燈號只代表這幾條自訂條件有沒有觸發：綠燈是評估過、沒觸發，不等於沒有風險；半綠是沒觸發但只評估了部分條件；"
+  + "灰色是資料不足或讀不到。門檻是預設值，可以再調。";
 
 export function riskList(risks) {
   return el("ul", { class: "risk-list" }, risks.map((r) => el("li", {}, dot(r.light),
@@ -188,5 +196,6 @@ export function riskList(risks) {
 // 首頁的風險燈號卡（摘要；細節在分析頁）
 export async function riskCard() {
   const risks = await loadRisks(await loadCheckup());
-  return card("風險燈號", riskList(risks), el("p", { class: "small" }, el("a", { href: "#/analysis" }, "看分析頁（台積電、持股體檢）→")));
+  return card("風險燈號", riskList(risks), el("p", { class: "tiny" }, LIGHT_NOTE),
+    el("p", { class: "small" }, el("a", { href: "#/analysis" }, "看分析頁（台積電、持股體檢）→")));
 }

@@ -4,7 +4,7 @@ import { loadDaily, loadStockInsti, loadStockMargin, loadHolders, loadRevenue, l
 import { fugleQuote, fugleUsable, fugleClosed, FUGLE_NOTE } from "../fugle.js";
 import { fromPeak } from "../market.js";
 import { bias } from "../ta.js";
-import { loadCheckup, checkupTable, loadRisks, riskList } from "../checkup.js";
+import { loadCheckup, checkupTable, loadRisks, riskList, LIGHT_NOTE } from "../checkup.js";
 import { sortItems, timeOf, ago } from "../headlines.js";
 import { el, price, int, shortDate, dateVs, extLink } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
@@ -14,10 +14,10 @@ export async function render(root) {
   slot(root, tsmcCard);
   const ck = loadCheckup();
   slot(root, async () => card("風險燈號", riskList(await loadRisks(await ck)),
-    el("p", { class: "tiny" }, "門檻是預設值（docs/INSIGHTS.md 3.3），想調整再說。灰色是資料不足或讀不到。")));
+    el("p", { class: "tiny" }, LIGHT_NOTE)));
   slot(root, async () => card("持股體檢", checkupTable(await ck),
     el("p", { class: "tiny" }, "報酬：台股 ETF 含息（除息日把現金股利加回），美股只有價格；加權報酬指數含息，標普 500 是價格指數。期間是近 1 年，資料不夠就從兩邊都有資料的第一天起。",
-      "燈號（PIVOT 第 5 節）：落後第一個基準超過 10 個百分點、近 1 年六成以上交易日在 200 日均線下，各算一項；一項黃燈、兩項紅燈。200 日均線要上市滿 200 個交易日才有（不夠就寫上市幾個交易日）；算得出來但不到一年的，括號寫實際算了幾天。")));
+      "燈號：落後第一個基準超過 10 個百分點、近 1 年六成以上交易日在 200 日均線下，各算一項；一項黃燈、兩項紅燈；只評估到一項（例如還沒有 200 日均線）是半綠，不是完整綠燈。離高點的回落幅度只列出來，不在燈號條件裡。200 日均線要上市滿 200 個交易日才有（不夠就寫上市幾個交易日）；算得出來但不到一年的，括號寫實際算了幾天。")));
 }
 
 const lots = (shares) => shares / 1000;

@@ -1,7 +1,7 @@
 // 新聞（v4，docs/PROGRESS.md 第 12 項）：跳轉列 → 今天跟你有關的（新聞晨報）→ 展望 → 總經 → 持股新聞（不經 AI）＋多家媒體都在報
 // → 新聞晨報整理的事件、話題、情緒。每一塊各自讀資料、各自失敗。
 // 新聞內容一律以純文字放進頁面，連結只接受 http/https（el 的 href 會檢查）。
-import { loadNewsView, sentimentParts, firstSentence, TIER_LABEL, SECTIONS, sectionOf } from "../news.js";
+import { loadNewsView, sentimentParts, firstSentence, TIER_LABEL, SECTIONS, sectionOf, newsWhen, laterNsf } from "../news.js";
 import { loadFearGreed, loadTopics, loadHeadlines, loadNsf, loadIndex, loadCalendar } from "../data.js";
 import { cnnReading, gaugeBlock, pocketBlock } from "../gauge.js";
 import { el, taipeiTime, shortDate, taipeiToday, extLink, daysBetween, int, pct, twd, tone } from "../fmt.js";
@@ -44,12 +44,9 @@ export async function render(root, { arg }) {
 async function briefView() {
   const v = await loadNewsView();
   if (!v.rows.length) return notice("info", "新聞晨報還沒有資料。");
-  const stale = v.dataDate !== taipeiToday();
   return [
     v.ctx.missing.length > 0 && notice("warn", `讀不到${v.ctx.missing.join("、")}，「持有」的標示可能不完整。`),
-    highlightsCard(v, { title: "今天跟你有關的" }),
-    el("p", { class: "tiny row" }, `新聞晨報 ${taipeiTime(v.generatedAt)}・資料日 ${shortDate(v.dataDate)}`,
-      stale && el("span", { class: "badge b-warn" }, "⚠ 不是今天的")),
+    highlightsCard(v, { title: "今天跟你有關的", later: await laterNsf(v).catch(() => null) }),
   ];
 }
 
@@ -125,8 +122,8 @@ async function nsfView() {
 
 // ── 你的 ETF 裡面在變什麼（私人 repo 的每日持股，要 GitHub token；本機 ?dev 讀 dev-data/private）
 const FUND_CODES = ["00981A", "009816"];
-const MOVE_LABEL = { new: "新買", add: "加碼", cut: "減碼", exit: "出清" };
-// 新買用黃色標記（使用者 2026-11-06 要求），加碼紅、減碼與出清綠（台股慣例）
+const MOVE_LABEL = { new: "新買", add: "股數增加", cut: "股數減少", exit: "出清" }; // R06：基金規模變大時股數也會增加，不直接叫加碼
+// 新買用黃色標記（使用者 2026-11-06 要求），股數增加紅、股數減少與出清綠（台股慣例）
 const MOVE_CLASS = { new: "mv-new", add: "up", cut: "down", exit: "down" };
 const lots = (n) => int(n / 1000);
 const pp = (v) => `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)}`;
@@ -135,7 +132,7 @@ async function insideView() {
   const title = "你的 ETF 裡面在變什麼";
   if (!hasPrivate()) {
     return card(title,
-      el("p", { class: "small" }, "這裡會列 00981A 經理人這週買賣了什麼、009816 什麼時候換股與換了哪幾檔，以及你的台股實際押在哪些公司。",
+      el("p", { class: "small" }, "這裡會列 00981A 這週持有股數的變化、009816 什麼時候換股與換了哪幾檔，以及你的台股實際押在哪些公司。",
         "兩家投信不允許轉載持股，所以資料放在你的私人 repo，要先在下面設定只能讀那個 repo 的 GitHub token。"),
       privateSettings({ open: true }));
   }
@@ -191,8 +188,9 @@ function activeFund({ doc, hist }, mgr) {
     fundHead("00981A", "主動統一台股增長｜經理人選股", fundSummary(doc)),
     mgr && el("div", { class: "ai" }, el("b", {}, "經理人方向（AI 推論）"), mgr.fact,
       el("p", { class: "tiny" }, mgr.reason || "AI 從投信公布的每日持股推論，不是經理人說的。")),
-    el("p", { class: "small" }, el("b", {}, `這週（${shortDate(from)} → ${shortDate(last)}）經理人調了什麼`),
+    el("p", { class: "small" }, el("b", {}, `這週（${shortDate(from)} → ${shortDate(last)}）持有股數的變化`),
       el("span", { class: "tiny" }, `（只列股數變化 ${MOVE_PCT}% 以上的）`)),
+    el("p", { class: "tiny" }, "股數增加不一定是經理人更看好：有人申購、基金規模變大時，照原比例買進股數也會增加。要扣掉發行單位數的變化才看得出主動調整，這裡還沒有這項資料。"),
     from >= last ? el("p", { class: "muted small" }, "持股只收集到一天，還不能比較。")
       : moves.length ? el("ul", { class: "moves" }, moves.slice(0, 8).map(line))
         : el("p", { class: "muted small" }, `這週沒有股數變化 ${MOVE_PCT}% 以上的。`),
@@ -377,8 +375,10 @@ function topicTable(t) {
 }
 
 // 今天的重點與旗標（總覽也用）
-export function highlightsCard(v, { title = "今天的重點", link = false } = {}) {
+// later：晨報之後的官方發展（news.js laterNsf），標在相關的那一條下面
+export function highlightsCard(v, { title = "今天的重點", link = false, later = null } = {}) {
   const { by, items } = v.highlights;
+  const w = newsWhen(v);
   const list = items.length
     ? el("ol", { class: "hl-list" }, items.map((h) => el("li", { class: `hl ${h.flag !== "none" ? "flagged" : ""}` },
       el("div", { class: "ev-tags" }, codeChips(h.codes, v.ctx), h.flag !== "none" && flagBadge(h.flag)),
@@ -390,15 +390,19 @@ export function highlightsCard(v, { title = "今天的重點", link = false } = 
         : h.why && (by === "routine"
           ? el("details", { class: "more hl-meta" }, el("summary", {}, "查證細節"), el("div", { class: "tiny" }, h.why))
           : el("div", { class: "tiny" }, `為什麼列入：${h.why}`)),
+      later && later.re.test(`${h.text} ${h.why || ""}`) && el("div", { class: "hl-later" }, el("strong", {}, "後續："), later.text),
       !link && h.eventId && el("button", { class: "linkish", type: "button", onclick: () => openEvent(h.eventId) }, "看明細"))))
-    : el("p", { class: "muted" }, "今天沒有需要特別注意的事件。");
+    : el("p", { class: "muted" }, w && !w.fresh ? `${w.name}沒有需要特別注意的事件。` : "今天沒有需要特別注意的事件。");
   const flags = v.flagged.length
     ? el("div", { class: "flag-alert", role: "alert" },
       el("strong", {}, `⚠ 有 ${v.flagged.length} 件建議旗標不是 none`),
       v.flagged.map((e) => el("div", {}, codeChips(e.codes, v.ctx), " ", flagBadge(e.flag), " ", firstSentence(e.fact, 50),
         e.reason && el("div", { class: "tiny" }, e.reason))))
     : null; // 旗標都是 none 時不顯示（內部核對用語，docs/INSIGHTS.md 3.1）
-  return card(title, list, flags,
+  return card(w && !w.fresh ? `${w.name}的重點` : title,
+    w && !w.fresh && notice("info", w.note),
+    list, flags,
+    w && el("p", { class: "tiny" }, `新聞晨報 ${w.at} 產生・資料日 ${w.day}${w.fresh ? "" : "（最近一份；晨報只在平日產生）"}`),
     by === "site" && el("p", { class: "tiny" }, "晨報還沒有「重點」列，先由網站依規則挑：非 none 旗標 → 持有標的、Tier 1～2 且已查證 → 必寫事項（保留一格）。"),
     link && el("p", { class: "small" }, el("a", { href: "#/news" }, `看全部新聞（${v.events.length} 件）→`)));
 }
