@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>記帳寫入測試</title>
+<style>
+  :root { color-scheme: light dark; --ok: #1a7f37; --bad: #cf222e; --line: #8884; }
+  body { font: 14px/1.5 system-ui, "Microsoft JhengHei", sans-serif; margin: 16px; background: Canvas; color: CanvasText; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { margin: 4px 0; }
+  #summary { font-size: 16px; font-weight: 700; margin: 12px 0; }
+  #summary.pass, tr.pass td:nth-child(2) { color: var(--ok); }
+  #summary.fail, tr.fail td:nth-child(2), tr.fail td:nth-child(3) { color: var(--bad); }
+  table { border-collapse: collapse; width: 100%; }
+  td { border-top: 1px solid var(--line); padding: 4px 6px; vertical-align: top; }
+  td:nth-child(4) { font-size: 12px; opacity: .8; word-break: break-all; white-space: pre-wrap; }
+  code { font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>記帳寫入測試（假的 Apps Script 服務）</h1>
+<p>跑的程式：<code id="src"></code>。不連 Google、不碰正式帳本；網站部分只在這個 localhost 網址的 localStorage 用假網址與假密鑰，測完還原。</p>
+<p>說明見 <code>docs/LEDGER_WRITE.md</code>「本機測試」。記帳頁的畫面可以在 <a href="record_sandbox.html">record_sandbox.html</a> 手動點。</p>
+<div id="summary">執行中…</div>
+<table><tbody id="rows"></tbody></table>
+<script type="module" src="ledger_write_test.js"></script>
+</body>
+</html>
