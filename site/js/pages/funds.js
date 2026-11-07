@@ -4,7 +4,7 @@ import { loadSettings, loadTrades, loadDividends, loadDaily, loadIndex, loadDca 
 import { dcaFor } from "../discipline.js";
 import { loadPortfolio } from "../portfolio.js";
 import { loadPerformance } from "../perf.js";
-import { el, twd, pct, int, isNum, taipeiToday, extLink } from "../fmt.js";
+import { el, twd, pct, int, isNum, taipeiToday, extLink, shortDate } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { FUNDS as F, NAMES } from "../config.js";
 
@@ -44,7 +44,8 @@ function pmtFor(target, pv, r, months) {
   const need = target - pv * g;
   return need <= 0 ? 0 : m ? need * m / (g - 1) : need / months;
 }
-const yearsText = (n) => (n == null ? "100 年以上" : n < 12 ? `${n} 個月` : `${(n / 12).toFixed(1)} 年`);
+// 年數只寫到整數（R11：不用 18.3 年這種精細數字營造確定感）
+const yearsText = (n) => (n == null ? "100 年以上" : n < 12 ? `${n} 個月` : `${Math.round(n / 12)} 年`);
 const wan = (v) => (v >= 1e4 ? `${(v / 1e4).toFixed(v >= 1e6 ? 0 : 1)} 萬` : twd(v));
 
 function store(k, v) {
@@ -275,10 +276,53 @@ async function buffettCard() {
       + `算法與假設見 K 線頁「組合對大盤」。出處：${B.source}（${B.period} 每股市值年化與 S&P 500 含股利年化）。投入金額 ${twd(perf.invested)}，算到 ${perf.last}。`));
 }
 
-// ── 財富自由計算機 ──
+// ── 財富自由試算（改進報告 R11）──
+// 兩種問題分開算：「以歷史配息率估算的稅前現金流」（高股息 ETF 近 12 個月配息 ÷ 最新收盤，股價跌時這個比率會變高、
+// 配息也會變）與「退休可持續提領」（4% 法則的提領率）。通膨是使用者可調的假設（預設年 2%），金額可以用今天的購買力
+// 或未來的名目金額表示；年數與每月要投用 4%／7%／10% 三種年報酬寫成區間，不給精細到小數的年數。
+export const FIRE_INFL = 0.02;
+export const FIRE_RULES = [[0.04, "4%", "Bengen：退休 30 年"], [0.035, "3.5%", "退休更久或更保守（情境假設）"], [0.03, "3%", "很保守（情境假設）"]];
+export const FIRE_CUTS = [[0, "配息維持近 12 個月的水準"], [0.2, "配息減少 2 成"], [0.4, "配息減少 4 成"]];
+
+// 高股息 ETF 的加權配息率：沒有配息率的不默默排除，回傳 missing 讓畫面標「不是完整組合」
+export function weightedYield(etfs, weights) {
+  const used = etfs.filter((x) => isNum(x.yield) && x.yield > 0 && (weights[x.code] ?? 0) > 0);
+  const missing = etfs.filter((x) => !(isNum(x.yield) && x.yield > 0)).map((x) => x.code);
+  const sw = used.reduce((s, x) => s + weights[x.code], 0);
+  return { yield: sw ? used.reduce((s, x) => s + (weights[x.code] / sw) * x.yield, 0) : null, used: used.map((x) => x.code), missing };
+}
+
+// 需要的本金（名目）：每月想領（今天的錢）照通膨漲到 months 個月後，再除以年提領率／配息率
+export const needAt = (monthly, rate, infl, months) => (monthly * 12 * Math.pow(1 + infl, months / 12)) / rate;
+
+// 幾個月後存到（目標跟著通膨變大）；每月月底投入固定金額。100 年內到不了回傳 null
+export function monthsToNeed(monthly, rate, infl, pv, pmt, r) {
+  const m = mRate(r);
+  let v = pv;
+  for (let n = 0; n <= 1200; n++) {
+    if (n) v = v * (1 + m) + pmt;
+    if (v >= needAt(monthly, rate, infl, n)) return n;
+  }
+  return null;
+}
+
+// 多情境寫成區間：年數取整數（下限無條件捨去、上限無條件進位），到不了寫「100 年以上」
+export function yearsRange(list) {
+  const ys = list.filter((n) => n != null).map((n) => n / 12);
+  if (!ys.length) return "100 年以上";
+  if (ys.length === list.length && Math.max(...ys) === 0) return "已達到";
+  const lo = Math.floor(Math.min(...ys)), hi = Math.ceil(Math.max(...ys));
+  const top = ys.length < list.length ? "100 年以上" : `${hi} 年`;
+  return lo === hi && ys.length === list.length ? `約 ${lo} 年` : `約 ${lo} 年～${top}`;
+}
+const moneyRange = (xs) => {
+  const lo = Math.min(...xs), hi = Math.max(...xs);
+  return wan(lo) === wan(hi) ? wan(lo) : `${wan(lo)}～${wan(hi)}`;
+};
+
 async function fireCard() {
   const tot = await totalAssets();
-  // 起始本金不完整時，「需要本金」照算（跟目前資產無關），「照目前速度」「每月要投」停算
+  // 起始本金不完整時，「需要本金」照算（跟目前資產無關），「多久存到」「每月要投」停算
   const pv = tot.complete ? tot.value : null;
   const dep = await monthlyDeposit();
   const div = await loadDividends().catch(() => null);
@@ -287,47 +331,79 @@ async function fireCard() {
     const e = div?.etfs?.[c];
     const bars = await loadDaily("tw", c).catch(() => null);
     const close = bars?.at(-1)?.close;
-    return { code: c, ttm: e?.ttm_cash, n: e?.ttm_count, close, yield: e?.ttm_cash && close ? e.ttm_cash / close : null };
+    return { code: c, ttm: e?.ttm_cash, n: e?.ttm_count, close, date: bars?.at(-1)?.time, yield: e?.ttm_cash && close ? e.ttm_cash / close : null };
   }));
-  const ok = etfs.filter((x) => isNum(x.yield));
-  const state = { monthly: F.fire.monthly, ret: 0.07, pmt: dep.amount, years: 20, w: Object.fromEntries(ok.map((x) => [x.code, 1])) };
+  const state = { monthly: F.fire.monthly, infl: FIRE_INFL, real: true, pmt: dep.amount, years: 20, w: Object.fromEntries(etfs.map((x) => [x.code, 1])) };
+  const R = F.scenarios;
   const outBox = el("div");
-  const weighted = () => {
-    const sw = ok.reduce((s, x) => s + state.w[x.code], 0);
-    return sw ? ok.reduce((s, x) => s + (state.w[x.code] / sw) * x.yield, 0) : null;
+
+  // 每個情境一塊（手機上不用左右捲表格）：需要本金、多久存到、N 年存到每月要投
+  const cell = (k, v) => el("div", {}, el("span", { class: "k" }, k), el("span", { class: "v" }, v));
+  const row = (label, sub, rate) => {
+    const title = el("div", {}, el("strong", {}, label), sub && el("span", { class: "tiny" }, `　${sub}`));
+    if (!isNum(rate) || rate <= 0) return el("div", { class: "pos" }, title, el("div", { class: "small muted" }, "資料準備中"));
+    const n = state.years * 12;
+    const need = needAt(state.monthly, rate, state.real ? 0 : state.infl, state.real ? 0 : n);
+    const stop = "缺資料，先不算";
+    return el("div", { class: "pos" }, title, el("div", { class: "pos-grid" },
+      cell(state.real ? "需要本金（今天的購買力）" : `需要本金（${state.years} 年後名目）`, wan(need)),
+      cell("多久存到", pv == null ? stop : yearsRange(R.map((r) => monthsToNeed(state.monthly, rate, state.infl, pv, state.pmt, r)))),
+      cell(`${state.years} 年存到，每月要投`, pv == null ? stop : moneyRange(R.map((r) => pmtFor(needAt(state.monthly, rate, state.infl, n), pv, r, n))))));
   };
-  const row = (name, rate, pre = "") => {
-    if (!isNum(rate) || rate <= 0) return el("tr", {}, el("td", {}, name), el("td", { class: "r", colspan: 3 }, "資料準備中"));
-    const need = (state.monthly * 12) / rate;
-    const stop = el("td", { class: "r muted" }, "缺資料，先不算");
-    return el("tr", {}, el("td", {}, `${name}（${pre}${pct(rate * 100, 2, false)}）`), el("td", { class: "r" }, wan(need)),
-      pv == null ? stop : el("td", { class: "r" }, yearsText(monthsToReach(need, pv, state.pmt, state.ret))),
-      pv == null ? stop.cloneNode(true) : el("td", { class: "r" }, twd(pmtFor(need, pv, state.ret, state.years * 12))));
+  const unit = () => (state.real ? "本金是今天的購買力（實質）" : `本金是 ${state.years} 年後的名目金額（照年通膨 ${(state.infl * 100).toFixed(1)}% 換算）`);
+
+  const draw = () => {
+    const wy = weightedYield(etfs, state.w);
+    const later = Math.pow(1 + state.infl, state.years);
+    // replaceChildren 會把 false 與陣列變成文字：先攤平、濾掉條件式的 false
+    outBox.replaceChildren(...[
+      el("p", { class: "small" }, `通膨是假設、不是預測：年 ${(state.infl * 100).toFixed(1)}% 的話，今天每月 ${twd(state.monthly)} 的購買力，`
+        + `${state.years} 年後每月要 ${twd(state.monthly * later)}（名目）。`),
+      el("h3", {}, "退休可持續提領（4% 法則）"),
+      FIRE_RULES.map(([r, label, sub]) => row(`提領率 ${label}`, sub, r)),
+      el("p", { class: "tiny" }, `口徑：每月想領的是稅前金額；${unit()}；每月要投是名目的固定金額。提領率是退休第一年領起始資產的比例，之後每年照通膨調整領的金額。`
+        + `「多久存到」「每月要投」用年報酬 ${R.map((r) => `${Math.round(r * 100)}%`).join("、")} 三種情境寫成區間，目標金額每年照通膨變大。`),
+      el("h3", {}, "以歷史配息率估算的稅前現金流（高股息 ETF）"),
+      wy.missing.length > 0 && notice("warn", `${wy.missing.join("、")} 沒有近 12 個月的配息率，`
+        + (wy.used.length ? `下面只用 ${wy.used.join("、")} 算，不是三檔的完整組合。` : "先不算。")),
+      FIRE_CUTS.map(([cut, label]) => row(label, isNum(wy.yield) ? `配息率 ${pct(wy.yield * (1 - cut) * 100, 2, false)}` : null, isNum(wy.yield) ? wy.yield * (1 - cut) : null)),
+      el("p", { class: "tiny" }, `口徑：配息率是稅前、名目（近 12 個月配息 ÷ 最新收盤）；${unit()}；每月要投是名目的固定金額。`
+        + "用今天的購買力表示時，等於假設配息會跟著通膨增加；配息金額如果不變，"
+        + `${state.years} 年後的購買力只剩約 ${Math.round((1 / later) * 100)}%。股價下跌時，用現價當分母的配息率會變高，看起來需要的本金變少，這不代表比較安全。`)].flat().filter(Boolean));
   };
-  const draw = () => outBox.replaceChildren(el("div", { class: "table-wrap" }, el("table", {},
-    el("thead", {}, el("tr", {}, ["方法", "需要本金", "照目前速度", `${state.years} 年達成每月要投`].map((h, i) => el("th", { class: i ? "r" : "" }, h)))),
-    el("tbody", {}, row("高股息配息", weighted(), "稅前 "), row("4% 法則", F.fire.rule)))));
   draw();
   const set = (k) => (v) => {
     state[k] = v;
     draw();
   };
-  return card("財富自由計算機",
-    range("每月想領", { min: 30000, max: 300000, step: 10000, value: state.monthly, fmt: (v) => twd(v) }, set("monthly")),
-    range("存錢期間年報酬", { min: 0, max: 12, step: 0.5, value: 7, fmt: (v) => `${v.toFixed(1)}%` }, (v) => set("ret")(v / 100)),
+  const modes = el("div", { class: "chips", role: "group", "aria-label": "本金的表示方式" },
+    [[true, "今天的購買力"], [false, "未來的名目金額"]].map(([v, label]) => {
+      const b = el("button", { class: "chip", type: "button", "aria-pressed": String(v === state.real) }, label);
+      b.addEventListener("click", () => {
+        state.real = v;
+        for (const x of modes.children) x.setAttribute("aria-pressed", String(x === b));
+        draw();
+      });
+      return b;
+    }));
+  const okEtfs = etfs.filter((x) => isNum(x.yield));
+  return card("財富自由試算",
+    range("每月想領（今天的錢，稅前）", { min: 30000, max: 300000, step: 10000, value: state.monthly, fmt: (v) => twd(v) }, set("monthly")),
     range("每月投入", { min: 0, max: 30000, step: 500, value: state.pmt, fmt: (v) => twd(v) }, set("pmt")),
-    range("幾年達成", { min: 5, max: 40, step: 1, value: state.years, fmt: (v) => `${v} 年` }, set("years")),
-    el("h3", {}, "高股息 ETF 近 12 個月配息（比例可調）"),
-    ok.length ? ok.map((x) => range(`${x.code} ${NAMES[x.code] || ""}：殖利率 ${pct(x.yield * 100, 2, false)}（${x.n} 次 ${x.ttm} 元／收盤 ${x.close}）`,
-      { min: 0, max: 100, step: 10, value: 100, fmt: (v) => `比重 ${v}` }, (v) => { state.w[x.code] = v; draw(); }))
-      : notice("info", "高股息 ETF 配息資料準備中。"),
-    !tot.complete && partialNotice(tot, "「需要本金」照算，「照目前速度」和「每月要投」要從完整的總資產開始，所以先不算"),
+    range("幾年存到", { min: 5, max: 40, step: 1, value: state.years, fmt: (v) => `${v} 年` }, set("years")),
+    range("年通膨（假設）", { min: 0, max: 5, step: 0.5, value: state.infl * 100, fmt: (v) => `${v.toFixed(1)}%` }, (v) => set("infl")(v / 100)),
+    el("div", { class: "row" }, el("span", { class: "small" }, "本金用："), modes),
+    !tot.complete && partialNotice(tot, "「需要本金」照算，「多久存到」和「每月要投」要從完整的總資產開始，所以先不算"),
     outBox,
+    el("h3", {}, "高股息 ETF 近 12 個月配息（比例可調）"),
+    okEtfs.length ? okEtfs.map((x) => range(`${x.code} ${NAMES[x.code] || ""}：配息率 ${pct(x.yield * 100, 2, false)}（${x.n} 次 ${x.ttm} 元／${shortDate(x.date)} 收盤 ${x.close}）`,
+      { min: 0, max: 100, step: 10, value: 100, fmt: (v) => `比重 ${v}` }, (v) => { state.w[x.code] = v / 100; draw(); }))
+      : notice("info", "高股息 ETF 配息資料準備中。"),
     el("ul", { class: "notes" },
+      el("li", {}, "這兩種算法回答的是不同問題：配息率是過去一年的現金配息 ÷ 現在的股價，不保證會維持，也不等於能長期維持購買力的提領率；兩者不能直接比誰需要的本金少。"),
       el("li", {}, "配息的數字都是稅前。ETF 的收益分配可能來自股利、利息、資本利得或收益平準金等不同組成，要繳多少所得稅和二代健保補充保費，要看每次配息的實際組成和你自己的條件（例如單次金額、投保身分），這裡不精算。"),
       el("li", {}, "配息不是多出來的錢：除息當天股價會扣掉配息金額。"),
-      el("li", {}, "配息每年會變，近 12 個月的殖利率不代表以後。"),
-      el("li", {}, "4% 法則（Bengen 1994）：退休第一年提領起始資產的 4%，之後每年照通膨調整這個金額（不是每年重新領當時餘額的 4%）。這是用美國股債歷史資料做的研究，不保證未來，也不是提領建議。"),
+      el("li", {}, "4% 法則（Bengen 1994）：退休第一年提領起始資產的 4%，之後每年照通膨調整這個金額（不是每年重新領當時餘額的 4%）。這是用美國股債歷史資料、30 年退休期做的研究，不保證未來，也不是提領建議；3.5%、3% 是退休更久或更保守時的情境假設。"),
       el("li", {}, pv == null ? "這是試算，不是投資建議。"
         : `從目前總資產 ${twd(pv)} 開始試算；每月投入預設是這個月的定投金額${depositNote(dep)}，可用滑桿改。這是試算，不是投資建議。`)),
     el("p", { class: "tiny" }, "官方說明（2026-11-07 查核網址）：",
