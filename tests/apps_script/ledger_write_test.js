@@ -707,8 +707,29 @@ async function siteTests() {
       return got.join("、");
     });
 
+    await test(G, "讀取端：沖銷列和它沖掉的原列一起拿掉（績效、K 線、持倉頁讀的 loadTrades）；記帳頁的 loadTradeRows 全部都有", async () => {
+      const { SOURCES } = await import("../../site/js/config.js");
+      const D = await import("../../site/js/data.js");
+      const e = env();
+      const w = e.post({ action: "addTrade", id: ID, data: TRADE });
+      e.post({ action: "reverse", id: ID2, data: revData(e, w.rowNumber) });
+      window.fetch = async (url) => {
+        if (String(url) === SOURCES.ledger.trades) return new Response(e.sheets["交易紀錄"].csv(), { status: 200 });
+        throw new Error(`測試不允許連到 ${url}`);
+      };
+      D.clearCache();
+      const rows = await D.loadTradeRows();
+      const eff = await D.loadTrades();
+      D.clearCache();
+      eq(rows.map((t) => t.row), [2, 3, 4, 5, 6, 7, 8], "全部的列號（試算表列號）");
+      eq(eff.map((t) => t.row), [2, 3, 4, 5, 6], "有效成交拿掉第 7、8 列");
+      eq([rows[5].reqId, rows[5].mark, rows[6].mark], [ID, "已被第 8 列沖銷", "沖銷第 7 列"], "請求編號與更正欄");
+      eq(rows[6].shares, -10, "沖銷列的股數是負的");
+    });
+
     await test(G, "送出的請求內文有密鑰（只在 POST 內文），網址沒有參數", () => {
-      ok(seen.length > 0 && seen.every((b) => b.key === TEST_KEY), "內文要有密鑰");
+      const posts = seen.filter((b) => b && typeof b === "object");
+      ok(posts.length > 0 && posts.every((b) => b.key === TEST_KEY), "內文要有密鑰");
     });
   } finally {
     window.fetch = realFetch;

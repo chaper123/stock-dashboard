@@ -24,13 +24,19 @@ export function parseCSV(text) {
 }
 
 // 有表頭的 CSV → 物件陣列（略過全空白列）
-export function parseTable(text) {
+// rowKey：在每一列加上它在試算表裡的列號（表頭是第 1 列，中間的空白列也算），例如記帳頁沖銷要指定第幾列
+export function parseTable(text, rowKey = null) {
   const [header, ...rows] = parseCSV(text);
   if (!header) return [];
   const keys = header.map((h) => h.trim());
   return rows
-    .filter((r) => r.some((v) => v.trim() !== ""))
-    .map((r) => Object.fromEntries(keys.map((k, i) => [k, (r[i] ?? "").trim()])));
+    .map((r, i) => [r, i + 2])
+    .filter(([r]) => r.some((v) => v.trim() !== ""))
+    .map(([r, n]) => {
+      const o = Object.fromEntries(keys.map((k, i) => [k, (r[i] ?? "").trim()]));
+      if (rowKey) o[rowKey] = n;
+      return o;
+    });
 }
 
 // 顯示後的數字 → number：去掉千分位、貨幣符號、百分比；空白或無法解析回傳 null

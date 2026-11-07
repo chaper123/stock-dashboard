@@ -118,10 +118,12 @@ export const loadDca = () => once("dca", async () => {
   return list;
 });
 
-export const loadTrades = () => once("trades", async () => {
+// 交易紀錄的每一列，含沖銷列與被沖銷的原列（記帳頁的沖銷清單用）
+export const loadTradeRows = () => once("tradeRows", async () => {
   const src = "帳本「交易紀錄」";
-  const rows = parseTable(await fetchText(SOURCES.ledger.trades, src, true));
+  const rows = parseTable(await fetchText(SOURCES.ledger.trades, src, true), "__row");
   return rows.map((r) => ({
+    row: r.__row, // 試算表列號（記帳頁沖銷用）
     date: col(r, "日期"),
     market: col(r, "市場") === "美股" ? "us" : "tw",
     code: col(r, "代號"),
@@ -136,7 +138,22 @@ export const loadTrades = () => once("trades", async () => {
     time: col(r, "成交時間"),
     tax: num(col(r, "交易稅")),
     fee: num(col(r, "手續費")),
+    reqId: col(r, "請求編號"), // 網站寫入的列才有（第 B 批起）
+    mark: col(r, "更正"),      // 「沖銷第 N 列」或「已被第 M 列沖銷」
   })).filter((t) => /^\d{4}-\d{2}-\d{2}$/.test(t.date) && t.code);
+});
+
+// 有效的成交：拿掉沖銷列和它沖掉的原列（兩列數字剛好相反，一起拿掉就等於那筆不存在）。
+// 績效、K 線成交標記、持倉頁、本月紀律都讀這個，所以記錯沖銷後不會出現假的買賣（docs/LEDGER_CONSISTENCY.md 2.5）
+const REVERSAL = /^沖銷第 (\d+) 列/;
+export const loadTrades = () => once("trades", async () => {
+  const rows = await loadTradeRows();
+  const gone = new Set();
+  for (const t of rows) {
+    const m = REVERSAL.exec(t.mark);
+    if (m) gone.add(t.row).add(Number(m[1]));
+  }
+  return gone.size ? rows.filter((t) => !gone.has(t.row)) : rows;
 });
 
 // ── 儀表板資料（排程寫入） ─────────────────────────────
