@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>R06 ETF 每單位持股</title></head>
+<body>
+<h1>R06 ETF 持股變化（site/js/inside.js、private.js）</h1>
+<p>改進報告第 8 節：基金申購（持股與發行單位同增 20%）不稱為加碼；股數不變只價格上升不稱為買進；分割、代號異動不製造假買賣。資料是假的，不是投信的持股。
+單位數的讀取用攔截的 fetch 模擬 GitHub API（不連網、假 token 只放在這個測試頁的 localStorage，結束就刪）。</p>
+<script type="module">
+import { test, eq, near, ok, report, results } from "./harness.js";
+import { fundMoves, looksLikeSplit } from "/site/js/inside.js";
+import { parseHistory, loadUnitsOn, clearPrivate } from "/site/js/private.js";
+
+// 日期,代號,名稱,股數,權重
+const hist = (rows) => parseHistory(rows.join("\n"));
+const A = "2026-11-05", B = "2026-11-12";
+const kinds = (r) => r.moves.map((m) => [m.kind, m.code]);
+
+test("基金申購：持股與發行單位同增 20%，不算增加", () => {
+  const h = hist([`${A},1111,甲,100000,10`, `${A},2222,乙,50000,5`, `${B},1111,甲,120000,10`, `${B},2222,乙,60000,5`]);
+  const r = fundMoves(h, A, B, { a: 1000, b: 1200 });
+  eq(kinds(r), []);
+  eq(r.perUnit, true);
+  near(r.unitPct, 20, 1e-9);
+});
+test("對照：沒有單位數時，同樣的資料只能寫股數增加（結論較弱）", () => {
+  const h = hist([`${A},1111,甲,100000,10`, `${B},1111,甲,120000,10`]);
+  const r = fundMoves(h, A, B);
+  eq([kinds(r), r.perUnit], [[["add", "1111"]], false]);
+  near(r.moves[0].pct, 20, 1e-9);
+});
+test("只有股價上升：股數不變、權重變大，不算買進", () => {
+  const h = hist([`${A},1111,甲,100000,10`, `${B},1111,甲,100000,14`]);
+  eq(kinds(fundMoves(h, A, B, { a: 1000, b: 1000 })), []);
+  eq(kinds(fundMoves(h, A, B)), []);
+});
+test("每單位持股真的增加：股數 +30%、單位 +10% → 每單位約 +18%", () => {
+  const h = hist([`${A},1111,甲,100000,10`, `${B},1111,甲,130000,12`]);
+  const r = fundMoves(h, A, B, { a: 1000, b: 1100 });
+  eq(kinds(r), [["add", "1111"]]);
+  near(r.moves[0].pct, (1.3 / 1.1 - 1) * 100, 1e-9);
+  near(r.moves[0].raw, 30, 1e-9);
+});
+test("有人申購但沒加買這檔：股數不變、單位 +20% → 每單位減少", () => {
+  const h = hist([`${A},1111,甲,100000,10`, `${B},1111,甲,100000,8.3`]);
+  eq(kinds(fundMoves(h, A, B, { a: 1000, b: 1200 })), [["cut", "1111"]]);
+});
+test("申購的錢還沒買：大部分持股每單位一起減少，中位數約 −17%", () => {
+  const h = hist([`${A},1111,甲,100000,10`, `${A},2222,乙,50000,5`, `${A},3333,丙,20000,2`,
+    `${B},1111,甲,100000,8.3`, `${B},2222,乙,50000,4.2`, `${B},3333,丙,26000,2.2`]);
+  const r = fundMoves(h, A, B, { a: 1000, b: 1200 });
+  near(r.median, (1 / 1.2 - 1) * 100, 1e-9);
+  eq(kinds(r), [["add", "3333"], ["cut", "1111"], ["cut", "2222"]]);
+});
+test("分割：股數變 2 倍、權重幾乎沒變 → 疑似分割，不算買賣", () => {
+  const h = hist([`${A},1111,甲,100000,10`, `${B},1111,甲,200000,10.2`]);
+  eq(kinds(fundMoves(h, A, B)), [["split", "1111"]]);
+  eq(kinds(fundMoves(h, A, B, { a: 1000, b: 1000 })), [["split", "1111"]]);
+});
+test("合併（反分割）：股數變 1/4、權重沒變 → 疑似分割或合併", () => {
+  const h = hist([`${A},1111,甲,400000,5`, `${B},1111,甲,100000,5`]);
+  eq(kinds(fundMoves(h, A, B)), [["split", "1111"]]);
+});
+test("真的加倍買：股數 2 倍、權重也 2 倍 → 增加，不是分割", () => {
+  ok(!looksLikeSplit({ shares: 100, weight: 5 }, { shares: 200, weight: 10 }));
+  const h = hist([`${A},1111,甲,100000,5`, `${B},1111,甲,200000,10`]);
+  eq(kinds(fundMoves(h, A, B, { a: 1000, b: 1000 })), [["add", "1111"]]);
+});
+test("代號異動：同名一出一進合成一筆，不算新買與出清", () => {
+  const h = hist([`${A},1111,甲,100000,10`, `${A},3333,丙,1000,3`, `${B},9999,甲,100000,10`, `${B},3333,丙,1000,3`]);
+  const r = fundMoves(h, A, B, { a: 1000, b: 1000 });
+  eq(kinds(r), [["rename", "9999"]]);
+  eq(r.moves[0].from, "1111");
+});
+test("新買、出清照舊；象徵性持股只算檔數", () => {
+  const h = hist([`${A},1111,甲,100000,10`, `${A},4444,丁,100,0.05`, `${B},2222,乙,5000,1`, `${B},4444,丁,300,0.06`]);
+  const r = fundMoves(h, A, B, { a: 1000, b: 1000 });
+  eq(kinds(r), [["new", "2222"], ["exit", "1111"]]);
+  eq(r.tokens, 1);
+});
+
+// loadUnitsOn：列出那天之後改過檔案的 commit，由舊到新找 date 等於那天的 JSON
+const KEY = "github.privateToken";
+const calls = [];
+const realFetch = window.fetch;
+const docs = { c3: { date: "2026-11-04", units: 900 }, c2: { date: "2026-11-05", units: 1000 }, c1: { date: "2026-11-06", units: 1100 } };
+window.fetch = async (url, opt) => {
+  const u = new URL(String(url));
+  if (u.hostname !== "api.github.com") return realFetch(url, opt);
+  calls.push({ path: u.pathname, q: Object.fromEntries(u.searchParams), auth: opt?.headers?.Authorization, accept: opt?.headers?.Accept });
+  if (u.pathname.endsWith("/commits")) return new Response(JSON.stringify([{ sha: "c1" }, { sha: "c2" }, { sha: "c3" }]), { status: 200 });
+  const doc = docs[u.searchParams.get("ref")];
+  return doc ? new Response(JSON.stringify(doc), { status: 200 }) : new Response("", { status: 404 });
+};
+const cases = [["從 git 歷史找到那天的單位數（舊到新），請求帶 token、不放在網址", async () => {
+  localStorage.setItem(KEY, "test-token-not-real");
+  clearPrivate();
+  const r = await loadUnitsOn("00981A", "2026-11-05");
+  eq(r, { date: "2026-11-05", units: 1000, nav: null });
+  const list = calls.find((c) => c.path.endsWith("/commits"));
+  eq([list.q.path, list.q.since, list.q.until], ["data/holdings/00981A.json", "2026-11-04T16:00:00.000Z", "2026-11-08T16:00:00.000Z"]);
+  ok(calls.every((c) => c.auth === "Bearer test-token-not-real"), "每個請求都有 Authorization 標頭");
+  ok(calls.every((c) => !JSON.stringify(c.q).includes("test-token")), "token 不在網址裡");
+  eq(calls.filter((c) => c.q.ref).map((c) => c.q.ref), ["c3", "c2"], "看到那天就停");
+}], ["那天沒有紀錄：回傳 null（畫面退回只看股數）", async () => {
+  clearPrivate();
+  eq(await loadUnitsOn("00981A", "2026-10-30"), null);
+}]];
+for (const [name, fn] of cases) {
+  try {
+    await fn();
+    results.push([name, true, ""]);
+  } catch (e) {
+    results.push([name, false, e.message]);
+  }
+}
+localStorage.removeItem(KEY);
+window.fetch = realFetch;
+report();
+</script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>R11 財富自由試算</title></head>
+<body>
+<h1>R11 財富自由試算（site/js/pages/funds.js）</h1>
+<p>改進報告第 8 節「配息／通膨」：配息下降、通膨上升時本金需求合理變大；缺資料的 ETF 不默默排除；既有複利公式不能改壞（20 年、每月月底 3,000、年 7%、起始 24,774 約 161.85 萬）。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { fv, needAt, monthsToNeed, weightedYield, yearsRange, FIRE_INFL } from "/site/js/pages/funds.js";
+
+test("既有複利公式：24,774 起、每月月底 3,000、年 7%、20 年 ≈ 161.85 萬", () => {
+  eq(Math.round(fv(24774, 3000, 0.07, 240) / 100) / 100, 161.85);
+});
+test("年報酬 0：只是本金加投入", () => near(fv(1000, 100, 0, 12), 2200, 1e-9));
+test("4% 法則：每月 10 萬（今天的購買力）要 3,000 萬", () => near(needAt(100000, 0.04, 0, 0), 30_000_000, 1e-6));
+test("通膨假設預設 2%：今天每月 10 萬，20 年後約 148,595（名目）", () => {
+  eq(FIRE_INFL, 0.02);
+  near(needAt(100000, 1, 0.02, 240) / 12, 148594.74, 0.01);
+});
+test("配息率下調：需要的本金變大", () => {
+  const y = 0.0967;
+  ok(needAt(100000, y * 0.8, 0, 0) > needAt(100000, y, 0, 0));
+  near(needAt(100000, y * 0.6, 0, 0) / needAt(100000, y, 0, 0), 1 / 0.6, 1e-12);
+});
+test("通膨上升：名目本金需求變大、存到的時間變長", () => {
+  ok(needAt(100000, 0.04, 0.03, 240) > needAt(100000, 0.04, 0.02, 240));
+  const a = monthsToNeed(30000, 0.04, 0.02, 24774, 3000, 0.07), b = monthsToNeed(30000, 0.04, 0.03, 24774, 3000, 0.07);
+  ok(a != null && b != null && b > a, `${a} → ${b}`);
+});
+test("通膨 0、年報酬 0：0 起、每月 1,000、目標 12,000 → 12 個月", () => {
+  eq(monthsToNeed(40, 0.04, 0, 0, 1000, 0), 12); // 40 × 12 ÷ 4% = 12,000
+});
+test("100 年內到不了回傳 null", () => eq(monthsToNeed(300000, 0.03, 0.05, 0, 0, 0.04), null));
+test("加權配息率：缺資料的 ETF 列出來，不默默排除", () => {
+  const w = weightedYield([{ code: "0056", yield: 0.1 }, { code: "00878", yield: null }, { code: "00919", yield: 0.08 }], { "0056": 1, "00878": 1, "00919": 1 });
+  near(w.yield, 0.09, 1e-12);
+  eq([w.used, w.missing], [["0056", "00919"], ["00878"]]);
+});
+test("加權配息率：全部缺資料就不算", () => eq(weightedYield([{ code: "0056", yield: null }], { "0056": 1 }).yield, null));
+test("加權配息率：比重 0 的不算進來", () => near(weightedYield([{ code: "a", yield: 0.1 }, { code: "b", yield: 0.06 }], { a: 1, b: 0 }).yield, 0.1, 1e-12));
+test("多情境寫成整數年的區間", () => {
+  eq(yearsRange([559, 300, 200]), "約 16 年～47 年");
+  eq(yearsRange([null, 300, 200]), "約 16 年～100 年以上");
+  eq(yearsRange([null, null]), "100 年以上");
+  eq(yearsRange([240, 240]), "約 20 年");
+  eq(yearsRange([0, 0, 0]), "已達到");
+});
+report();
+</script>
+</body>
+</html>

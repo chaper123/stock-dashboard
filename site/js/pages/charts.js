@@ -4,10 +4,11 @@
 import { loadDaily, loadTrades, loadIndex, DataError } from "../data.js";
 import { fugleQuote, fugleUsable, fugleClosed, fugleBar, quoteTime, FUGLE_NOTE } from "../fugle.js";
 import { loadPerformance, attribution } from "../perf.js";
-import { el, price, shares, pct, twd, tone } from "../fmt.js";
+import { el, price, shares, pct, twd, tone, shortDate } from "../fmt.js";
 import { sma, rsi14, macd, dmi, bias, volAvg, fmtVol, describe } from "../ta.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
 import { MA, NAMES, MARKET_LABEL, TRACK } from "../config.js";
+import { loadStatus, statusLine } from "../status.js";
 
 const LW_URL = "https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js";
 const LW_SRI = "sha384-KkYqTZlM13Zya6fVUF3IGCBOQ1ehFeJVVgxaVvD/0MebineF9EI8Jkd3NnWNChqN";
@@ -53,7 +54,7 @@ function periodStart(key, first, last) {
 }
 
 async function perfView(alive) {
-  const [LW, perf, tr] = await Promise.all([loadLW(), loadPerformance(), loadIndex("TAIEX_TR").catch((e) => e)]);
+  const [LW, perf, tr, S] = await Promise.all([loadLW(), loadPerformance(), loadIndex("TAIEX_TR").catch((e) => e), loadStatus()]);
   const box = el("div", { class: "perf-box", role: "img", "aria-label": "組合與加權報酬指數的累積報酬折線圖" });
   const stats = el("div", { class: "chart-legend" });
   const chips = el("div", { class: "chips", style: { margin: "4px 0 0" } });
@@ -93,7 +94,7 @@ async function perfView(alive) {
     chart.timeScale().fitContent();
     const a = mine.at(-1).value, b = bench.at(-1)?.value;
     stats.replaceChildren(
-      el("span", {}, el("i", { class: "sw", style: { background: v("--accent") } }), `我的組合 ${pct(a)}`),
+      el("span", {}, el("i", { class: "sw", style: { background: v("--accent") } }), `我的組合（已投入部位）${pct(a)}`),
       el("span", {}, el("i", { class: "sw", style: { background: v("--ma1") } }), bench.length ? `加權報酬指數 ${pct(b)}` : "加權報酬指數：資料準備中"),
       bench.length ? el("span", {}, `差距 ${a - b >= 0 ? "+" : "−"}${Math.abs(a - b).toFixed(1)} 個百分點`) : null,
       perf.xirr != null ? el("span", {}, `XIRR（首筆起、年化）${pct(perf.xirr * 100)}`) : null);
@@ -139,9 +140,36 @@ async function perfView(alive) {
     };
     document.addEventListener("themechange", onTheme);
   }, 0);
-  return card("組合對大盤", chips, box, stats, why,
+  // R14：組合算到哪一天、美股收盤與匯率停在哪一天（不是正常才顯示）
+  const asOf = perf.asOf || {};
+  const perfStatus = statusLine([
+    { kind: S.tw(perf.last), what: "組合算到", when: perf.last.replaceAll("-", "/") },
+    asOf.us && { kind: S.us(asOf.us), what: "美股收盤", when: shortDate(asOf.us), note: S.us(asOf.us) === "stale" ? "之後的日子沿用這天的價格" : null },
+    asOf.fx && { kind: S.fx(asOf.fx), what: "匯率", when: shortDate(asOf.fx) },
+    trOk && { kind: S.tw(tr.at(-1).date), what: "加權報酬指數", when: shortDate(tr.at(-1).date) }], { closed: false });
+  return card("組合對大盤", chips, perfStatus, box, stats, why,
     !trOk && notice("warn", `讀不到加權報酬指數（${tr.message}）`),
-    el("p", { class: "tiny" }, `曲線是時間加權報酬（扣掉每次投入的影響，GIPS 的比較方式）：台股用日線收盤、美股用日線收盤 × 當天美元兌台幣；大盤是含股利的台股加權報酬指數。XIRR 是資金加權報酬（考慮投入時點）。算到 ${perf.last}。`));
+    !perf.divsKnown && notice("warn", "讀不到配息資料：台股 ETF 的現金股利這次沒有算進來，報酬可能少算。"),
+    el("p", { class: "tiny" }, `範圍：已投入部位（帳本交易紀錄還原的持股），不含可用資金與其他現金。曲線是時間加權報酬：扣掉每次買進、賣出的影響，只看持股本身的漲跌與股利。`
+      + `大盤是台股加權報酬指數（含股利）；組合裡有美股，差距也包含台美配置與匯率，不等於選股能力。算到 ${perf.last}。`),
+    perfMethod(perf));
+}
+
+// 算法與假設（R08）：寫具體做法，不寫「符合某某標準」
+export function perfMethod(perf) {
+  const divLine = perf.divTotal > 0
+    ? `這段期間計入 ${perf.dividends.map((x) => `${x.code} ${shortDate(x.exDate)} 除息 ${x.cash} 元 × ${shares(x.shares)} 股`).join("、")}，合計 ${twd(perf.divTotal)}。`
+    : `你持有的期間還沒有遇到台股 ETF 除息（${Object.entries(perf.exInfo || {}).map(([c, x]) => (!x.count ? `${c} 沒有配息紀錄`
+      : `${c} 最近一次除息 ${shortDate(x.last)}${x.last < x.firstBuy ? `，在你 ${shortDate(x.firstBuy)} 第一次買進之前` : ""}`)).join("；")}），所以目前的數字不受影響；之後除息會自動算進來。`;
+  return el("details", { class: "more" }, el("summary", {}, "算法與假設"),
+    el("ul", { class: "small" },
+      el("li", {}, "每天＝一個台股交易日的收盤。單日報酬＝（收盤市值 − 當天買進金額 ＋ 當天賣出金額 ＋ 當天除息的現金股利）÷ 前一天收盤市值，逐日連乘就是時間加權報酬。"),
+      el("li", {}, "買進、賣出都當作在當天收盤發生：買進當天成交價到收盤價的差與手續費算在那一天；第一筆買進那天只建立部位，從那天收盤起算。賣出拿回的錢與股利都算離開這個部位（回到可用資金），所以只投入、價格不動時報酬是 0。"),
+      el("li", {}, "台股 ETF 股利：帳本「交易紀錄」只有買進、賣出，沒有記股利；這裡用 market-data 的配息資料（每單位現金）× 除息日前一天收盤時的持股，在除息日計入，稅前、未扣二代健保補充保費。", divLine),
+      el("li", {}, "美股股利沒有算進來：market-data 的美股日線是 Yahoo 與 MoneyDJ 的收盤（只調整分割，不含股利），VOO、GOOGL 配息的那幾天報酬會少算一點。"),
+      el("li", {}, "估值時點：美股用不晚於當天日期的最後一個美國收盤（美國收盤在台北隔天清晨），乘當天（或之前最近一天）的美元兌台幣市場中間價；同一個日期的台股與美股收盤相差約 15 小時。帳本沒有台幣金額的美股買進，投入金額用買進當天的參考匯率換算。"),
+      el("li", {}, "XIRR：照每筆投入、拿回、股利的日期與金額，加上最後的收盤市值，算出的年化報酬；投資未滿一年時，年化會放大短期的漲跌。"),
+      el("li", {}, "這是照上面的假設在瀏覽器算的，不是任何績效標準的符合聲明，也不是投資建議。")));
 }
 
 async function view(arg, alive) {
@@ -174,10 +202,11 @@ async function view(arg, alive) {
     ohlc, box, legend, fugleNote, taBox, note, table);
 
   // 資料與函式庫都到齊才畫；其中一項失敗就在圖的位置顯示原因
-  const [LW, daily, tradesR, fq] = await Promise.all([
+  const [LW, daily, tradesR, fq, S] = await Promise.all([
     loadLW(), loadDaily(pick.market, pick.code),
     loadTrades().then((v) => ({ v }), (e) => ({ e })),
     pick.market === "tw" ? fugleQuote(pick.code) : null,
+    loadStatus(),
   ]);
   // 富果比 market-data 新的那天：收盤了就補一根 K 棒（market-data 隔天早上更新後換成正式資料），盤中只畫虛線
   const lastDate = daily.at(-1)?.time;
@@ -189,6 +218,13 @@ async function view(arg, alive) {
     fugleNote.textContent = `${extra.time.slice(5).replace("-", "/")} 這根來自富果（${FUGLE_NOTE}）；market-data 隔天早上更新後換成正式資料。`;
     fugleNote.hidden = false;
   }
+  // R14：最後一根 K 棒的日期不是正常時標在圖上方（休市用最近交易日是正常的）
+  const lastBar = bars.at(-1).time;
+  const kind = pick.market === "us" ? S.us(lastBar) : S.tw(lastBar);
+  const exp = pick.market === "us" ? S.expect.us : S.expect.tw;
+  const st = statusLine([{ kind, what: "日線", when: `最後一根 ${shortDate(lastBar)}${extra ? "（富果）" : ""}`,
+    note: kind === "stale" ? `應該已經有 ${shortDate(exp)} 的收盤，market-data 還沒更新` : kind === "closed" ? (pick.market === "us" ? "美股週末或假日休市" : "今天台股休市") : null }]);
+  if (st) head.after(st);
   const mas = MA[pick.market];
   const lines = describe(bars, pick.market, mas);
   if (lines.length) {
