@@ -12,7 +12,7 @@ const NET_TIMEOUT_MS = 8000;
 const SHELL_FILES = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/app.js", "js/config.js", "js/csv.js", "js/data.js", "js/discipline.js", "js/fmt.js", "js/fugle.js", "js/gauge.js", "js/headlines.js", "js/inside.js", "js/ledger_write.js", "js/macro.js", "js/news.js", "js/outlook.js",
-  "js/perf.js", "js/portfolio.js", "js/private.js", "js/ui.js", "js/ta.js", "js/market.js", "js/checkup.js",
+  "js/perf.js", "js/portfolio.js", "js/private.js", "js/status.js", "js/ui.js", "js/ta.js", "js/market.js", "js/checkup.js",
   "js/pages/overview.js", "js/pages/holdings.js", "js/pages/record.js", "js/pages/funds.js", "js/pages/news.js", "js/pages/reports.js",
   "js/pages/charts.js", "js/pages/analysis.js",
   "icons/icon.svg", "icons/icon-192.png",
