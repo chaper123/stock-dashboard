@@ -7,7 +7,7 @@
   python3 engine/discipline.py --holdings h.json --trades t.json --data data --today 2026-10-30 --out discipline.json --brief
 輸入：
   --holdings：帳本「持倉」'持倉'!A1:K 的 get_values 回傳（{"values": [[表頭…], [列…]]}）；用「市場」「代號」「股數（券商確認）」
-  --trades：帳本「交易紀錄」'交易紀錄'!A1:N 的 get_values 回傳；用「日期」「市場」「代號」「買賣」「股數」「成交價」
+  --trades：帳本「交易紀錄」'交易紀錄'!A1:R 的 get_values 回傳（A1:N 也可以；有 R「更正」欄才會拿掉沖銷的一對）；用「日期」「市場」「代號」「買賣」「股數」「成交價」
             「台幣金額」（空白時用「交割金額（原幣，含費）」，再沒有用股數 × 成交價）
   --data：價格與行事曆。價格優先用 intraday.json（今天的盤中快照），否則 tw_<代號>_norm.csv（或 <代號>_norm.csv）最後收盤；
           休市日用 calendar.json 的 tw_market.closed
@@ -27,6 +27,7 @@ import csv
 import datetime as dt
 import json
 import pathlib
+import re
 import sys
 from zoneinfo import ZoneInfo
 
@@ -72,9 +73,22 @@ def tw_holdings(obj):
     return out
 
 
+REVERSAL = re.compile(r"^沖銷第 (\d+) 列")
+
+
 def trades(obj):
+    """交易紀錄 → list。有「更正」欄（'交易紀錄'!A1:R）時拿掉沖銷的一對：沖銷列（「沖銷第 N 列」）和它指的第 N 列，
+    跟網站 data.js 的 loadTrades 同一套規則。沒有這欄（只讀 A1:N）時沖銷列是負數，合計一樣會抵掉。"""
+    rows = table(obj)
+    gone = set()
+    for i, r in enumerate(rows):
+        m = REVERSAL.match(str(r.get("更正", "")).strip())
+        if m:
+            gone.update((i + 2, int(m.group(1))))  # 試算表列號：表頭是第 1 列
     out = []
-    for r in table(obj):
+    for i, r in enumerate(rows):
+        if i + 2 in gone:
+            continue
         try:
             d = dt.date.fromisoformat(str(r.get("日期", "")).strip()[:10])
         except ValueError:

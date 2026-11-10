@@ -276,3 +276,27 @@ def test_dca_real_ledger_shape():
     assert dp.dca_list(real) == [("2026-11", 3000)]
     o = dp.compute(LEDGER_HOLD, LEDGER_TRADES, dt.date(2026, 11, 6), {"009816": (14.53, "x"), "00981A": (23.05, "x")}, set(), real)
     assert (o["dca_source"], o["should_invest"], o["warnings"]) == ("帳本「定投金額」", 3000, [])
+
+
+def test_reversal_pairs_removed():
+    """交易紀錄讀到 R「更正」欄時，沖銷列和被沖的那列一起拿掉（跟網站 data.js 同一套）；沒有這欄時負數照樣抵掉。"""
+    head = TRADE_HEAD + ["成交時間", "交易稅", "請求編號", "更正"]
+    rows = [trade("2026-11-05", "009816", 100, 14.7, twd="1,471") + ["", "0", "", ""],          # 第 2 列
+            trade("2026-11-06", "009816", 10, 14.9, twd="149") + ["", "0", "w-1", "已被第 4 列沖銷"],  # 第 3 列
+            trade("2026-11-06", "009816", -10, 14.9, twd="-149") + ["", "0", "w-2", "沖銷第 3 列（記錯股數）"]]  # 第 4 列
+    tr = dp.trades({"values": [head] + rows})
+    assert [(t["date"], t["twd"]) for t in tr] == [("2026-11-05", 1471.0)]
+    # 只讀 A1:N（沒有更正欄）：三列都在，合計一樣
+    tr_n = dp.trades({"values": [TRADE_HEAD] + [r[:14] for r in rows]})
+    assert len(tr_n) == 3 and sum(t["twd"] for t in tr_n) == sum(t["twd"] for t in tr)
+
+
+def test_reversal_with_blank_rows_keeps_row_numbers():
+    """中間有空白列時列號照試算表算（get_values 會回傳空的列）。"""
+    head = TRADE_HEAD + ["成交時間", "交易稅", "請求編號", "更正"]
+    rows = [trade("2026-11-05", "00981A", 40, 23.72, twd="949") + ["", "0", "", ""],   # 第 2 列
+            [],                                                                    # 第 3 列（空白）
+            trade("2026-11-06", "00981A", 5, 23.0, twd="116") + ["", "0", "w-1", "已被第 5 列沖銷"],   # 第 4 列
+            trade("2026-11-06", "00981A", -5, 23.0, twd="-116") + ["", "0", "w-2", "沖銷第 4 列"]]    # 第 5 列
+    tr = dp.trades({"values": [head] + rows})
+    assert [t["twd"] for t in tr] == [949.0]
