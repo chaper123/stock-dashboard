@@ -1,6 +1,6 @@
 # 新聞與社群晨報（新聞三層架構的第二層）
 
-> 2026-10-22 設計（同日使用者同意第 10 節三項），**尚未建立排程**。使用者 2026-10-22 決定新聞改三層架構（[PROGRESS.md](PROGRESS.md)「下一步」第 6 項）：① market-data 抓標題（phase-1-market-data 負責）→ ② 本排程查證並整理成結構化的列 → ③ 兩個晨報改讀這些列。本文件是 ②。
+> 2026-10-22 設計（同日使用者同意第 10 節三項），**尚未建立排程**。使用者 2026-10-22 決定新聞改三層架構（[HISTORY.md](HISTORY.md)「下一步」第 6 項）：① market-data 抓標題（phase-1-market-data 負責）→ ② 本排程查證並整理成結構化的列 → ③ 兩個晨報改讀這些列。本文件是 ②。
 > 提示詞草稿在 `private/routines/news_morning.v1.prompt.md`（正式）、`news_morning.v1test.prompt.md`（測試），不進 git。建立測試排程（RemoteTrigger create）、在試算表加分頁、之後建立正式排程，每一步都要先取得使用者同意。
 
 ## 1. 為什麼要獨立一個排程
@@ -249,7 +249,7 @@
 
 ## 11. v3（2026-10-30 轉型後，2026-11-03 上線）
 
-> 2026-11-03 兩個測試排程通過後切換：晨間沿用原新聞排程、午間新建，兩個買點晨報停用。排程 ID、提示詞雜湊與測試結果見 [PROGRESS.md](PROGRESS.md)「下一步」第 10 項。
+> 2026-11-03 兩個測試排程通過後切換：晨間沿用原新聞排程、午間新建，兩個買點晨報停用。排程 ID、提示詞雜湊與測試結果見 [HISTORY.md](HISTORY.md)「下一步」第 10 項。
 
 依 [PIVOT.md](PIVOT.md) 第 4 節：兩個買點晨報停用後，新聞晨報改成每天兩次，以資料完整為優先。提示詞草稿 `private/routines/news_morning.v3.prompt.md`（晨間 08:40）、`news_noon.v3.prompt.md`（午間 11:30），不進 git；engine commit 與 SHA-256 等 news_select.py v3、discipline.py 完成後填入。改正式排程前照規定先建測試版、跑測試、使用者核准。
 

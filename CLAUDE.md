@@ -1,14 +1,14 @@
 # stock-dashboard 專案說明（給 Claude）
 
 - 全程使用繁體中文。
-- 開工先讀 `docs/PROGRESS.md`（下一步與勾選清單），需要背景再讀 `docs/PLAN.md`。不要重新盤點已記錄的事。
+- 開工先讀 `docs/PROGRESS.md`（現況、待辦、注意事項、文件地圖）。要查舊決定或測試細節時，用搜尋在 `docs/HISTORY.md` 或主題文件裡找相關段落，不要整份讀大檔。不要重新盤點已記錄的事。
 - 相關 repo：`chaper123/market-data`（行情資料，本機 `C:\market-data`）。排程提示詞備份與排程 ID 在 `private/routines/`（不進 git）。
 
 ## Git 規則
 - 只 `git add` 明確路徑，不用 `git add -A` 或 `git add .`。
 - commit 前看 `git status` 與 `git diff --cached`；一個任務一個 commit，訊息格式 `類型: 中文說明`（feat/fix/docs/chore/ci/test/refactor）。
 - 不用 `--no-verify`；提交前檢查擋下時要修正原因。
-- 每個 Phase 結束 push 並打 tag（v0.1、v0.2…）；`docs/PROGRESS.md` 跟著 commit 更新。
+- 每個 Phase 結束 push 並打 tag（v0.1、v0.2…）；`docs/PROGRESS.md` 跟著 commit 更新，而且保持精簡：做完的事只留一兩句，細節寫進主題文件或接在 `docs/HISTORY.md` 最後面。
 - 本 repo 用 noreply 信箱提交（已設在 repo 的 git config）。
 
 ## 隱私與安全
