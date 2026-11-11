@@ -12,6 +12,7 @@ import { loadStatus, statusLine } from "../status.js";
 
 export async function render(root) {
   root.append(pageHeader("分析", "台積電、風險燈號、持股體檢。數字從公開資料與你的帳本計算，只描述已發生的事；燈號是「該檢討了」的提醒，不是買賣訊號。"));
+  root.append(el("p", { class: "small" }, el("a", { href: "#/opportunity" }, "機會分析：大盤跌到 −10%／−20%／−30% 之後的歷史與三種做法（擇時，只當參考）→")));
   slot(root, tsmcCard);
   const ck = loadCheckup();
   slot(root, async () => card("風險燈號", riskList(await loadRisks(await ck)),

@@ -134,6 +134,7 @@ export async function marketCard() {
     sum && el("div", { class: "ai" }, el("b", {}, "原因（新聞晨報）"), sum.fact,
       el("p", { class: "tiny" }, `新聞晨報 ${taipeiTime(v.generatedAt)}・AI 依數字與新聞整理，只描述現況，不是預測。`)),
     history,
+    el("p", { class: "small" }, el("a", { href: "#/opportunity" }, "跌到級距之後的歷史與三種做法 → 機會頁（擇時，只當參考）")),
     failed.length > 0 && el("p", { class: "tiny" }, `讀不到：${failed.join("、")}。`),
     el("p", { class: "tiny" }, `「修正」「熊市」是常見定義（從歷史高點跌 ${CORRECTION}%、${BEAR}%），只描述現況；ETF 的高點從上市起算，韓國綜合指數只有近 2 年資料。外資是集中市場外資及陸資買賣超，融資是集中市場融資金額。`));
 }

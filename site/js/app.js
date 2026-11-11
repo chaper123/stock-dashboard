@@ -13,6 +13,8 @@ const ROUTES = {
   funds: { title: "資金", load: () => import("./pages/funds.js") },
   news: { title: "新聞", load: () => import("./pages/news.js") },
   analysis: { title: "分析", load: () => import("./pages/analysis.js") },
+  // 機會頁不放進上方分頁（八個已滿），從分析頁與首頁市場狀態卡連過來；分頁列亮「分析」
+  opportunity: { title: "機會", nav: "analysis", load: () => import("./pages/opportunity.js") },
   reports: { title: "報告歷史", load: () => import("./pages/reports.js") },
   charts: { title: "K 線", load: () => import("./pages/charts.js") },
 };
@@ -25,8 +27,9 @@ async function route() {
   const [name, ...rest] = location.hash.replace(/^#\/?/, "").split("/");
   const key = ROUTES[name] ? name : "overview";
   const arg = decodeURIComponent(rest.join("/"));
+  const navKey = ROUTES[key].nav || key;
   for (const a of document.querySelectorAll("nav.tabs a")) {
-    if (a.dataset.route === key) a.setAttribute("aria-current", "page");
+    if (a.dataset.route === navKey) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
   document.title = `${ROUTES[key].title}｜股票儀表板`;
