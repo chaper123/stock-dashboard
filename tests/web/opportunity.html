@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>機會頁計算</title></head>
+<body>
+<h1>機會頁計算（site/js/opportunity.js）</h1>
+<p>用自己造的收盤序列檢查：每一段回落每個級距只記一次、創新高後重新開始、之後的報酬與還多跌多少、對照基準、現在這一段、加碼試算。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { TIERS, HORIZONS, tierCrossings, summarize, forward, furtherDrop, tierReport, baseline, currentEpisode, whatIf } from "/site/js/opportunity.js";
+
+// 由收盤值造序列：日期從 2020-01-01 起每天一筆（只要遞增就好）
+const mk = (vals) => vals.map((v, i) => ({ date: new Date(Date.UTC(2020, 0, 1 + i)).toISOString().slice(0, 10), value: v }));
+
+test("每一段回落、每個級距只記第一次", () => {
+  // 高點 100 → 91（−9）→ 89（−11，觸發 10）→ 88 → 95 → 85（已觸發過，不再記）→ 79（−21，觸發 20）
+  const s = mk([100, 91, 89, 88, 95, 85, 79]);
+  const c = tierCrossings(s);
+  eq(c.get(10).map((e) => [e.i, e.value]), [[2, 89]]);
+  eq(c.get(20).map((e) => [e.i, e.value]), [[6, 79]]);
+  eq(c.get(30), []);
+  near(c.get(10)[0].dd, -11, 1e-9);
+  eq(c.get(10)[0].peak.value, 100);
+});
+
+test("剛好跌到級距（−10.0%）算觸發；−9.99% 不算", () => {
+  eq(tierCrossings(mk([100, 90])).get(10).length, 1);
+  eq(tierCrossings(mk([100, 90.01])).get(10).length, 0);
+});
+
+test("收盤創新高（含平高點）後重新開始，下一段再記一次", () => {
+  const s = mk([100, 89, 100, 89, 101, 90]);
+  const c = tierCrossings(s).get(10);
+  eq(c.map((e) => e.i), [1, 3, 5]);
+  eq(c.map((e) => e.peak.value), [100, 100, 101]);
+});
+
+test("一天直接跌穿兩級：兩個級距都記在同一天", () => {
+  const c = tierCrossings(mk([100, 75]));
+  eq([c.get(10)[0].i, c.get(20)[0].i, c.get(30).length], [1, 1, 0]);
+});
+
+test("空序列不出錯", () => {
+  eq([...tierCrossings([]).values()], [[], [], []]);
+});
+
+test("summarize：次數、上漲次數、最差、中位數、最好", () => {
+  eq(summarize([]), null);
+  eq(summarize([5, -3, 10, 1]), { n: 4, up: 3, min: -3, median: 3, max: 10 });
+  eq(summarize([-2, 0, 7]), { n: 3, up: 1, min: -2, median: 0, max: 7 });
+});
+
+test("forward：之後 n 個交易日的報酬；資料不夠長是 null", () => {
+  const s = mk([100, 80, 88, 96]);
+  const ev = tierCrossings(s).get(20)[0];
+  near(forward(s, ev, 1), 10, 1e-9);
+  near(forward(s, ev, 2), 20, 1e-9);
+  eq(forward(s, ev, 3), null);
+});
+
+test("furtherDrop：觸發後到回到高點之前的最低；回到高點的日子", () => {
+  // 100 → 80（觸發 20）→ 70 → 60 → 90 → 100（回到高點）→ 50（下一段，不算）
+  const s = mk([100, 80, 70, 60, 90, 100, 50]);
+  const ev = tierCrossings(s).get(20)[0];
+  const f = furtherDrop(s, ev);
+  near(f.pct, -25, 1e-9);
+  eq([f.lowDate, f.recovered], [s[3].date, s[5].date]);
+});
+
+test("furtherDrop：觸發那天就是最低是 0；還沒回到高點 recovered 是 null", () => {
+  const s = mk([100, 80, 85, 90]);
+  const f = furtherDrop(s, tierCrossings(s).get(20)[0]);
+  eq([f.pct, f.recovered], [0, null]);
+});
+
+test("tierReport：各期間統計只算資料夠長的；還多跌的統計只算已回到高點的", () => {
+  // 第一段：100 → 80 → 60 → 100（回到）；第二段：100 → 110 → 88（−20）→ 77（還沒回到）
+  const vals = [100, 80, 60, 100, 110, 88, 77];
+  const s = mk(vals);
+  const r = tierReport(s, tierCrossings(s).get(20));
+  eq(r.rows.length, 2);
+  eq(r.rows.map((x) => x.further.recovered != null), [true, false]);
+  eq(r.further.n, 1);
+  near(r.further.median, -25, 1e-9);
+  eq(r.stats.map((x) => x.label), HORIZONS.map((h) => h[0]));
+  eq(r.stats.map((x) => x.s), [null, null, null, null]); // 序列太短，21 個交易日後都沒有資料
+});
+
+test("tierReport：之後 21 個交易日的報酬", () => {
+  const vals = [100, 80, ...Array(20).fill(82), 92];   // 觸發在 i=1，i+21=22 → 92
+  const s = mk(vals);
+  const r = tierReport(s, tierCrossings(s).get(20));
+  near(r.rows[0].fwd[0], 15, 1e-9);
+  eq(r.rows[0].fwd.slice(1), [null, null, null]);
+  eq([r.stats[0].s.n, r.stats[0].s.up], [1, 1]);
+});
+
+test("baseline：任一交易日買進、n 天後", () => {
+  const b = baseline(mk([100, 110, 99, 121]), 1);
+  eq([b.n, b.up], [3, 2]);
+  near(b.min, -10, 1e-9);
+  near(b.max, 22.2222, 1e-3);
+  eq(baseline(mk([100, 110]), 5), null);
+});
+
+test("currentEpisode：高點、離高點、這一段最低、各級距第一次觸發、到過的最深級距", () => {
+  const s = mk([90, 100, 91, 88, 79, 85]);
+  const e = currentEpisode(s);
+  eq([e.peak.value, e.last.value, e.low.value], [100, 85, 79]);
+  near(e.dd, -15, 1e-9);
+  near(e.lowDd, -21, 1e-9);
+  eq(e.hits.map((h) => [h.tier, h.hit?.value ?? null]), [[10, 88], [20, 79], [30, null]]);
+  eq(e.top, 20);
+});
+
+test("currentEpisode：在高點時沒有觸發任何級距", () => {
+  const e = currentEpisode(mk([90, 80, 100]));
+  eq([e.dd, e.top, e.hits.every((h) => h.hit === null)], [0, 0, true]);
+});
+
+test("currentEpisode 和 tierCrossings 對同一段的觸發日一致", () => {
+  const s = mk([100, 95, 89, 92, 79, 83, 69, 75]);
+  const e = currentEpisode(s), c = tierCrossings(s);
+  eq(e.hits.map((h) => h.hit.date), TIERS.map((t) => c.get(t).at(-1).date));
+});
+
+test("whatIf：照 80／20 分、買完的比例與偏離", () => {
+  // 現在 8,400：1,600（84：16）；加 10,000 → 核心 +8,000、衛星 +2,000 → 16,400：3,600（82：18）
+  const w = whatIf({ coreMv: 8400, satMv: 1600, amount: 10000, corePrice: 15, satPrice: 24 });
+  eq([w.addCore, w.addSat, w.sharesCore, w.sharesSat], [8000, 2000, 533, 83]);
+  near(w.before.core, 84, 1e-9);
+  near(w.before.dev, 4, 1e-9);
+  near(w.after.core, 82, 1e-9);
+  near(w.after.dev, 2, 1e-9);
+  near(w.growth, 100, 1e-9);
+});
+
+test("whatIf：沒有價格不估股數；沒有部位時比例是 null", () => {
+  const w = whatIf({ coreMv: 0, satMv: 0, amount: 1000 });
+  eq([w.sharesCore, w.sharesSat, w.before.core, w.before.dev, w.growth], [null, null, null, null, null]);
+  near(w.after.core, 80, 1e-9);
+});
+
+report();
+</script>
+</body>
+</html>
