@@ -11,7 +11,7 @@
 - 行情資料：https://github.com/chaper123/market-data（本機 `C:\market-data`）
 
 ## 現在在跑的東西
-- **新聞晨報 v4.1**（claude.ai 雲端排程，平日 08:40 晨間、11:30 午間）：讀 market-data 的標題清單與資料、共用帳本（只讀）、私人持股 repo（只讀），寫「儀表板資料」試算表的「新聞」分頁並推播。2026-11-10 上線，做法與測試見 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 13 節；排程 ID、提示詞、退回 v4 的設定在 `private/routines/v41/README.md`。engine 釘選 stock-dashboard 3a59b67（`engine/news_select.py`、`discipline.py`、`fund_moves.py`）。
+- **新聞晨報 v4.1**（claude.ai 雲端排程，平日 08:40 晨間、11:30 午間）：讀 market-data 的標題清單與資料、共用帳本（只讀）、私人持股 repo（只讀），寫「儀表板資料」試算表的「新聞」分頁並推播。2026-11-10 上線，做法與測試見 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 13 節；排程 ID、提示詞、退回 v4 的設定在 `private/routines/v41/README.md`。晨間 2026-11-11 16:34 改成 **v4.1a**（CMoney 同學風向先搜尋再開；午間沒改）。engine 釘選 stock-dashboard 3a59b67（`engine/news_select.py`、`discipline.py`、`fund_moves.py`）。
 - 舊的美股、台股兩個買點晨報 2026-11-03 停用（轉型，見 [PIVOT.md](PIVOT.md)）。
 - **market-data**（公開）：GitHub Actions 抓行情、新聞標題、總經、法人、行事曆，cron-job.org 觸發（fetch 06:15、news 08:20、11:10 等），狀態看 `data/meta.json`。台股不再程式抓證交所／櫃買網站（改 FinMind＋OpenAPI）；盤中價由網站在使用者瀏覽器用富果查（金鑰只在使用者裝置）。
 - **market-data-private**（私人，本機 `C:\market-data-private`）：00981A、009816 每日持股。投信網站不得轉載，所以不放公開 repo；公開的「新聞」分頁不能寫股數、權重、排名、檔數。
@@ -21,9 +21,9 @@
 
 ## 待辦
 1. **v4.1 後續**（11/11 第一次正式執行兩次都成功、網站新聞頁正常，結果見 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 13 節）：
-   - 晨間 CMoney 同學風向每天卡 5 分鐘網址權限、拿不到資料（網址不在搜尋結果裡）。要改提示詞（先搜尋再開、拿掉這一步，或試 trigger 的 `user_declared_urls`），等使用者決定；改之前照規則先同意、先測試 run。
-   - 還沒遇到實際情況的兩條：費半漲跌在 3%～5% 之間（不該用大波動日格式）、時間窗內有 Fed 例行核准（該略過並在摘要註明）。遇到那天再看一次執行紀錄。
-   - 下次改提示詞時一起修的小瑕疵：話題列理由的相對時間（「今天」「這兩天」）、總經總結的「外資連 5 天賣超」（資料只有 5 個交易日，實際連 9 天）。
+   - **看 v4.1a 第一次正式執行（11/12 08:40）**：晨間早上卡 5 分鐘的 CMoney 同學風向已改成先搜尋再開（測試三檔都取得），看正式執行的摘要列與 C1～C3 三列有沒有分數、整次有沒有再卡網址權限。
+   - 還沒遇到實際情況：費半漲跌在 3%～5% 之間（不該用大波動日格式）。遇到那天再看一次執行紀錄。（Fed 例行核准略過在 v4.1a 測試已用到。）
+   - 下次改提示詞時一起修的小瑕疵：話題列理由的相對時間（「今天」「這兩天」）、總經總結的「外資連 5 天賣超」（資料只有 5 個交易日，實際連 9 天）、009816／00981A 的列偶爾類別寫成「總經」、偶爾把 apnews.com 放進 allowed_domains 被拒。
 2. **設計改版（IMPROVE 的 R15～R18、D01～D08）**：第一階段方案與首頁示意在分支 `claude/fervent-merkle-1607ac`（cacbefe：docs/DESIGN.md、site/preview-home.html、site/css/v2.css、site/js/pages/home_v2.js），沒有 push、沒有合併。等使用者看過，使用者說要合併才合併。
 3. **機會頁**（INSIGHTS 第 4 批，含晨報的「機會觀察」）：預備金與加碼級距由使用者決定，不預設。
 4. 較小、不急：
