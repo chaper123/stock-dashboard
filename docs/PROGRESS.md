@@ -24,8 +24,10 @@
    - **看 v4.1a 第一次正式執行（11/12 08:40）**：晨間早上卡 5 分鐘的 CMoney 同學風向已改成先搜尋再開（測試三檔都取得），看正式執行的摘要列與 C1～C3 三列有沒有分數、整次有沒有再卡網址權限。
    - 還沒遇到實際情況：費半漲跌在 3%～5% 之間（不該用大波動日格式）。遇到那天再看一次執行紀錄。（Fed 例行核准略過在 v4.1a 測試已用到。）
    - 下次改提示詞時一起修的小瑕疵：話題列理由的相對時間（「今天」「這兩天」）、總經總結的「外資連 5 天賣超」（資料只有 5 個交易日，實際連 9 天）、009816／00981A 的列偶爾類別寫成「總經」、偶爾把 apnews.com 放進 allowed_domains 被拒。
-2. **設計改版（IMPROVE 的 R15～R18、D01～D08）**：第一階段方案與首頁示意在分支 `claude/fervent-merkle-1607ac`（cacbefe：docs/DESIGN.md、site/preview-home.html、site/css/v2.css、site/js/pages/home_v2.js），沒有 push、沒有合併。等使用者看過，使用者說要合併才合併。
-3. **機會頁**（INSIGHTS 第 4 批，含晨報的「機會觀察」）：預備金與加碼級距由使用者決定，不預設。
+2. **機會頁**（INSIGHTS 第 4 批，含晨報的「機會觀察」）：預備金與加碼級距由使用者決定，不預設。使用者 2026-11-11 說接下來要討論。
+3. **設計改版先擱置（使用者 2026-11-11 決定：先功能、後美化）**：等網頁的功能、版面、互動大致定案再做美化，免得之後改功能又要重調。IMPROVE 的 D01～D08 與 R16、R17（版面）跟著擱置；R15（新聞去噪）、R18（資金頁先講現金，要先決定帳本要不要加入金紀錄）是功能，可以拉出來先做，還沒跟使用者確認。
+   - 首頁示意留在本機分支 `claude/fervent-merkle-1607ac`（工作目錄 `.claude/worktrees/fervent-merkle-1607ac`，cacbefe：docs/DESIGN.md、site/preview-home.html、site/css/v2.css、site/js/pages/home_v2.js），沒有 push、沒有合併。要看：在 `.claude/launch.json` 暫時加一組 `py -3.14 -m http.server 8766 --directory .claude/worktrees/fervent-merkle-1607ac/site`，開 `/preview-home.html`。
+   - 使用者看過示意的意見（重啟時要照這個改）：只比現在好一點、沒有互動感、只用了一小部分參考。原因：六個範本只實際開了三個（Ledgely、Zapline、Fundora 沒開）、照報告只拿兩個當主參考、動態刻意做得很少（沒有跳數字、沒有背景動畫）。重啟時六個範本都要實際開來看，互動當成重點。
 4. 較小、不急：
    - PIVOT 寫的「檢查後偏離仍超過 5 個百分點時，之後每月入金繼續補到回到 ±5 內」網站與 `discipline.py` 都還沒做，2027/04 前決定。
    - MoneyDJ 美股日線 11/07 起只回 1 根，market-data 的 `vote_daily` 改用 Yahoo 當歷史主來源，觀察會不會持續。
