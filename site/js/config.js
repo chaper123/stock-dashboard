@@ -14,6 +14,8 @@ const NEWS_TABS = [[5, "新聞"], [4, "測試_新聞"]];
 
 // 本機開發：localhost 加 ?dev 時改讀 site/dev-data/（不進 git）。只在本機有效，線上網址不能被參數換掉
 const DEV = ["localhost", "127.0.0.1"].includes(location.hostname) && new URLSearchParams(location.search).has("dev");
+// 機會頁的候選 ETF 資料：localhost 加 ?devcand 時改讀 site/dev-data/candidates/（不進 git）。同樣只在本機有效
+const DEV_CAND = ["localhost", "127.0.0.1"].includes(location.hostname) && new URLSearchParams(location.search).has("devcand");
 
 export const SOURCES = {
   ledger: {
@@ -28,9 +30,12 @@ export const SOURCES = {
       : DASH_PUB && NEWS_TABS.map(([gid, label]) => ({ url: sheetCsv(DASH_PUB, gid), label })),
   },
   market: "https://raw.githubusercontent.com/chaper123/market-data/main/data/",
+  // universe.json（名單）與 closes.csv（近 300 個交易日的收盤合併檔），格式見 docs/OPPORTUNITY.md 第 3 節
+  candidates: DEV_CAND ? "dev-data/candidates/" : "https://raw.githubusercontent.com/chaper123/market-data/main/data/candidates/",
 };
 
 export const IS_DEV = DEV;
+export const IS_DEV_CAND = DEV_CAND;
 
 // K 線的均線天數
 export const MA = { us: [50, 200], tw: [20, 60] };

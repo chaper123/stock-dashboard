@@ -6,7 +6,11 @@
 <p>用自己造的收盤序列檢查：每一段回落每個級距只記一次、創新高後重新開始、之後的報酬與還多跌多少、對照基準、現在這一段、加碼試算。</p>
 <script type="module">
 import { test, eq, near, ok, report } from "./harness.js";
-import { TIERS, HORIZONS, tierCrossings, summarize, forward, furtherDrop, tierReport, baseline, currentEpisode, whatIf } from "/site/js/opportunity.js";
+import { TIERS, HORIZONS, tierCrossings, summarize, forward, furtherDrop, tierReport, baseline, currentEpisode, whatIf,
+  WINDOW_DAYS, MIN_DAYS, MIN_DOWN_DAYS, SPLIT_LIMIT, HIGH_CORR, MID_CORR, THIN_VALUE, MIN_EPISODE_DAYS,
+  dailyReturns, adjustedSeries, portfolioReturns, pearson, stdev, periodStats, linkage, episodeStats, alignCloses,
+  evaluateCandidates, sortRows, rankDiversifiers, rankAggressive, corrBand, verdict } from "/site/js/opportunity.js";
+import { parseCandidateCloses } from "/site/js/data.js";
 
 // 由收盤值造序列：日期從 2020-01-01 起每天一筆（只要遞增就好）
 const mk = (vals) => vals.map((v, i) => ({ date: new Date(Date.UTC(2020, 0, 1 + i)).toISOString().slice(0, 10), value: v }));
@@ -138,6 +142,289 @@ test("whatIf：沒有價格不估股數；沒有部位時比例是 null", () => 
   const w = whatIf({ coreMv: 0, satMv: 0, amount: 1000 });
   eq([w.sharesCore, w.sharesSat, w.before.core, w.before.dev, w.growth], [null, null, null, null, null]);
   near(w.after.core, 80, 1e-9);
+});
+
+// ── 第二版：新標的候選（docs/OPPORTUNITY.md 第 4 節）。答案都是手算的 ─────────────────
+
+// 行事曆：第 i 天（從 2025-01-01 起每天一筆，只要遞增就好）
+const cal = (n) => Array.from({ length: n }, (_, i) => new Date(Date.UTC(2025, 0, 1 + i)).toISOString().slice(0, 10));
+// 由每天的報酬造收盤（起點 100）；g[0] 不用。skip：這幾天沒有資料（null）
+const closesFrom = (g, jump = {}) => {
+  let c = 100;
+  return g.map((x, i) => (i === 0 ? c : (c *= (1 + x) * (jump[i] ?? 1))));
+};
+
+test("門檻常數：250、120、40、30%、0.8、0.5、1 億、5 個交易日", () => {
+  eq([WINDOW_DAYS, MIN_DAYS, MIN_DOWN_DAYS, SPLIT_LIMIT, HIGH_CORR, MID_CORR, THIN_VALUE, MIN_EPISODE_DAYS], [250, 120, 40, 0.3, 0.8, 0.5, 1e8, 5]);
+});
+
+test("dailyReturns：只算連續兩個交易日都有收盤；空白格前後都沒有報酬", () => {
+  // 100 → 110（+10%）→ 空白 → 121 → 133.1（+10%）：空白前後的 121 沒有報酬
+  const { r, filtered } = dailyReturns([100, 110, null, 121, 133.1]);
+  near(r[1], 0.1, 1e-12);
+  eq([r[0], r[2], r[3]], [null, null, null]);
+  near(r[4], 0.1, 1e-12);
+  eq(filtered, []);
+});
+
+test("dailyReturns：單日超過 30% 不算並記下（i 是第幾天）；剛好 ±30% 算", () => {
+  // 100 → 130（剛好 +30%，算）→ 91（−30%，算）→ 45.5（−50%，濾掉）→ 50.05（+10%，算）
+  const { r, filtered } = dailyReturns([100, 130, 91, 45.5, 50.05]);
+  near(r[1], 0.3, 1e-12);
+  near(r[2], -0.3, 1e-12);
+  eq(r[3], null);
+  near(r[4], 0.1, 1e-12);
+  eq(filtered.map((f) => f.i), [3]);
+  near(filtered[0].r, -0.5, 1e-12);
+  eq(dailyReturns([100, 130.5]).filtered.length, 1);   // +30.5% 超過
+  eq(dailyReturns([100, 69.5]).filtered.length, 1);    // −30.5% 超過
+});
+
+test("adjustedSeries：起點 1，連乘算進去的報酬；被濾掉的分割與空白前後乘 1", () => {
+  // 100 → 110（+10%）→ 空白 → 55（一拆二，夾著空白，沒有報酬）→ 60.5（+10%）→ 30.25（−50%，濾掉）→ 33.275（+10%）
+  const closes = [100, 110, null, 55, 60.5, 30.25, 33.275];
+  const { r } = dailyReturns(closes);
+  const adj = adjustedSeries(closes.map((c) => c != null), r);
+  eq(adj.map((v) => (v == null ? null : Math.round(v * 1e6) / 1e6)), [1, 1.1, null, 1.1, 1.21, 1.21, 1.331]);
+});
+
+test("adjustedSeries：上市前的空白不算，第一個有收盤的那天是 1", () => {
+  const closes = [null, null, 50, 55];
+  eq(adjustedSeries(closes.map((c) => c != null), dailyReturns(closes).r).map((v) => v && Math.round(v * 1e6) / 1e6), [null, null, 1, 1.1]);
+});
+
+test("portfolioReturns：0.8 × 核心 + 0.2 × 衛星，兩檔都有值才算", () => {
+  const rp = portfolioReturns([null, 0.01, 0.02, null], [null, 0.05, null, 0.01], 0.8);
+  near(rp[1], 0.8 * 0.01 + 0.2 * 0.05, 1e-12);   // 0.018
+  eq([rp[0], rp[2], rp[3]], [null, null, null]);
+});
+
+test("pearson：完全同步 1、完全相反 −1、手算一組 0.8", () => {
+  near(pearson([1, 2, 3, 4], [2, 4, 6, 8]), 1, 1e-12);
+  near(pearson([1, 2, 3, 4], [8, 6, 4, 2]), -1, 1e-12);
+  // x=1..5、y=2,1,4,3,5：平均都是 3，Σdxdy=8、Σdx²=10、Σdy²=10 → 8/10
+  near(pearson([1, 2, 3, 4, 5], [2, 1, 4, 3, 5]), 0.8, 1e-12);
+});
+
+test("pearson：有一邊完全不動、或不到兩筆是 null", () => {
+  eq(pearson([1, 2, 3], [5, 5, 5]), null);
+  eq(pearson([1], [1]), null);
+});
+
+test("stdev／periodStats：年化波動與視窗內漲跌", () => {
+  // [+1%, −1%, +1%, −1%]：樣本標準差 √(4 × 1e-4 / 3) = 0.011547 → × √252 = 18.3303%；漲跌 = 1.01 × 0.99 × 1.01 × 0.99 − 1 = −0.019999%
+  const r = [null, 0.01, -0.01, 0.01, -0.01];
+  near(stdev([0.01, -0.01, 0.01, -0.01]), 0.0115470054, 1e-9);
+  const s = periodStats(r, [1, 2, 3, 4]);
+  near(s.vol, 18.3303028, 1e-6);
+  near(s.ret, -0.019999, 1e-9);
+  eq(periodStats(r, [1]).vol, null);
+});
+
+// 組合與候選的日報酬（第 0 天沒有報酬）：6 天，組合下跌的日子是第 1、3、5 天
+const RP = [null, -0.02, 0.01, -0.01, 0.03, -0.03, 0.02];
+const RC = [null, -0.01, 0.02, -0.02, 0.01, -0.04, 0.03];
+const SMALL = { minDays: 5, minDown: 2 };
+
+test("linkage：整體連動對手算（0.864544…）、天數 n", () => {
+  // Σrp = 0；Σrp·rc = 27e-4、Σrp² = 28e-4、Σ(rc−平均)² = 35e-4 − 6 × (1/600)² = 3.48333e-3 → 27e-4 ÷ √(28e-4 × 3.48333e-3) = 0.86454
+  const l = linkage(RP, RC, SMALL);
+  eq([l.n, l.corrEnough], [6, true]);
+  near(l.corr, 0.8645442578, 1e-9);
+});
+
+test("linkage：下跌日連動只取組合 r_p < 0 的日子（第 1、3、5 天）", () => {
+  // 那三天 rp = −2%、−1%、−3%，rc = −1%、−2%、−4%：Σdxdy = 2e-4、Σdx² = 2e-4、Σdy² = 4.6667e-4 → √(3/7) = 0.654654
+  const l = linkage(RP, RC, SMALL);
+  eq([l.nDown, l.downEnough], [3, true]);
+  near(l.downCorr, Math.sqrt(3 / 7), 1e-9);
+  near(l.downAvg, -7 / 3, 1e-9);     // 候選那三天平均 −2.3333%
+  near(l.downAvgP, -2, 1e-9);        // 組合自己平均 −2%
+});
+
+test("linkage：候選沒有報酬的日子不算；視窗只看最近 size 個交易日", () => {
+  // 11 天（第 0 天沒有報酬）。第 1～6 天完全相反、第 7～10 天完全同步：size = 4 只看第 7～10 天 → 1；size = 10 全看
+  const rp = [null, 0.01, -0.02, 0.015, -0.01, 0.02, -0.015, 0.01, -0.02, 0.03, -0.01];
+  const rc = rp.map((x, i) => (x == null ? null : i <= 6 ? -x : x));
+  const a = linkage(rp, rc, { size: 4, minDays: 3, minDown: 1 });
+  eq(a.n, 4);
+  near(a.corr, 1, 1e-9);
+  const b = linkage(rp, rc, { size: 10, minDays: 3, minDown: 1 });
+  eq(b.n, 10);
+  ok(b.corr < 0.5, `全部 10 天的連動應該很低，得到 ${b.corr}`);
+  const rc2 = rc.map((x, i) => (i === 8 ? null : x));   // 第 8 天候選沒有報酬
+  eq(linkage(rp, rc2, { size: 10, minDays: 3, minDown: 1 }).n, 9);
+});
+
+// 120 天、40 天的門檻：造 N 個有報酬的日子，前 k 天組合下跌，rc = 2 × rp（完全同步）
+const lin = (days, k) => {
+  const rp = [null, ...Array.from({ length: days }, (_, i) => (i < k ? -(0.01 + 0.0001 * (i % 3)) : 0.01 + 0.0001 * (i % 4)))];
+  return linkage(rp, rp.map((x) => (x == null ? null : 2 * x)));
+};
+
+test("整體連動：119 天資料不足（null），120 天算", () => {
+  const a = lin(119, 60), b = lin(120, 60);
+  eq([a.n, a.corrEnough, a.corr], [119, false, null]);
+  eq([b.n, b.corrEnough], [120, true]);
+  near(b.corr, 1, 1e-9);
+});
+
+test("下跌日連動：39 天資料不足（null），40 天算；整體連動不受影響", () => {
+  const a = lin(150, 39), b = lin(150, 40);
+  eq([a.nDown, a.downEnough, a.downCorr], [39, false, null]);
+  eq([b.nDown, b.downEnough], [40, true]);
+  near(b.downCorr, 1, 1e-9);
+  ok(a.corrEnough && a.corr != null);
+});
+
+test("episodeStats：區間內最高到其後最低的最大跌幅、現在離最高、從最低到現在", () => {
+  // 100、120、90、110、80、100：最高 120 之後最低 80 → −33.33%；現在 100 離最高 −16.67%；從最低 80 到 100 = +25%
+  const adj = [100, 120, 90, 110, 80, 100], d = cal(6);
+  const e = episodeStats(adj, d, d[0]);
+  near(e.episodeDd, -100 / 3, 1e-9);
+  near(e.nowDd, -100 / 6, 1e-9);
+  near(e.rebound, 25, 1e-9);
+  eq(e.points, 6);
+});
+
+test("episodeStats：只取起點（含）之後；空白跳過；最大跌幅用「其後」的最低", () => {
+  // 起點在第 2 天：90、110、80、100 → 110 之後最低 80 = −27.27%；現在離 110 −9.09%；從 80 到 100 +25%。第 1 天的 120 不算
+  const adj = [100, 120, 90, null, 110, 80, 100], d = cal(7);
+  const e = episodeStats(adj, d, d[2]);
+  near(e.episodeDd, (80 / 110 - 1) * 100, 1e-9);
+  near(e.nowDd, (100 / 110 - 1) * 100, 1e-9);
+  near(e.rebound, 25, 1e-9);
+  eq(e.points, 4);
+  // 一路上漲沒有跌幅：episodeDd 是 0，現在就是最高
+  const up = episodeStats([1, 2, 3], d.slice(0, 3), d[0]);
+  eq([up.episodeDd, up.nowDd], [0, 0]);
+  eq(episodeStats([1, null, null], d.slice(0, 3), d[0]).episodeDd, null);   // 區間內不到兩個有值的日子
+});
+
+test("排名：分散型整體連動由低到高，資料不足排最後；同值照成交金額名次", () => {
+  const rows = [{ code: "a", corr: 0.5, rank: 3 }, { code: "b", corr: null, rank: 1 }, { code: "c", corr: -0.2, rank: 2 }, { code: "d", corr: 0.5, rank: 1 }, { code: "e", corr: null, rank: 0 }];
+  eq(rankDiversifiers(rows).map((r) => r.code), ["c", "d", "a", "e", "b"]);
+});
+
+test("排名：進攻型這一段跌幅由深到淺，沒有值排最後", () => {
+  const rows = [{ code: "a", episodeDd: -10, rank: 1 }, { code: "b", episodeDd: null, rank: 2 }, { code: "c", episodeDd: -30, rank: 3 }, { code: "d", episodeDd: -10, rank: 0 }, { code: "e", episodeDd: 0, rank: 4 }];
+  eq(rankAggressive(rows).map((r) => r.code), ["c", "d", "a", "e", "b"]);
+});
+
+test("sortRows：由大到小時空值還是排最後；字串照字母", () => {
+  const rows = [{ code: "b", v: 1, rank: 2 }, { code: "a", v: null, rank: 1 }, { code: "c", v: 3, rank: 3 }];
+  eq(sortRows(rows, (r) => r.v, -1).map((r) => r.code), ["c", "b", "a"]);
+  eq(sortRows(rows, (r) => r.code, 1).map((r) => r.code), ["a", "b", "c"]);
+});
+
+test("alignCloses：沒有那天的收盤是 null", () => {
+  eq(alignCloses(["2025-01-01", "2025-01-02", "2025-01-03"], [{ time: "2025-01-03", close: 9 }, { time: "2025-01-01", close: 7 }]), [7, null, 9]);
+});
+
+// 140 天的合成資料：核心的日報酬奇數天約 −1%、偶數天約 +1.2%（有小變化，避免標準差是 0），衛星是它的 1.5 倍；AAA 是 2 倍（完全同步）、BBB 完全相反且第 60 天價格腰斬
+const G = Array.from({ length: 140 }, (_, i) => (i % 2 ? -0.01 - 0.001 * (i % 3) : 0.012 + 0.001 * (i % 5)));
+const D = cal(140);
+const mkEval = (extra = {}) => {
+  const core = { code: "009816", name: "核心", closes: closesFrom(G) };
+  const sat = { code: "00981A", name: "衛星", closes: closesFrom(G.map((x) => x * 1.5)) };
+  const closes = new Map([
+    ["AAA", closesFrom(G.map((x) => x * 2))],
+    ["BBB", closesFrom(G.map((x) => -x), { 60: 0.5 })],
+    ["CCC", closesFrom(G.map((x) => x * 2)).map((c, i) => (i < 110 ? null : c))],   // 只有最後 30 天
+    ["DDD", D.map((_, i) => ([100, 120, 90, 110, 80, 100][i - 100] ?? 100))],       // 第 100 天起：100、120、90、110、80、100，之後不動
+    ["009816", core.closes], ["00981A", sat.closes],
+  ]);
+  const items = ["0050", "009816", "AAA", "00981A", "BBB", "CCC", "DDD"].map((code, k) => ({ code, name: `名稱${code}`, category: code === "BBB" ? "overseas" : "tw", listed: "2020-01-01", avg_value: 5e8, rank: k + 1 }));
+  return evaluateCandidates({ dates: D, closes, items, core, sat, target: 0.8, peakDate: D[100], ...extra });
+};
+
+test("evaluateCandidates：現有兩檔不進排名，放在對照列；名單裡沒有收盤欄的記在 missing", () => {
+  const ev = mkEval();
+  eq(ev.rows.map((r) => r.code), ["AAA", "BBB", "CCC", "DDD"]);
+  eq(ev.refs.map((r) => r.code), ["portfolio", "009816", "00981A"]);
+  eq(ev.skipped, ["009816", "00981A"]);
+  eq(ev.missing, ["0050"]);
+  eq(rankDiversifiers(ev.rows)[0].code, "BBB");   // 整體連動 −1 最低
+});
+
+test("evaluateCandidates：連動、天數與資料不足", () => {
+  const ev = mkEval();
+  const by = Object.fromEntries(ev.rows.map((r) => [r.code, r]));
+  eq(ev.window.n, 139);                      // 140 天裡組合有報酬的 139 天（第 0 天沒有）
+  eq(by.AAA.n, 139);
+  near(by.AAA.corr, 1, 1e-9);
+  near(by.AAA.downCorr, 1, 1e-9);
+  near(by.BBB.corr, -1, 1e-9);
+  eq([by.CCC.n, by.CCC.corrEnough, by.CCC.corr], [29, false, null]);   // 上市後第一天沒有報酬 → 29 天
+  ok(by.DDD.corr > -1 && by.DDD.corr < 0, `DDD 只有 5 天有漲跌，且和組合方向相反，連動應該在 −1 和 0 之間，得到 ${by.DDD.corr}`);
+  eq(rankDiversifiers(ev.rows).map((r) => r.code), ["BBB", "DDD", "AAA", "CCC"]);   // 資料不足的 CCC 排最後
+});
+
+test("evaluateCandidates：被濾掉的異常日記下代號與日期，BBB 腰斬那天不影響其他天的連動", () => {
+  const ev = mkEval();
+  eq(ev.filtered.map((f) => [f.code, f.date]), [["BBB", D[60]]]);
+  near(ev.filtered[0].r, -50.6, 1e-6);   // 第 60 天本來是 −1.2%，再腰斬：0.988 × 0.5 − 1 = −50.6%
+});
+
+test("evaluateCandidates：對照列（現有組合、核心、衛星）的天數與連動", () => {
+  const [p, c, s] = mkEval().refs;
+  eq([p.code, p.n, p.nDown > 0, p.downAvg === p.downAvgP], ["portfolio", 139, true, true]);
+  // 核心 = G、衛星 = 1.5 G、組合 = 0.8 G + 0.2 × 1.5 G = 1.1 G：三者每天同方向 → 連動 1
+  eq([c.code, s.code, c.n, s.n], ["009816", "00981A", 139, 139]);
+  near(c.corr, 1, 1e-9);
+  near(s.corr, 1, 1e-9);
+  near(c.downAvg, p.downAvg / 1.1, 1e-9);   // 組合下跌日，核心的平均是組合的 1 ÷ 1.1
+});
+
+test("evaluateCandidates：這一段跌幅（還原序列）：DDD 100、120、90、110、80、100", () => {
+  const d = mkEval().rows.find((r) => r.code === "DDD");
+  near(d.episodeDd, -100 / 3, 1e-9);
+  near(d.nowDd, -100 / 6, 1e-9);
+  near(d.rebound, 25, 1e-9);
+  eq([d.lastDate, d.lastClose], [D[139], 100]);
+});
+
+test("evaluateCandidates：這一段不到 5 個交易日進攻型不排名（剛好 5 天可以）", () => {
+  eq(mkEval({ peakDate: D[135] }).episode, { startDate: D[135], days: 5, ok: true });
+  eq(mkEval({ peakDate: D[136] }).episode, { startDate: D[136], days: 4, ok: false });
+});
+
+test("evaluateCandidates：最近收盤是各檔自己最後一個有值的日子", () => {
+  const D2 = cal(10);
+  const core = { code: "C", name: "核心", closes: closesFrom(Array(10).fill(0.01)) };
+  const ev = evaluateCandidates({ dates: D2, closes: new Map([["X", [100, 101, 102, 103, 104, 105, 106, 107, null, null]]]),
+    items: [{ code: "X", name: "x", category: "tw", avg_value: 2e8, rank: 1 }], core, sat: core, peakDate: D2[0] });
+  eq([ev.rows[0].lastDate, ev.rows[0].lastClose], [D2[7], 107]);
+});
+
+test("verdict：連動 ≥ 0.8 幾乎同步、0.5～0.8 部分同步、< 0.5 連動低（邊界）", () => {
+  const v = (corr) => verdict({ corr, corrEnough: true, n: 150, category: "tw", avgValue: 5e8 }, "diversify");
+  eq(v(0.8), ["和現有持股幾乎同步，分散效果有限"]);
+  eq(v(0.7999), ["部分同步"]);
+  eq(v(0.5), ["部分同步"]);
+  eq(v(0.4999), ["連動低"]);
+  eq(v(-0.3), ["連動低"]);
+  eq([corrBand(0.9), corrBand(0.6), corrBand(0.1), corrBand(null)], ["high", "mid", "low", null]);
+});
+
+test("verdict：資料不足、海外、成交量小（< 1 億）、進攻型一律加警語", () => {
+  eq(verdict({ corr: null, corrEnough: false, n: 80, category: "tw", avgValue: 5e8 }, "diversify"), ["連動資料不足（只有 80 天，至少要 120 天）"]);
+  const o = verdict({ corr: 0.3, corrEnough: true, n: 150, category: "overseas", avgValue: 9.9e7 }, "diversify");
+  eq(o, ["連動低", "多一層匯率；海外市場的交易時間和台股不同，用日資料算的連動會偏低", "成交量小，買賣價差可能較大"]);
+  eq(verdict({ corr: 0.3, corrEnough: true, n: 150, category: "tw", avgValue: 1e8 }, "diversify"), ["連動低"]);   // 剛好 1 億不算小
+  eq(verdict({ corr: 0.9, corrEnough: true, n: 150, category: "tw", avgValue: 5e8 }, "aggressive").at(-1), "跌得深不代表會彈得多；連動高等於加碼同一個風險");
+  ok(!verdict({ corr: 0.9, corrEnough: true, n: 150, category: "tw", avgValue: 5e8 }, "diversify").some((s) => s.includes("跌得深")));
+});
+
+test("parseCandidateCloses：表頭 date,<代號…>、空白格是 null、日期亂序會排好", () => {
+  const c = parseCandidateCloses("date,0050,00981A\n2025-08-19,53.2,\n2025-08-18,53.3,13.42\n");
+  eq(c.dates, ["2025-08-18", "2025-08-19"]);
+  eq(c.codes, ["0050", "00981A"]);
+  eq(c.close.get("0050"), [53.3, 53.2]);
+  eq(c.close.get("00981A"), [13.42, null]);
+  let err = null;
+  try { parseCandidateCloses("day,0050\n2025-08-18,1\n"); } catch (e) { err = e.message; }
+  eq(err, "表頭格式不對");
 });
 
 report();
