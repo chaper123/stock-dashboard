@@ -15,7 +15,7 @@
 - 舊的美股、台股兩個買點晨報 2026-11-03 停用（轉型，見 [PIVOT.md](PIVOT.md)）。
 - **market-data**（公開）：GitHub Actions 抓行情、新聞標題、總經、法人、行事曆，cron-job.org 觸發（fetch 06:15、news 08:20、11:10 等），狀態看 `data/meta.json`。台股不再程式抓證交所／櫃買網站（改 FinMind＋OpenAPI）；盤中價由網站在使用者瀏覽器用富果查（金鑰只在使用者裝置）。
 - **market-data-private**（私人，本機 `C:\market-data-private`）：00981A、009816 每日持股。投信網站不得轉載，所以不放公開 repo；公開的「新聞」分頁不能寫股數、權重、排名、檔數。
-- **網站**（GitHub Pages，純靜態，八頁：總覽、新聞、持倉、K 線、分析、資金、報告、記帳）：記帳透過帳本綁定的 Apps Script 寫入（[LEDGER_WRITE.md](LEDGER_WRITE.md)、[LEDGER_CONSISTENCY.md](LEDGER_CONSISTENCY.md)）。第三方改進報告第 A、B、C 批與 R02 已上線（[IMPROVE.md](IMPROVE.md)）。線上 sw.js 2026-11-08-2。
+- **網站**（GitHub Pages，純靜態，八頁：總覽、新聞、持倉、K 線、分析、資金、報告、記帳）：記帳透過帳本綁定的 Apps Script 寫入（[LEDGER_WRITE.md](LEDGER_WRITE.md)、[LEDGER_CONSISTENCY.md](LEDGER_CONSISTENCY.md)）。第三方改進報告第 A、B、C 批與 R02 已上線（[IMPROVE.md](IMPROVE.md)）。線上 sw.js 2026-11-12-1（機會頁第一版）。
 - **試算表**：「儀表板資料」（排程寫入；正式「新聞」gid 5、「測試_新聞」gid 4）；共用帳本（Claude 只讀，網站記帳寫入）。ID 在提示詞裡。
 - **使用者的投資規則**：每月 6 日照帳本「定投金額」投入台股 009816 80%、00981A 20%；4、10 月檢查，偏離超過 5 個百分點才整筆補偏低的一檔；美股 VOO、GOOGL 保留、不加碼。所有輸出都是依規則的訊號，不是投資建議。
 
@@ -24,7 +24,7 @@
    - **看 v4.1a 第一次正式執行（11/12 08:40）**：晨間早上卡 5 分鐘的 CMoney 同學風向已改成先搜尋再開（測試三檔都取得），看正式執行的摘要列與 C1～C3 三列有沒有分數、整次有沒有再卡網址權限。
    - 還沒遇到實際情況：費半漲跌在 3%～5% 之間（不該用大波動日格式）。遇到那天再看一次執行紀錄。（Fed 例行核准略過在 v4.1a 測試已用到。）
    - 下次改提示詞時一起修的小瑕疵：話題列理由的相對時間（「今天」「這兩天」）、總經總結的「外資連 5 天賣超」（資料只有 5 個交易日，實際連 9 天）、009816／00981A 的列偶爾類別寫成「總經」、偶爾把 apnews.com 放進 allowed_domains 被拒。
-2. **機會頁**（INSIGHTS 第 4 批）：2026-11-11 討論完方向，記在 [INSIGHTS.md](INSIGHTS.md) 5.2——只當參考分析、不設預備金、不放 00735、−10% 只提醒、−20%／−30% 才展開；「積極」可以打破 80／20 但只當分析呈現。**第一版 2026-11-12 使用者看過後合併進本機 main（快轉，246297b），還沒部署**：`#/opportunity`，從分析頁與首頁市場狀態卡連過去；本機用預覽設定 `site` 開 `http://localhost:8765/?nosw#/opportunity`。**main 現在有還沒上線的 `site/` 改動，使用者說「部署」才能 push**（部署時改 `sw.js` 的 VERSION；在那之前不要 push main，連文件 commit 也會一起帶上去）。第二版「積極」的新標的候選篩選要先定候選範圍與排序條件，market-data 再加日線。晨報的「機會觀察」等網站做好再談。
+2. **機會頁**（INSIGHTS 第 4 批）：2026-11-11 討論完方向，記在 [INSIGHTS.md](INSIGHTS.md) 5.2——只當參考分析、不設預備金、不放 00735、−10% 只提醒、−20%／−30% 才展開；「積極」可以打破 80／20 但只當分析呈現。**第一版 2026-11-12 部署上線（sw.js 2026-11-12-1）**：`#/opportunity`，從分析頁與首頁市場狀態卡連過去；本機用預覽設定 `site` 開 `http://localhost:8765/?nosw#/opportunity`。第二版「積極」的新標的候選篩選要先定候選範圍與排序條件，market-data 再加日線。晨報的「機會觀察」等網站做好再談。
 3. **設計改版先擱置（使用者 2026-11-11 決定：先功能、後美化）**：等網頁的功能、版面、互動大致定案再做美化，免得之後改功能又要重調。IMPROVE 的 D01～D08 與 R16、R17（版面）跟著擱置；R15（新聞去噪）、R18（資金頁先講現金，要先決定帳本要不要加入金紀錄）是功能，可以拉出來先做，還沒跟使用者確認。
    - 首頁示意留在本機分支 `claude/fervent-merkle-1607ac`（工作目錄 `.claude/worktrees/fervent-merkle-1607ac`，cacbefe：docs/DESIGN.md、site/preview-home.html、site/css/v2.css、site/js/pages/home_v2.js），沒有 push、沒有合併。要看：在 `.claude/launch.json` 暫時加一組 `py -3.14 -m http.server 8766 --directory .claude/worktrees/fervent-merkle-1607ac/site`，開 `/preview-home.html`。
    - 使用者看過示意的意見（重啟時要照這個改）：只比現在好一點、沒有互動感、只用了一小部分參考。原因：六個範本只實際開了三個（Ledgely、Zapline、Fundora 沒開）、照報告只拿兩個當主參考、動態刻意做得很少（沒有跳數字、沒有背景動畫）。重啟時六個範本都要實際開來看，互動當成重點。
