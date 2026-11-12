@@ -368,3 +368,32 @@ export const loadIndex = (name) => once(`index:${name}`, async () => {
   if (!out.length) throw new DataError(src, "沒有資料");
   return out.sort((a, b) => a.date.localeCompare(b.date));
 });
+
+// ── 機會頁的候選 ETF（market-data 的 data/candidates/，docs/OPPORTUNITY.md 第 3 節）──────────
+
+// 名單：{ generated_at_taipei, ranked_on, window_days, rule, source, items: [{code,name,category,listed,avg_value,rank}], excluded }
+export const loadCandidateUniverse = () => once("cand:universe", async () => {
+  const src = "候選 ETF 名單";
+  const u = await fetchJson(SOURCES.candidates + "universe.json", src);
+  if (!u || !Array.isArray(u.items) || !u.items.length) throw new DataError(src, "名單是空的");
+  return u;
+});
+
+// 收盤合併檔 closes.csv：第一列表頭 date,<代號…>，每列一個交易日，空白格是沒有資料。
+// 回傳 { dates: [...由舊到新], codes: [...], close: Map(代號 → 與 dates 等長的陣列，沒有資料是 null) }
+export const loadCandidateCloses = () => once("cand:closes", async () => parseCandidateCloses(await fetchText(SOURCES.candidates + "closes.csv", "候選 ETF 收盤", true)));
+
+// closes.csv 的文字 → 資料（獨立出來給測試用）。看不懂的格子當沒有資料
+export function parseCandidateCloses(text) {
+  const src = "候選 ETF 收盤";
+  const [head, ...body] = parseCSV(text);
+  if (!head || head[0].trim() !== "date" || head.length < 2) throw new DataError(src, "表頭格式不對");
+  const codes = head.slice(1).map((h) => h.trim());
+  const rows = body.filter((r) => /^\d{4}-\d{2}-\d{2}$/.test((r[0] || "").trim())).sort((a, b) => a[0].localeCompare(b[0]));
+  if (!rows.length) throw new DataError(src, "沒有資料");
+  const close = new Map(codes.map((c, k) => [c, rows.map((r) => {
+    const v = (r[k + 1] ?? "").trim(), x = Number(v);
+    return v === "" || !Number.isFinite(x) || x <= 0 ? null : x;
+  })]));
+  return { dates: rows.map((r) => r[0].trim()), codes, close };
+}
