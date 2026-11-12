@@ -275,7 +275,7 @@ export function evaluateCandidates({ dates, closes, items, core, sat, target = 0
   const portfolio = {
     code: "portfolio", name: "現有組合", category: "ref",
     ...base(presentP.map((p) => (p ? 1 : null)), adjP), lastClose: null,
-    ...linkage(rp, rp),   // 對自己的連動是 1，只拿它的天數、下跌日平均、年化波動、近一年漲跌
+    ...linkage(rp, rp),   // 對自己的連動是 1，只拿它的天數、下跌日平均、年化波動、期間漲跌
   };
   const refRow = (c, p) => ({ code: c.code, name: c.name, category: "ref", ...base(c.closes, p.adj), ...linkage(rp, p.r) });
 
@@ -327,7 +327,7 @@ export function verdict(row, kind) {
   else if (band === "mid") out.push("部分同步");
   else if (band === "low") out.push("連動低");
   else if (!row.corrEnough) out.push(`連動資料不足（只有 ${row.n} 天，至少要 ${MIN_DAYS} 天）`);
-  if (row.category === "overseas") out.push("多一層匯率；美股收盤比台股晚，用日資料算的連動會偏低");
+  if (row.category === "overseas") out.push("多一層匯率；海外市場的交易時間和台股不同，用日資料算的連動會偏低");
   if (row.avgValue != null && row.avgValue < THIN_VALUE) out.push("成交量小，買賣價差可能較大");
   if (kind === "aggressive") out.push("跌得深不代表會彈得多；連動高等於加碼同一個風險");
   return out;

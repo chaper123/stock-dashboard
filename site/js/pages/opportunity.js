@@ -292,7 +292,7 @@ async function candidatesCard({ ep }) {
       + (ev.filtered.length ? `目前被濾掉的有 ${ev.filtered.map((f) => `${f.code} ${f.date}（${pct(f.r)}）`).join("、")}。` : "目前沒有被濾掉的日子。")
       + "停牌或空白（上市前、當天還沒有收盤）前後的漲跌也不算。"),
     el("p", { class: "tiny" }, `連動是日資料的皮爾森相關係數（−1～1，1 是每天同方向同幅度）；整體連動至少 ${MIN_DAYS} 天、下跌日連動（只看現有組合下跌的日子）至少 ${MIN_DOWN_DAYS} 天，不足寫「資料不足」。`
-      + `「近一年漲跌」「年化波動」用同一個視窗，天數不到一年時就是那段天數的漲跌。「這一段跌幅」是這一段裡最高到其後最低的最大跌幅（還原後的價格），「現在離高點」是離這一段裡的最高。`
+      + `「期間漲跌」「年化波動」的期間，就是算連動用的同一段交易日：目前從 ${D.core} 上市後第一個有報酬的日子（${ev.window.from}）起、共 ${ev.window.n} 天，滿 ${WINDOW_DAYS} 個交易日後就是近一年。「這一段跌幅」是這一段裡最高到其後最低的最大跌幅（還原後的價格），「現在離高點」是離這一段裡的最高。`
       + `日均成交金額是排名日往前 ${u.window_days} 個交易日的平均。`),
     el("p", { class: "tiny" }, `對照列（現有組合、${D.core}、${D.satellite}）不參加排名，放在表格最上面；現有組合的日報酬＝${wText}。`
       + `資料來源：${u.source}。其中 FinMind 的條款只寫「教育、非商業用途」。名單 ${u.generated_at_taipei} 產生，每月重排。`)));
@@ -317,7 +317,7 @@ function candTable(ev, wText) {
       cell: (r) => (r.downAvg == null ? "—" : [pctCell(r.downAvg), el("div", { class: "tiny" }, noLink(r) ? `${r.nDown} 天` : `組合 ${pct(r.downAvgP)}，${r.nDown} 天`)]) },
     { key: "episodeDd", label: "這一段跌幅", dir: 1, get: (r) => r.episodeDd, cell: (r) => pctCell(r.episodeDd) },
     { key: "nowDd", label: "現在離高點", dir: 1, get: (r) => r.nowDd, cell: (r) => pctCell(r.nowDd) },
-    { key: "ret", label: "近一年漲跌", dir: -1, get: (r) => r.ret, cell: (r) => pctCell(r.ret) },
+    { key: "ret", label: "期間漲跌", dir: -1, get: (r) => r.ret, cell: (r) => pctCell(r.ret) },
     { key: "vol", label: "年化波動", dir: 1, get: (r) => r.vol, cell: (r) => (r.vol == null ? "—" : pct(r.vol, 1, false)) },
     { key: "avgValue", label: "日均成交金額", dir: -1, get: (r) => r.avgValue, cell: (r) => valueText(r.avgValue) },
   ];

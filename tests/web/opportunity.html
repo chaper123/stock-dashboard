@@ -410,7 +410,7 @@ test("verdict：連動 ≥ 0.8 幾乎同步、0.5～0.8 部分同步、< 0.5 連
 test("verdict：資料不足、海外、成交量小（< 1 億）、進攻型一律加警語", () => {
   eq(verdict({ corr: null, corrEnough: false, n: 80, category: "tw", avgValue: 5e8 }, "diversify"), ["連動資料不足（只有 80 天，至少要 120 天）"]);
   const o = verdict({ corr: 0.3, corrEnough: true, n: 150, category: "overseas", avgValue: 9.9e7 }, "diversify");
-  eq(o, ["連動低", "多一層匯率；美股收盤比台股晚，用日資料算的連動會偏低", "成交量小，買賣價差可能較大"]);
+  eq(o, ["連動低", "多一層匯率；海外市場的交易時間和台股不同，用日資料算的連動會偏低", "成交量小，買賣價差可能較大"]);
   eq(verdict({ corr: 0.3, corrEnough: true, n: 150, category: "tw", avgValue: 1e8 }, "diversify"), ["連動低"]);   // 剛好 1 億不算小
   eq(verdict({ corr: 0.9, corrEnough: true, n: 150, category: "tw", avgValue: 5e8 }, "aggressive").at(-1), "跌得深不代表會彈得多；連動高等於加碼同一個風險");
   ok(!verdict({ corr: 0.9, corrEnough: true, n: 150, category: "tw", avgValue: 5e8 }, "diversify").some((s) => s.includes("跌得深")));
