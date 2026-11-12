@@ -1,15 +1,15 @@
-// 機會頁（docs/INSIGHTS.md 5.2，第一版）：擇時分析，只當參考，跟每月 80／20 定投的核心規則分開。
-// 現在在哪（加權指數這一段回落到過哪些級距）→ 歷史上跌到同樣級距之後 → 三種做法並列 → 加碼試算。
+// 機會頁（docs/INSIGHTS.md 5.2）：擇時分析，只當參考，跟每月 80／20 定投的核心規則分開。
+// 現在在哪（加權指數這一段回落到過哪些級距）→ 歷史上跌到同樣級距之後 → 三種做法並列 → 新標的候選（第二版，docs/OPPORTUNITY.md）→ 加碼試算。
 // 使用者 2026-11-11 決定：不設預備金、不照級距加碼；這頁不建議金額、不寫建議選哪一種，只描述已經發生的事。
-import { loadIndex, loadDaily, loadSettings } from "../data.js";
+import { loadIndex, loadDaily, loadSettings, loadCandidateUniverse, loadCandidateCloses, DataError } from "../data.js";
 import { loadPortfolio } from "../portfolio.js";
-import { loadStatus, statusLine } from "../status.js";
+import { loadStatus, statusLine, worst, datasetKind } from "../status.js";
 import { nextDepositDate } from "../discipline.js";
-import { DISCIPLINE as D, NAMES } from "../config.js";
+import { DISCIPLINE as D, NAMES, IS_DEV_CAND } from "../config.js";
 import { el, price, twd, int, pct, tone, shortDate, dateVs, taipeiToday, isNum } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
 import { TIERS, EXPAND_FROM, HORIZONS, tierCrossings, tierReport, baseline, currentEpisode } from "../opportunity.js";
-import { whatIf } from "../opportunity.js";
+import { whatIf, WINDOW_DAYS, MIN_DAYS, MIN_DOWN_DAYS, SPLIT_LIMIT, TOP_N, alignCloses, evaluateCandidates, sortRows, rankDiversifiers, rankAggressive, verdict } from "../opportunity.js";
 
 const TARGET_TEXT = `${Math.round(D.target[D.core] * 100)}／${Math.round(D.target[D.satellite] * 100)}`;
 
@@ -21,6 +21,7 @@ export async function render(root) {
   slot(root, async () => whereCard(await base));
   slot(root, async () => historyCard(await base));
   slot(root, async () => approachesCard(await base));
+  slot(root, async () => candidatesCard(await base));
   slot(root, whatIfCard);
 }
 
@@ -168,7 +169,7 @@ async function approachesCard({ ep, reports }) {
     ["根據", core && sat
       ? `這一段最深：${D.satellite} ${pct(sat.lowDd)}、${D.core} ${pct(core.lowDd)}、加權 ${pct(ep.lowDd)}。衛星比核心${gap < 0 ? "多跌" : "少跌"} ${Math.abs(gap).toFixed(1)} 個百分點。`
       : "讀不到兩檔 ETF 的日線，先不列。"],
-    ["還沒做", "新標的的候選篩選（分散型、進攻型並列，每一檔寫理由與代價）排在第二版。"],
+    ["候選篩選", [candPointer(), `：分散型（跟現有兩檔連動低）、進攻型（這一段跌得深）各列前 ${TOP_N} 名，每一檔寫理由與代價，不寫買哪一檔。`]],
     ["要想清楚", "新標的如果和現有兩檔連動高，等於加碼同一個風險；改比例等於改核心規則，要另外決定。"],
   ]);
 
@@ -180,6 +181,168 @@ async function approachesCard({ ep, reports }) {
   return card("三種做法（並列）",
     notice("info", ep.top === 0 ? `目前沒有觸發級距（離高點 ${pct(ep.dd)}）。` : `這一段只到 −${TIERS[0]}%：很常見，這裡只提醒，不展開。`),
     el("details", { class: "more" }, el("summary", {}, `先看三種做法（用 −${T}% 的歷史當例子）`), body));
+}
+
+// ── 新標的候選（第二版，docs/OPPORTUNITY.md 第 4、5 節）─────────────────────
+// 照固定條件排名：分散型（跟現有組合連動低）、進攻型（這一段跌得深）。每一檔只寫數字、理由與代價，不寫「買哪一檔」。
+// 名單與日線來自 market-data 的 data/candidates/；還沒有時這張卡顯示「候選資料還沒有」，其他區塊照常。
+const CAND_ID = "cand-card";
+const CAT = { tw: "台股", overseas: "海外", ref: "對照" };
+
+// 「積極」那一欄指到這張卡：頁面用 hash 路由，所以用捲動，不改網址
+const candPointer = () => el("a", {
+  href: "#/opportunity",
+  onclick: (e) => {
+    e.preventDefault();
+    document.getElementById(CAND_ID)?.scrollIntoView({ block: "start" });
+  },
+}, "往下看「新標的候選」那張卡");
+
+const c2 = (v) => {
+  const s = Math.abs(v).toFixed(2);
+  return (v < 0 && s !== "0.00" ? "−" : "") + s;
+};
+const valueText = (v) => (isNum(v) ? `${v >= 1e10 ? int(v / 1e8) : (v / 1e8).toFixed(1)} 億` : "—");
+const strongPct = (v) => el("strong", { class: tone(v) }, pct(v));
+
+async function candidatesCard({ ep }) {
+  const title = "新標的候選（照條件排名，不是建議）";
+  const withId = (node) => {
+    node.id = CAND_ID;
+    return node;
+  };
+  const [uni, clo] = await Promise.allSettled([loadCandidateUniverse(), loadCandidateCloses()]);
+  if (uni.status === "rejected" || clo.status === "rejected") {
+    const why = [uni, clo].filter((r) => r.status === "rejected")
+      .map((r) => (r.reason instanceof DataError ? `${r.reason.source}：${r.reason.message}` : String(r.reason?.message || r.reason)));
+    return withId(card(title, notice("info", "候選資料還沒有。"),
+      el("p", { class: "tiny" }, `候選名單與日線由 market-data 每月整理一次，有資料之後這裡才會排名；其他區塊不受影響。（${why.join("；")}）`)));
+  }
+  const [coreBars, satBars, S] = await Promise.all([
+    loadDaily("tw", D.core).catch(() => null), loadDaily("tw", D.satellite).catch(() => null), loadStatus().catch(() => null)]);
+  if (!coreBars || !satBars) return withId(card(title, notice("warn", `讀不到 ${D.core}、${D.satellite} 的日線，沒辦法算和現有組合的連動。`)));
+
+  const u = uni.value, c = clo.value, w = D.target[D.core];
+  const ev = evaluateCandidates({
+    dates: c.dates, closes: c.close, items: u.items,
+    core: { code: D.core, name: NAMES[D.core] || D.core, closes: alignCloses(c.dates, coreBars) },
+    sat: { code: D.satellite, name: NAMES[D.satellite] || D.satellite, closes: alignCloses(c.dates, satBars) },
+    target: w, peakDate: ep.peak.date,
+  });
+  const wText = `${Math.round(w * 100)}％ ${D.core}＋${Math.round((1 - w) * 100)}％ ${D.satellite}`;
+
+  // 資料狀態（R14）：收盤合併檔的最後一天，加上 meta 記的抓取狀態（meta 沒有這一項就只看日期）
+  const meta = S?.meta?.datasets?.["candidates/closes"];
+  const kind = S ? worst([S.tw(ev.lastDate), meta ? datasetKind(S.meta, "candidates/closes") : null]) : null;
+  const status = kind && statusLine([{ kind, what: "候選 ETF 收盤", when: `${shortDate(ev.lastDate)} 收盤`,
+    note: kind === "stale" ? `應該已經有 ${shortDate(S.expect.tw)} 的收盤，先用舊的` : kind === "closed" ? "今天台股休市，用最近交易日的收盤" : null }]);
+  const behind = ev.rows.filter((r) => r.lastDate !== ev.lastDate);
+
+  const intro = [
+    IS_DEV_CAND && notice("warn", "本機預覽（網址有 ?devcand）：候選資料讀自 site/dev-data/candidates/，不是線上的 market-data。"),
+    el("p", { class: "small" }, `名單：${u.rule}。排名日 ${u.ranked_on}，用近 ${u.window_days} 個交易日的日均成交金額排；名單 ${u.items.length} 檔`
+      + `${ev.skipped.length ? `，其中 ${ev.skipped.join("、")} 是現有持股，不參加排名` : ""}${ev.missing.length ? `；${ev.missing.join("、")} 在收盤檔裡沒有欄位，先不列` : ""}。`),
+    el("p", { class: "small" }, `連動、漲跌、波動用最近 ${WINDOW_DAYS} 個交易日裡，現有組合（${wText}）有報酬的日子：共 ${ev.window.n} 天（${ev.window.from}～${ev.window.to}）`
+      + `${ev.window.n < WINDOW_DAYS ? `，組合的資料還不到 ${WINDOW_DAYS} 天` : ""}；每一檔實際用到的天數寫在數字後面。`),
+    el("p", { class: "small" }, `收盤資料到 ${ev.lastDate}`
+      + `${behind.length ? `（${behind.map((r) => r.code).join("、")} 那天還沒有收盤，用它們自己最後一個有收盤的日子，日期寫在代號下面）` : ""}。`
+      + `這一段＝加權指數 ${dateVs(ep.peak.date, ev.lastDate)} 的高點起，到 ${ev.lastDate} 共 ${ev.episode.days} 個交易日。`),
+  ];
+
+  // 兩個前 5 名清單
+  const cell = (k, v, sub) => el("div", {}, el("span", { class: "k" }, k), el("span", { class: "v" }, v, sub && el("div", { class: "tiny" }, sub)));
+  const corrCell = (k, v, enough, n) => cell(k, el("strong", {}, v != null ? c2(v) : enough ? "—" : "資料不足"), `${n} 天`);
+  const divNums = (r) => [
+    corrCell("整體連動", r.corr, r.corrEnough, r.n),
+    corrCell("下跌日連動", r.downCorr, r.downEnough, r.nDown),
+    cell("組合下跌日，該檔平均", r.downAvg == null ? "—" : strongPct(r.downAvg), r.downAvg == null ? null : `組合 ${pct(r.downAvgP)}`),
+    cell("這一段跌幅", strongPct(r.episodeDd), `現在離高點 ${pct(r.nowDd)}`),
+  ];
+  const aggNums = (r) => [
+    cell("這一段最深", strongPct(r.episodeDd)),
+    cell("現在離高點", strongPct(r.nowDd)),
+    cell("從最低點反彈", strongPct(r.rebound)),
+    corrCell("整體連動", r.corr, r.corrEnough, r.n),
+  ];
+  const item = (r, i, k) => el("div", { class: "pos" },
+    el("div", {}, el("strong", {}, `${i + 1}. ${r.code} ${r.name}`), " ", el("span", { class: "tag" }, CAT[r.category])),
+    el("div", { class: "pos-grid" }, k === "aggressive" ? aggNums(r) : divNums(r)),
+    el("div", { class: "small" }, `${verdict(r, k).join("。")}。`),
+    el("div", { class: "tiny" }, `${shortDate(r.lastDate)} 收盤 ${price(r.lastClose)}；日均成交金額 ${valueText(r.avgValue)}`));
+
+  const divRows = rankDiversifiers(ev.rows).filter((r) => r.corr != null).slice(0, TOP_N);
+  const aggRows = ev.episode.ok ? rankAggressive(ev.rows).filter((r) => r.episodeDd != null).slice(0, TOP_N) : [];
+  const short = ev.rows.filter((r) => r.corr == null).length;
+  const lists = el("div", { class: "grid two" },
+    el("div", {},
+      el("h3", {}, "分散型", el("span", { class: "tiny", style: { marginLeft: "6px", fontWeight: 400 } }, `和現有組合的整體連動由低到高，前 ${TOP_N} 名`)),
+      divRows.length ? divRows.map((r, i) => item(r, i, "diversify")) : el("p", { class: "tiny" }, `目前沒有一檔的連動資料夠長（整體連動至少 ${MIN_DAYS} 天）。`),
+      short > 0 && el("p", { class: "tiny" }, `另有 ${short} 檔資料不足，排在下面的表格最後。`)),
+    el("div", {},
+      el("h3", {}, "進攻型", el("span", { class: "tiny", style: { marginLeft: "6px", fontWeight: 400 } }, `這一段自高點的跌幅由深到淺，前 ${TOP_N} 名`)),
+      ev.episode.ok
+        ? aggRows.map((r, i) => item(r, i, "aggressive"))
+        : notice("info", `這一段只有 ${ev.episode.days} 個交易日（加權指數 ${dateVs(ep.peak.date, ev.lastDate)} 才創高，還沒有回落），進攻型先不排名。`)));
+
+  return withId(card(title, status, ...intro, lists,
+    el("details", { class: "more" },
+      el("summary", {}, `看全部（${ev.rows.length} 檔，加上 3 列對照；點欄位標題排序）`),
+      candTable(ev, wText)),
+    el("p", { class: "tiny" }, `價格沒有還原配息：高股息 ETF 除息時價格會掉，跌幅與漲跌會被放大。分割由網站濾掉：單日漲跌超過 ${SPLIT_LIMIT * 100}% 視為分割或資料異常，那一天不算。`
+      + (ev.filtered.length ? `目前被濾掉的有 ${ev.filtered.map((f) => `${f.code} ${f.date}（${pct(f.r)}）`).join("、")}。` : "目前沒有被濾掉的日子。")
+      + "停牌或空白（上市前、當天還沒有收盤）前後的漲跌也不算。"),
+    el("p", { class: "tiny" }, `連動是日資料的皮爾森相關係數（−1～1，1 是每天同方向同幅度）；整體連動至少 ${MIN_DAYS} 天、下跌日連動（只看現有組合下跌的日子）至少 ${MIN_DOWN_DAYS} 天，不足寫「資料不足」。`
+      + `「近一年漲跌」「年化波動」用同一個視窗，天數不到一年時就是那段天數的漲跌。「這一段跌幅」是這一段裡最高到其後最低的最大跌幅（還原後的價格），「現在離高點」是離這一段裡的最高。`
+      + `日均成交金額是排名日往前 ${u.window_days} 個交易日的平均。`),
+    el("p", { class: "tiny" }, `對照列（現有組合、${D.core}、${D.satellite}）不參加排名，放在表格最上面；現有組合的日報酬＝${wText}。`
+      + `資料來源：${u.source}。其中 FinMind 的條款只寫「教育、非商業用途」。名單 ${u.generated_at_taipei} 產生，每月重排。`)));
+}
+
+// 全部候選的表格：欄位標題可以點來排序（再點一次反向）；空值一律排最後；三列對照固定在最上面
+function candTable(ev, wText) {
+  const noLink = (r) => r.code === "portfolio";   // 現有組合對自己的連動是 1，不列
+  const corrCell = (v, enough, n) => (v != null ? [el("strong", {}, c2(v)), el("div", { class: "tiny" }, `${n} 天`)]
+    : enough ? "—" : ["資料不足", el("div", { class: "tiny" }, `${n} 天`)]);
+  const pctCell = (v, d = 1) => (v == null ? "—" : el("strong", { class: tone(v) }, pct(v, d)));
+  // dir：第一次點這一欄時的方向（1 由小到大、−1 由大到小）
+  const COLS = [
+    { key: "code", label: "代號與名稱", left: true, dir: 1, get: (r) => r.code,
+      cell: (r) => (r.code === "portfolio"
+        ? [el("strong", {}, r.name), el("div", { class: "tiny" }, wText)]
+        : [el("strong", {}, r.code), " ", r.name, el("div", { class: "tiny" }, r.lastDate ? `${shortDate(r.lastDate)} 收盤 ${price(r.lastClose)}` : "沒有收盤")]) },
+    { key: "category", label: "類別", left: true, dir: 1, get: (r) => r.category, cell: (r) => CAT[r.category] },
+    { key: "corr", label: "整體連動", dir: 1, get: (r) => r.corr, cell: (r) => (noLink(r) ? "—" : corrCell(r.corr, r.corrEnough, r.n)) },
+    { key: "downCorr", label: "下跌日連動", dir: 1, get: (r) => r.downCorr, cell: (r) => (noLink(r) ? "—" : corrCell(r.downCorr, r.downEnough, r.nDown)) },
+    { key: "downAvg", label: "組合下跌日的平均漲跌", dir: -1, get: (r) => r.downAvg,
+      cell: (r) => (r.downAvg == null ? "—" : [pctCell(r.downAvg), el("div", { class: "tiny" }, noLink(r) ? `${r.nDown} 天` : `組合 ${pct(r.downAvgP)}，${r.nDown} 天`)]) },
+    { key: "episodeDd", label: "這一段跌幅", dir: 1, get: (r) => r.episodeDd, cell: (r) => pctCell(r.episodeDd) },
+    { key: "nowDd", label: "現在離高點", dir: 1, get: (r) => r.nowDd, cell: (r) => pctCell(r.nowDd) },
+    { key: "ret", label: "近一年漲跌", dir: -1, get: (r) => r.ret, cell: (r) => pctCell(r.ret) },
+    { key: "vol", label: "年化波動", dir: 1, get: (r) => r.vol, cell: (r) => (r.vol == null ? "—" : pct(r.vol, 1, false)) },
+    { key: "avgValue", label: "日均成交金額", dir: -1, get: (r) => r.avgValue, cell: (r) => valueText(r.avgValue) },
+  ];
+  let sort = { key: "corr", dir: 1 };
+  const thead = el("thead"), tbody = el("tbody");
+  const draw = () => {
+    const col = COLS.find((x) => x.key === sort.key);
+    thead.replaceChildren(el("tr", {}, COLS.map((x) => {
+      const on = x.key === sort.key;
+      return el("th", { class: x.left ? "" : "r", "aria-sort": on ? (sort.dir > 0 ? "ascending" : "descending") : "none" },
+        el("button", {
+          type: "button", "data-key": x.key,
+          style: { font: "inherit", color: "inherit", background: "none", border: "0", padding: "0", cursor: "pointer", whiteSpace: "nowrap" },
+          onclick: () => {
+            sort = on ? { key: x.key, dir: -sort.dir } : { key: x.key, dir: x.dir };
+            draw();
+            thead.querySelector(`button[data-key="${x.key}"]`)?.focus();
+          },
+        }, x.label + (on ? (sort.dir > 0 ? " ▲" : " ▼") : "")));
+    })));
+    const tr = (r) => el("tr", {}, COLS.map((x) => el("td", { class: x.left ? "" : "r" }, x.cell(r))));
+    tbody.replaceChildren(...ev.refs.map(tr), ...sortRows(ev.rows, col.get, sort.dir).map(tr));
+  };
+  draw();
+  return el("div", { class: "table-wrap" }, el("table", { class: "nowrap" }, thead, tbody));
 }
 
 // ── 加碼試算（中性：照目標比例）──────────────────────────

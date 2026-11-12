@@ -366,6 +366,16 @@ test("evaluateCandidates：被濾掉的異常日記下代號與日期，BBB 腰�
   near(ev.filtered[0].r, -50.6, 1e-6);   // 第 60 天本來是 −1.2%，再腰斬：0.988 × 0.5 − 1 = −50.6%
 });
 
+test("evaluateCandidates：對照列（現有組合、核心、衛星）的天數與連動", () => {
+  const [p, c, s] = mkEval().refs;
+  eq([p.code, p.n, p.nDown > 0, p.downAvg === p.downAvgP], ["portfolio", 139, true, true]);
+  // 核心 = G、衛星 = 1.5 G、組合 = 0.8 G + 0.2 × 1.5 G = 1.1 G：三者每天同方向 → 連動 1
+  eq([c.code, s.code, c.n, s.n], ["009816", "00981A", 139, 139]);
+  near(c.corr, 1, 1e-9);
+  near(s.corr, 1, 1e-9);
+  near(c.downAvg, p.downAvg / 1.1, 1e-9);   // 組合下跌日，核心的平均是組合的 1 ÷ 1.1
+});
+
 test("evaluateCandidates：這一段跌幅（還原序列）：DDD 100、120、90、110、80、100", () => {
   const d = mkEval().rows.find((r) => r.code === "DDD");
   near(d.episodeDd, -100 / 3, 1e-9);

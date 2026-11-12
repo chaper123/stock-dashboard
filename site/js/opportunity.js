@@ -275,7 +275,7 @@ export function evaluateCandidates({ dates, closes, items, core, sat, target = 0
   const portfolio = {
     code: "portfolio", name: "現有組合", category: "ref",
     ...base(presentP.map((p) => (p ? 1 : null)), adjP), lastClose: null,
-    n: pdays.length, ...periodStats(rp, pdays),
+    ...linkage(rp, rp),   // 對自己的連動是 1，只拿它的天數、下跌日平均、年化波動、近一年漲跌
   };
   const refRow = (c, p) => ({ code: c.code, name: c.name, category: "ref", ...base(c.closes, p.adj), ...linkage(rp, p.r) });
 
