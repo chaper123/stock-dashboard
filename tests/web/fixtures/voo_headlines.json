@@ -1,0 +1,877 @@
+[
+ {
+  "title": "Dow, S&P 500, Nasdaq Futures Edge Higher As Markets Attempt To Recover From Nvidia Rout: SLS, MSFT, CADL, MSTR In Focus",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-13 11:07",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500, Dow, Nasdaq Futures Recover After Markets End Lower On Jensen Huang’s Exit, Oil Price Pressure — CRWV, CBRS, NVDA, TSLA In Focus",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-13 08:19",
+  "label": "market"
+ },
+ {
+  "title": "You Don’t Need Nvidia to Beat the S&P 500. These ETFs Prove It.",
+  "source": "Barron's",
+  "tier": 2,
+  "queries": [
+   "MARKET",
+   "NVDA"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-13 05:28",
+  "label": "peer"
+ },
+ {
+  "title": "S&P 500 Recovered $1 Trillion in 90 Minutes Despite Wider Market Crash",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "BeInCrypto"
+  ],
+  "published_taipei": "2026-11-13 05:14",
+  "label": "market"
+ },
+ {
+  "title": "The S&P 500 is shrugging off Nvidia’s selloff this week. Here’s what’s keeping the rest of the market afloat.",
+  "source": "MarketWatch",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-13 05:08",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500 (^GSPC) Charts, Data & News - Yahoo Finance",
+  "source": "Yahoo! Finance Canada",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-13 05:03",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500 and Nasdaq Recover From Early Losses -- AI Fears Still Hang Over Tech Stocks",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-13 03:46",
+  "label": "market"
+ },
+ {
+  "title": "The S&P 500 Is Hiding a Sneaky Risk. Here's How Investors Can Prepare for Potential Volatility.",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-13 02:50",
+  "label": "advice"
+ },
+ {
+  "title": "Opinion: The scandal at Nvidia is exactly what’s wrong with the S&P 500",
+  "source": "MarketWatch",
+  "tier": 2,
+  "queries": [
+   "MARKET",
+   "NVDA"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-13 01:42",
+  "label": "market"
+ },
+ {
+  "title": "Few S&P 500 Stocks Yield Over 5%. Here's My Top Pick to Buy Now.",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-13 01:05",
+  "label": "advice"
+ },
+ {
+  "title": "NVIDIA’s Leadership Crisis Is Dragging the S&P 500 Lower. Here’s What Else Is Moving",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-12 23:38",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500 Futures Fall in Premarket Trading; Brookfield Infrastructure, Corteva Lag",
+  "source": "Barron's",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-12 20:30",
+  "label": "market"
+ },
+ {
+  "title": "State Street SPDR Portfolio S&P 500 (SPYM) Buys $15.2 Million More Apple on Tuesday",
+  "source": "Yahoo! Finance Canada",
+  "tier": 2,
+  "queries": [
+   "AAPL",
+   "MARKET"
+  ],
+  "title_queries": [
+   "AAPL",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-12 19:05",
+  "label": "peer"
+ },
+ {
+  "title": "What SPDR Portfolio S&P 500 Growth (SPYG) Sold: NVIDIA Leads on Nov. 10",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-12 19:05",
+  "label": "peer"
+ },
+ {
+  "title": "iShares Core S&P 500 ETF (IVV) Sells $26.6 Million of Apple on Tuesday",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "AAPL",
+   "MARKET"
+  ],
+  "title_queries": [
+   "AAPL",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-12 19:04",
+  "label": "peer"
+ },
+ {
+  "title": "Nasdaq, S&P 500 futures fall as Nvidia turbulence unsettles AI stocks",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET",
+   "NVDA"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [
+   "Reuters",
+   "The Lufkin Daily News",
+   "TradingView"
+  ],
+  "published_taipei": "2026-11-12 19:01",
+  "label": "market"
+ },
+ {
+  "title": "Dow, S&P 500, Nasdaq Futures Mixed As Tech Rebounds Despite Nvidia CEO Crisis: AMD, CSCO, AMAT In Focus",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-12 11:15",
+  "label": "market"
+ },
+ {
+  "title": "CYBER HORNET S&P 500 and XRP 75 XXX Stock Forecast & Price Target",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-12 09:17",
+  "label": "advice"
+ },
+ {
+  "title": "He Thinks His $500,000 S&P 500 401(k) Protects Him From Big Losses. Just 10 Holdings Make Up Nearly 40% of the Fund. A 25% Drop Could Cost Him Almost $49,000",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "24/7 Wall St."
+  ],
+  "published_taipei": "2026-11-12 05:27",
+  "label": "advice"
+ },
+ {
+  "title": "History Says 1 Month Has Been the S&P 500's Most Reliable Since 1950. It's Only Weeks Away.",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-12 05:01",
+  "label": "advice"
+ },
+ {
+  "title": "S&P 500 Sits 2.5% From a Record High Despite the Stock Market Crash",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "BeInCrypto"
+  ],
+  "published_taipei": "2026-11-12 04:50",
+  "label": "market"
+ },
+ {
+  "title": "Is Invesco S&P 500 Equal Weight Health Care ETF (RSPH) a Strong ETF Right Now?",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-12 04:39",
+  "label": "peer"
+ },
+ {
+  "title": "Check out S&P 500 INDEX's stock price (.SPX) in real time",
+  "source": "CNBC",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-11 21:54",
+  "label": "market"
+ },
+ {
+  "title": "Is the shifting AI narrative reshaping how investors approach the S&P 500?",
+  "source": "Yahoo Finance UK",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-11 21:45",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500 Futures Up in Premarket Trading; Intercorp Finl Svcs, CoreWeave Lead",
+  "source": "Barron's",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-11 20:30",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500, Nasdaq futures rise as CoreWeave results calm AI jitters",
+  "source": "Reuters",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "TradingView"
+  ],
+  "published_taipei": "2026-11-11 20:14",
+  "label": "market"
+ },
+ {
+  "title": "Mapping the Market: S&P 500 at risk of further losses",
+  "source": "Reuters",
+  "tier": 2,
+  "queries": [
+   "MARKET",
+   "TAIWAN"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "TradingView"
+  ],
+  "published_taipei": "2026-11-11 19:06",
+  "label": "market"
+ },
+ {
+  "title": "State Street SPDR Portfolio S&P 500 (SPYM) Buys $75.6 Million More Apple on Monday",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "AAPL",
+   "MARKET"
+  ],
+  "title_queries": [
+   "AAPL",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-11 19:03",
+  "label": "peer"
+ },
+ {
+  "title": "Mid-Cap Stocks Are Beating the S&P 500—and They Have Steady Yields",
+  "source": "Barron's",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-11 19:00",
+  "label": "peer"
+ },
+ {
+  "title": "S&P 500, Nasdaq futures rise after CoreWeave soothes AI spending fears",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-11 18:44",
+  "label": "market"
+ },
+ {
+  "title": "Why the S&P 500 Could Be Heading for a Repeat of 2018",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-11 18:31",
+  "label": "market"
+ },
+ {
+  "title": "Stock Market: Will S&P 500 Open Up or Down Today?",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "Benzinga"
+  ],
+  "published_taipei": "2026-11-11 14:19",
+  "label": "market"
+ },
+ {
+  "title": "Dow, S&P 500, Nasdaq Futures Edge Higher After Red-Hot Inflation Data And Nvidia Losses: CRWV, TTWO, NLST, NBIS In Focus",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [
+   "Stocktwits"
+  ],
+  "published_taipei": "2026-11-11 11:51",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500 Sell-Off: 1 Investing Step to Take Right Now, and 1 Risky Move to Avoid",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-11 11:05",
+  "label": "advice"
+ },
+ {
+  "title": "Can The S&P 500 Keep Rising In 2027? UBS Bets On 8,900, But BofA Warns Of Crowded Trades",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-11 10:51",
+  "label": "advice"
+ },
+ {
+  "title": "Amazon’s Cloud Computing Business Already Brings in More Revenue Than 476 Companies in the S&P 500. Here’s What It Would Take to Reach $1 Trillion.",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-11 08:51",
+  "label": "peer"
+ },
+ {
+  "title": "Only 2 Novembers Since 1950 Have Started Worse for the S&P 500 Than This One. Here's What Followed the Other Weak Starts.",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-11 06:27",
+  "label": "advice"
+ },
+ {
+  "title": "Why this top Wall Street strategist isn't bullish on the S&P 500 for 2027",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-11 06:15",
+  "label": "advice"
+ },
+ {
+  "title": "3 Ways to Protect Your Portfolio After the S&P 500's Worst Day Since April 2025",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-11 03:50",
+  "label": "advice"
+ },
+ {
+  "title": "Is the S&P 500 Heading for a Correction?",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-11 01:53",
+  "label": "market"
+ },
+ {
+  "title": "This Overlooked ETF Is Quietly Giving the S&P 500 a Run for Its Money",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-11 00:37",
+  "label": "peer"
+ },
+ {
+  "title": "Stock market today: Dow, S&P 500 slip after CPI data raises Fed rate-hike bets",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET",
+   "FED"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 23:12",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500 market positioning risks ahead of CPI and NVIDIA earnings",
+  "source": "Yahoo Finance Singapore",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "NVDA",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 21:49",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500 futures fall sharply after October inflation data",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 21:38",
+  "label": "market"
+ },
+ {
+  "title": "UBS keeps S&P 500 end-2027 target at 8,900, says derating sets up strong returns",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 21:13",
+  "label": "advice"
+ },
+ {
+  "title": "US Stock Market Today: S&P 500 Futures Edge Higher On Key CPI Focus",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 21:10",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500 futures rise as traders brace for crucial consumer inflation report",
+  "source": "CNBC",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 20:37",
+  "label": "market"
+ },
+ {
+  "title": "S&P 500 Futures Steady in Premarket Trading; Intercorp Finl Svcs, Sanmina Lead",
+  "source": "Barron's",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 20:30",
+  "label": "market"
+ },
+ {
+  "title": "This Growth ETF Has Crushed the S&P 500 Since 2004. Here's Why It's Still a Buy.",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 20:10",
+  "label": "peer"
+ },
+ {
+  "title": "This Vanguard ETF Has Outperformed the S&P 500 and Nasdaq Composite",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool",
+   "AOL.com"
+  ],
+  "published_taipei": "2026-11-10 19:13",
+  "label": "peer"
+ },
+ {
+  "title": "Direxion Daily S&P 500 Bull 3X (SPXL) Adds Apple and Nvidia on Friday",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "AAPL",
+   "MARKET"
+  ],
+  "title_queries": [
+   "NVDA",
+   "AAPL",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 19:06",
+  "label": "peer"
+ },
+ {
+  "title": "State Street SPDR Portfolio S&P 500 ETF (SPYM) Adds Apple and Nvidia on Nov. 6",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "AAPL",
+   "MARKET"
+  ],
+  "title_queries": [
+   "NVDA",
+   "AAPL",
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 19:05",
+  "label": "peer"
+ },
+ {
+  "title": "What Invesco S&P 500 Equal Weight ETF (RSP) Bought: Moderna Leads on Nov. 6",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 19:05",
+  "label": "peer"
+ },
+ {
+  "title": "S&P 500, Dow futures climb as oil slide lifts sentiment",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "ANTHROPIC",
+   "FED",
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "Reuters",
+   "TradingView"
+  ],
+  "published_taipei": "2026-11-10 18:26",
+  "label": "market"
+ },
+ {
+  "title": "Stock Market Sell-Off: Meet the Unstoppable Vanguard ETF Obliterating the S&P 500 in 2026",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [],
+  "published_taipei": "2026-11-10 18:22",
+  "label": "peer"
+ },
+ {
+  "title": "Should Invesco S&P 500 Pure Value ETF (RPV) Be on Your Investing Radar?",
+  "source": "Yahoo! Finance Canada",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "Yahoo Finance"
+  ],
+  "published_taipei": "2026-11-10 18:20",
+  "label": "peer"
+ },
+ {
+  "title": "2 Vanguard Index Funds to Buy Now to Beat the S&P 500 in the Next Year, According to Wall Street",
+  "source": "Yahoo Finance",
+  "tier": 2,
+  "queries": [
+   "MARKET"
+  ],
+  "title_queries": [
+   "MARKET"
+  ],
+  "also": [
+   "The Motley Fool"
+  ],
+  "published_taipei": "2026-11-10 17:32",
+  "label": "peer"
+ }
+]
