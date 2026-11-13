@@ -72,8 +72,12 @@ export const loadSettings = () => once("settings", async () => {
   const src = "帳本「設定」";
   const rows = parseCSV(await fetchText(SOURCES.ledger.settings, src, true));
   // 前幾列是標題與說明，用 A 欄的項目名稱找值，不寫死列號
-  const get = (name) => {
-    const r = rows.find((x) => (x[0] || "").trim().startsWith(name));
+  // exact：整格要一樣（「基準日」同時是「基準日未投入資金」「基準日後買入合計」的開頭，不能用開頭比對）
+  const get = (name, exact = false) => {
+    const r = rows.find((x) => {
+      const a = (x[0] || "").trim();
+      return exact ? a === name : a.startsWith(name);
+    });
     return r ? (r[1] || "").trim() : null;
   };
   const s = {
@@ -84,6 +88,13 @@ export const loadSettings = () => once("settings", async () => {
     lastBuy: get("最近一次買入日"),
     capTw: get("台股單次上限"),
     capUs: get("美股單次上限"),
+    // 資金頁「現金與投入」要的欄位（R18）。讀不到（沒有這一列或格子是空的）是 null，不丟錯
+    basis: get("基準日", true) || null,       // 基準日（YYYY-MM-DD）
+    basisFund: num(get("基準日未投入資金")),   // 基準日當天還沒投入的資金
+    pocket: num(get("記帳前錢包零頭")),
+    depositMonths: num(get("已入金月數")),
+    depositTotal: num(get("累計入金")),        // 照「定投金額」分頁逐月加總，是推算不是逐筆確認
+    buysSince: num(get("基準日後買入合計")),   // 只計「計入資金池＝是」的列
   };
   if (s.pool == null) throw new DataError(src, "找不到「可用資金」這一列");
   return s;
