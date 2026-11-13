@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>R18 現金與投入</title></head>
+<body>
+<h1>R18 現金與投入（site/js/cash.js、data.js 的 loadSettings）</h1>
+<p>用假的設定與交易（攔截 fetch）算出期末並對上帳本可用資金；差額不是 0、買進合計跟帳本不一致時標出來；
+缺任何一項不補 0；網站沖銷的一對不重複算；loadSettings 讀不到新欄位時舊行為不變。</p>
+<script type="module">
+import { test, eq, ok, report, results } from "./harness.js";
+import { cashTable, nextDeposit, tradeCash } from "/site/js/cash.js";
+import { loadSettings, loadTrades, clearCache, DataError } from "/site/js/data.js";
+
+// ── 假帳本（攔截 fetch）──
+// 「設定」分頁的開頭四列是標題與說明，A 欄是項目名稱；整份照 2026-11-13 線上帳本的樣子
+const S_HEAD = `投資共用帳本（台股＋美股共用資金池）,,
+藍字是輸入值，黑字是公式。每筆成交記在「交易紀錄」，可用資金自動重算。,,
+,,
+項目,數值,說明`;
+const S_REAL = `${S_HEAD}
+基準日,2026-10-06,"使用者回報：當日未投入資金 NT$6,000"
+基準日未投入資金（NT$）,"6,000",使用者回報
+每月入金（NT$）,"3,000",本月定投金額
+首筆入金日,2026-11-06,使用者回報
+台股單次上限（佔可用資金）,60%,台股排程規則
+美股單次上限（佔可用資金）,40%,美股排程規則
+記帳前錢包零頭（NT$）,80,"口袋錢包裡記帳前每次投資剩下的零錢"
+已入金月數,1,依今天日期（台北時間）計算
+基準日後買入合計（NT$）,"9,056",只計「計入資金池＝是」的列
+基準日後賣出回收（NT$）,0,
+可用資金（NT$）,24,理論值
+下一次入金日,2026-12-06,
+最近一次買入日（台股＋美股）,2026-11-05,
+累計入金（NT$）,"3,000",依「定投金額」分頁逐月加總
+下月定投（NT$）,"3,000",下個月 6 日入帳的金額`;
+// 只有舊版網站讀的那幾列（沒有新欄位）
+const S_OLD = `${S_HEAD}
+每月入金（NT$）,"3,000",
+台股單次上限（佔可用資金）,60%,
+美股單次上限（佔可用資金）,40%,
+可用資金（NT$）,24,
+下一次入金日,2026-12-06,
+最近一次買入日（台股＋美股）,2026-11-05,
+下月定投（NT$）,"3,000",`;
+
+const T_HEAD = "日期,市場,代號,買賣,股數,成交價,幣別,手續費,交割金額（原幣，含費）,匯率（USD/TWD）,台幣金額,計入資金池,台幣金額來源,備註,成交時間,交易稅,請求編號,更正";
+// [日期, 市場, 代號, 買賣, 股數, 交割金額, 台幣金額, 計入資金池, 更正]
+const trow = ([date, mkt, code, side, n, settle, twd, pool = "是", mark = ""]) =>
+  `${date},${mkt},${code},${side},${n},10,${mkt === "美股" ? "USD" : "TWD"},1,${settle === "" ? "" : `"${settle}"`},,${twd === "" ? "" : `"${twd}"`},${pool},測試,,,,,${mark}`;
+const tradesCsv = (rows) => [T_HEAD, ...rows.map(trow)].join("\n");
+
+// 基準日前 9 列（計入資金池＝否，沒有金額）＋基準日後的 7 筆買進，跟線上帳本一樣
+const PRE = [
+  ["2026-04-08", "台股", "009816", "買進", 89, "", "", "否"], ["2026-04-13", "台股", "009816", "買進", 123, "", "", "否"],
+  ["2026-04-17", "美股", "VOO", "買進", 0.1262, "82.40", "", "否"], ["2026-05-07", "台股", "009816", "買進", 213, "", "", "否"],
+  ["2026-05-18", "台股", "009816", "買進", 49, "", "", "否"], ["2026-06-08", "台股", "009816", "買進", 207, "", "", "否"],
+  ["2026-07-29", "台股", "009816", "買進", 220, "", "", "否"], ["2026-09-29", "美股", "GOOGL", "買進", 0.1826, "62.10", "", "否"],
+];
+const BUYS7 = [
+  ["2026-10-13", "台股", "00981A", "買進", 28, "872.00", "872"], ["2026-10-15", "台股", "009816", "買進", 78, "1,269.00", "1,269"],
+  ["2026-10-15", "台股", "00981A", "買進", 43, "1,279.00", "1,279"], ["2026-10-29", "台股", "00981A", "買進", 30, "835.00", "835"],
+  ["2026-11-05", "台股", "00981A", "買進", 40, "949.00", "949"], ["2026-11-05", "台股", "009816", "買進", 173, "2,543.00", "2,543"],
+  ["2026-11-05", "台股", "009816", "買進", 89, "1,309.00", "1,309"],
+];
+const T_REAL = tradesCsv([...PRE, ...BUYS7]);
+
+let world = {};
+const realFetch = window.fetch;
+window.fetch = async (url) => {
+  const u = String(url);
+  const body = u.includes("gid=0&") ? world.settings : u.includes("gid=1&") ? world.trades : null;
+  if (body == null) return new Response("", { status: 404 });
+  return new Response(body, { status: 200 });
+};
+async function load(w) {
+  world = w;
+  clearCache();
+  const [settings, trades] = await Promise.all([loadSettings(), loadTrades()]);
+  return { settings, trades, cash: cashTable({ settings, trades }) };
+}
+
+// 直接餵 cashTable 的假設定與交易
+const SET = { pool: 24, monthly: 3000, basis: "2026-10-06", basisFund: 6000, pocket: 80, depositMonths: 1, depositTotal: 3000, buysSince: 9056, sellsSince: 0 };
+const buy = (date, code, amount, extra = {}) => ({ date, market: "tw", code, side: "買進", shares: 1, twd: amount, settle: amount, inPool: true, ...extra });
+const BUY7 = BUYS7.map(([d, , c, , , , twd]) => buy(d, c, Number(twd.replace(",", ""))));
+
+// ── cashTable：算法 ──
+test("期初 6,080、入金 3,000、買進 9,056、期末 24，跟帳本可用資金對上", () => {
+  const c = cashTable({ settings: SET, trades: BUY7 });
+  eq([c.opening, c.deposits, c.buys, c.sells, c.closing], [6080, 3000, 9056, 0, 24]);
+  eq([c.poolDiff, c.buysDiff, c.missing], [0, 0, []]);
+  eq(c.buyRows.length, 7);
+  eq(c.buyRows.reduce((s, r) => s + r.amount, 0), 9056);
+});
+test("期初是基準日未投入資金＋記帳前錢包零頭", () => {
+  const c = cashTable({ settings: { ...SET, basisFund: 5000, pocket: 25 }, trades: [] });
+  eq([c.basisFund, c.pocket, c.opening], [5000, 25, 5025]);
+});
+test("逐筆明細：日期由舊到新、同一天維持帳本順序、帶代號與金額", () => {
+  const c = cashTable({ settings: SET, trades: [buy("2026-11-05", "B", 2), buy("2026-10-13", "A", 1), buy("2026-11-05", "C", 3)] });
+  eq(c.buyRows.map((r) => [r.date, r.code, r.amount]), [["2026-10-13", "A", 1], ["2026-11-05", "B", 2], ["2026-11-05", "C", 3]]);
+});
+test("賣出回收加進期末：期初＋入金−買進＋賣出", () => {
+  const sell = { date: "2026-11-10", market: "tw", code: "009816", side: "賣出", shares: 10, twd: 500, settle: 500, inPool: true };
+  const c = cashTable({ settings: { ...SET, pool: 524 }, trades: [...BUY7, sell] });
+  eq([c.sells, c.sellRows.length, c.closing, c.poolDiff], [500, 1, 524, 0]);
+});
+test("計入資金池＝否的列（基準日前）不算", () => {
+  const c = cashTable({ settings: SET, trades: [...BUY7, buy("2026-04-08", "009816", 99999, { inPool: false })] });
+  eq([c.buys, c.buyRows.length, c.closing], [9056, 7, 24]);
+});
+test("金額用數字相加，小數不冒誤差（0.1＋0.2 ＝ 0.3）", () => {
+  const c = cashTable({ settings: { ...SET, buysSince: 0.3 }, trades: [buy("2026-11-01", "A", 0.1), buy("2026-11-02", "B", 0.2)] });
+  eq([c.buys, c.buysDiff], [0.3, 0]);
+});
+
+// ── cashTable：差額要標出來 ──
+test("期末跟帳本可用資金差 6：poolDiff 是 −6（算出來的 − 帳本的）", () => {
+  const c = cashTable({ settings: { ...SET, pool: 30 }, trades: BUY7 });
+  eq([c.closing, c.ledgerPool, c.poolDiff, c.buysDiff], [24, 30, -6, 0]);
+});
+test("帳本可用資金比算出來的少 10：poolDiff 是 +10", () => {
+  const c = cashTable({ settings: { ...SET, pool: 14 }, trades: BUY7 });
+  eq(c.poolDiff, 10);
+});
+test("買進合計跟帳本「基準日後買入合計」不一致：buysDiff 標出來", () => {
+  const c = cashTable({ settings: { ...SET, buysSince: 9000 }, trades: BUY7 });
+  eq([c.buys, c.ledgerBuys, c.buysDiff], [9056, 9000, 56]);
+});
+test("帳本沒有「基準日後買入合計」：不比，buysDiff 是 null，不是 0", () => {
+  const c = cashTable({ settings: { ...SET, buysSince: null }, trades: BUY7 });
+  eq([c.ledgerBuys, c.buysDiff, c.closing], [null, null, 24]);
+});
+const SELL500 = { date: "2026-11-10", market: "tw", code: "009816", side: "賣出", shares: 10, twd: 500, settle: 500, inPool: true };
+test("賣出合計跟帳本「基準日後賣出回收」一致：sellsDiff 是 0", () => {
+  const c = cashTable({ settings: { ...SET, pool: 524, sellsSince: 500 }, trades: [...BUY7, SELL500] });
+  eq([c.sells, c.ledgerSells, c.sellsDiff, c.poolDiff], [500, 500, 0, 0]);
+});
+test("賣出合計跟帳本不一致：交易紀錄 500、帳本 300 → sellsDiff 是 +200", () => {
+  const c = cashTable({ settings: { ...SET, pool: 524, sellsSince: 300 }, trades: [...BUY7, SELL500] });
+  eq([c.sells, c.ledgerSells, c.sellsDiff], [500, 300, 200]);
+});
+test("交易紀錄沒有賣出、帳本卻寫了賣出回收 300：sellsDiff 是 −300", () => {
+  const c = cashTable({ settings: { ...SET, sellsSince: 300 }, trades: BUY7 });
+  eq([c.sells, c.sellRows.length, c.ledgerSells, c.sellsDiff], [0, 0, 300, -300]);
+});
+test("帳本沒有「基準日後賣出回收」：不比，sellsDiff 是 null，不是 0，也不擋期末", () => {
+  const c = cashTable({ settings: { ...SET, sellsSince: null }, trades: [...BUY7, SELL500] });
+  eq([c.ledgerSells, c.sellsDiff], [null, null]);
+  eq(cashTable({ settings: { ...SET, sellsSince: null }, trades: BUY7 }).closing, 24);
+  eq(c.closing, 524);
+});
+test("兩邊都沒有賣出（交易紀錄沒有、帳本是 0）：sellsDiff 是 0", () => {
+  const c = cashTable({ settings: SET, trades: BUY7 });
+  eq([c.sells, c.ledgerSells, c.sellsDiff], [0, 0, 0]);
+});
+test("有一筆賣出讀不到金額：賣出合計與 sellsDiff 都不算，不把那筆當 0", () => {
+  const c = cashTable({ settings: { ...SET, sellsSince: 500 }, trades: [...BUY7, { ...SELL500, twd: null, settle: null }] });
+  eq([c.sells, c.sellsDiff, c.closing], [null, null, null]);
+});
+test("帳本沒有可用資金：期末照算，poolDiff 是 null，不是 0", () => {
+  const c = cashTable({ settings: { ...SET, pool: null }, trades: BUY7 });
+  eq([c.closing, c.ledgerPool, c.poolDiff], [24, null, null]);
+});
+
+// ── cashTable：缺項不補 0 ──
+for (const [key, label] of [["basisFund", "基準日未投入資金"], ["pocket", "記帳前錢包零頭"], ["depositTotal", "累計入金"]]) {
+  test(`缺「${label}」：期末不算（null）、列在 missing，不當 0`, () => {
+    const c = cashTable({ settings: { ...SET, [key]: null }, trades: BUY7 });
+    eq(c.closing, null);
+    eq(c.poolDiff, null);
+    ok(c.missing.includes(label), c.missing.join("、"));
+    eq(c.missing.length, 1);
+  });
+}
+test("缺基準日未投入資金：期初也不算（不是只有零頭）", () => {
+  const c = cashTable({ settings: { ...SET, basisFund: null }, trades: BUY7 });
+  eq([c.opening, c.basisFund, c.pocket], [null, null, 80]);
+});
+test("基準日未投入資金帳本寫的是 0：照 0 算，不算缺", () => {
+  const c = cashTable({ settings: { ...SET, basisFund: 0, pocket: 0, depositTotal: 0 }, trades: [] });
+  eq([c.opening, c.closing, c.missing], [0, 0, []]);
+});
+test("缺基準日（日期）與已入金月數：只影響顯示，不擋期末", () => {
+  const c = cashTable({ settings: { ...SET, basis: null, depositMonths: null }, trades: BUY7 });
+  eq([c.basis, c.depositMonths, c.depositsByMonths, c.closing], [null, null, null, 24]);
+});
+test("有一筆買進讀不到金額：買進合計與期末都不算，不把那筆當 0", () => {
+  const bad = buy("2026-11-06", "00981A", null, { settle: null });
+  const c = cashTable({ settings: SET, trades: [...BUY7, bad] });
+  eq([c.buys, c.closing, c.buyRows.length], [null, null, 8]);
+  ok(c.missing.some((m) => m.startsWith("買進")), c.missing.join("、"));
+});
+test("美股只有交割金額（美元）沒有台幣金額：讀不到，不把美元當台幣", () => {
+  const us = { date: "2026-11-06", market: "us", code: "VOO", side: "買進", shares: 0.1, twd: null, settle: 82.4, inPool: true };
+  eq(tradeCash(us), null);
+  eq(cashTable({ settings: SET, trades: [...BUY7, us] }).closing, null);
+  eq(tradeCash({ ...us, twd: 2600 }), 2600);
+});
+test("台股沒有台幣金額時用交割金額", () => eq(tradeCash({ market: "tw", twd: null, settle: 872 }), 872));
+test("沒有任何交易：買進、賣出是 0（讀得到、確實沒有），期末照算", () => {
+  const c = cashTable({ settings: { ...SET, buysSince: 0, pool: 9080 }, trades: [] });
+  eq([c.buys, c.sells, c.closing, c.poolDiff], [0, 0, 9080, 0]);
+});
+
+// ── 入金的說明 ──
+test("累計入金等於已入金月數 × 每月入金：depositsByMonths 是 true", () => eq(cashTable({ settings: SET, trades: [] }).depositsByMonths, true));
+test("定投金額中途改過（累計不等於月數 × 本月金額）：depositsByMonths 是 false，畫面不寫成乘法", () => {
+  eq(cashTable({ settings: { ...SET, depositMonths: 3, depositTotal: 8000 }, trades: [] }).depositsByMonths, false);
+});
+
+// ── 下一次入金日與金額 ──
+test("11/13 之後下一次入金日是 12/06；金額用「定投金額」分頁那個月的設定", () => {
+  const dca = [{ ym: "2026-10", amount: 3000 }, { ym: "2026-12", amount: 4000 }];
+  eq(nextDeposit("2026-11-13", dca), { date: "2026-12-06", amount: 4000, known: true });
+  eq(nextDeposit("2026-11-13", [{ ym: "2026-10", amount: 3000 }]), { date: "2026-12-06", amount: 3000, known: true });
+});
+test("入金日當天算今天；12 月 7 日之後是隔年 1 月 6 日", () => {
+  eq(nextDeposit("2026-12-06", null).date, "2026-12-06");
+  eq(nextDeposit("2026-12-07", null).date, "2027-01-06");
+});
+test("讀不到定投金額分頁：用計畫的 3,000，known 是 false", () => eq(nextDeposit("2026-11-13", null), { date: "2026-12-06", amount: 3000, known: false }));
+
+// ── loadSettings 與整條線（假帳本）──
+const cases = [];
+cases.push(["loadSettings 讀新欄位（照線上帳本的 A 欄項目名稱）", async () => {
+  clearCache();
+  world = { settings: S_REAL, trades: T_REAL };
+  const s = await loadSettings();
+  eq([s.basis, s.basisFund, s.pocket, s.depositMonths, s.depositTotal, s.buysSince], ["2026-10-06", 6000, 80, 1, 3000, 9056]);
+}]);
+cases.push(["loadSettings 讀「基準日後賣出回收」：帳本寫 0 就是 0；沒有這一列是 null、不丟錯", async () => {
+  clearCache();
+  world = { settings: S_REAL, trades: T_REAL };
+  eq((await loadSettings()).sellsSince, 0);
+  clearCache();
+  world = { settings: S_REAL.replace("基準日後賣出回收（NT$）,0,", "基準日後賣出回收（NT$）,\"1,200\","), trades: T_REAL };
+  eq((await loadSettings()).sellsSince, 1200);
+  clearCache();
+  world = { settings: S_OLD, trades: T_REAL };
+  eq((await loadSettings()).sellsSince, null);
+  clearCache();
+  world = { settings: S_REAL.replace("基準日後賣出回收（NT$）,0,", "基準日後賣出回收（NT$）,,"), trades: T_REAL };
+  eq((await loadSettings()).sellsSince, null);
+}]);
+cases.push(["整條線（假帳本）有一筆賣出 500：期末加回 500，賣出合計跟帳本對上；帳本寫 300 就標出差額", async () => {
+  const sells = [...PRE, ...BUYS7, ["2026-11-10", "台股", "009816", "賣出", 10, "500.00", "500"]];
+  const set500 = S_REAL.replace("基準日後賣出回收（NT$）,0,", "基準日後賣出回收（NT$）,500,").replace("可用資金（NT$）,24,", "可用資金（NT$）,524,");
+  const ok500 = (await load({ settings: set500, trades: tradesCsv(sells) })).cash;
+  eq([ok500.sells, ok500.closing, ok500.poolDiff, ok500.sellsDiff, ok500.sellRows.length], [500, 524, 0, 0, 1]);
+  const bad = (await load({ settings: set500.replace("基準日後賣出回收（NT$）,500,", "基準日後賣出回收（NT$）,300,"), trades: tradesCsv(sells) })).cash;
+  eq([bad.sellsDiff, bad.poolDiff], [200, 0]);
+}]);
+cases.push(["loadSettings 舊欄位的值與型別沒變", async () => {
+  clearCache();
+  world = { settings: S_REAL, trades: T_REAL };
+  const s = await loadSettings();
+  eq([s.pool, s.monthly, s.nextMonthly, s.nextDeposit, s.lastBuy, s.capTw, s.capUs], [24, 3000, 3000, "2026-12-06", "2026-11-05", "60%", "40%"]);
+}]);
+cases.push(["「基準日」要整格一樣：不會誤取「基準日未投入資金」或「基準日後買入合計」", async () => {
+  clearCache();
+  world = { settings: `${S_HEAD}\n基準日未投入資金（NT$）,"6,000",\n基準日後買入合計（NT$）,"9,056",\n可用資金（NT$）,24,`, trades: T_REAL };
+  const s = await loadSettings();
+  eq([s.basis, s.basisFund, s.buysSince], [null, 6000, 9056]);
+}]);
+cases.push(["loadSettings 讀不到新欄位：新欄位是 null、舊欄位照舊、不丟錯", async () => {
+  clearCache();
+  world = { settings: S_OLD, trades: T_REAL };
+  const s = await loadSettings();
+  eq([s.basis, s.basisFund, s.pocket, s.depositMonths, s.depositTotal, s.buysSince], [null, null, null, null, null, null]);
+  eq([s.pool, s.monthly, s.nextMonthly, s.nextDeposit, s.lastBuy, s.capTw, s.capUs], [24, 3000, 3000, "2026-12-06", "2026-11-05", "60%", "40%"]);
+}]);
+cases.push(["新欄位那一格是空的：也是 null，不是 0", async () => {
+  clearCache();
+  world = { settings: S_REAL.replace("記帳前錢包零頭（NT$）,80,", "記帳前錢包零頭（NT$）,,").replace("已入金月數,1,", "已入金月數,,"), trades: T_REAL };
+  const s = await loadSettings();
+  eq([s.pocket, s.depositMonths, s.basisFund], [null, null, 6000]);
+}]);
+cases.push(["找不到「可用資金」仍然丟錯（舊行為）", async () => {
+  clearCache();
+  world = { settings: S_REAL.replace("可用資金（NT$）,24,理論值\n", ""), trades: T_REAL };
+  try {
+    await loadSettings();
+  } catch (e) {
+    ok(e instanceof DataError && e.message.includes("可用資金"), e.message);
+    return;
+  }
+  throw new Error("沒有丟錯");
+}]);
+cases.push(["整條線（假帳本，照線上 2026-11-13 的內容）：期初 6,080、入金 3,000、買進 9,056、期末 24，7 筆", async () => {
+  const { cash } = await load({ settings: S_REAL, trades: T_REAL });
+  eq([cash.opening, cash.deposits, cash.buys, cash.closing, cash.poolDiff, cash.buysDiff], [6080, 3000, 9056, 24, 0, 0]);
+  eq(cash.buyRows.length, 7);
+  eq(cash.buyRows.map((r) => r.amount), [872, 1269, 1279, 835, 949, 2543, 1309]);
+  eq(cash.basis, "2026-10-06");
+}]);
+cases.push(["沖銷的一對不重複算：逐筆明細與筆數都不含原列與沖銷列，合計不變", async () => {
+  // 試算表列號＝表頭算第 1 列：資料第 1 筆是第 2 列。第 3 列被第 4 列沖銷
+  const rows = [
+    ["2026-10-13", "台股", "00981A", "買進", 28, "872.00", "872"],
+    ["2026-10-15", "台股", "009816", "買進", 78, "1,269.00", "1,269", "是", "已被第 4 列沖銷"],
+    ["2026-10-15", "台股", "009816", "買進", -78, "-1,269.00", "-1,269", "是", "沖銷第 3 列"],
+    ["2026-10-29", "台股", "00981A", "買進", 30, "835.00", "835"],
+  ];
+  const { trades, cash } = await load({ settings: `${S_REAL}`.replace("9,056", "1,707").replace("可用資金（NT$）,24", "可用資金（NT$）,7373"), trades: tradesCsv(rows) });
+  eq(trades.length, 2, "loadTrades 拿掉沖銷的一對");
+  eq(cash.buyRows.map((r) => [r.date, r.code, r.amount]), [["2026-10-13", "00981A", 872], ["2026-10-29", "00981A", 835]]);
+  eq([cash.buys, cash.closing, cash.poolDiff, cash.buysDiff], [1707, 7373, 0, 0]);
+}]);
+cases.push(["沖銷列在原列前面也一樣（以「沖銷第 N 列」的列號為準）", async () => {
+  const rows = [
+    ["2026-10-15", "台股", "009816", "買進", -78, "-1,269.00", "-1,269", "是", "沖銷第 3 列"],
+    ["2026-10-15", "台股", "009816", "買進", 78, "1,269.00", "1,269", "是", "已被第 2 列沖銷"],
+    ["2026-10-29", "台股", "00981A", "買進", 30, "835.00", "835"],
+  ];
+  const { cash } = await load({ settings: S_REAL, trades: tradesCsv(rows) });
+  eq([cash.buyRows.length, cash.buys], [1, 835]);
+}]);
+cases.push(["帳本被改動、買進合計對不上：兩個差額都標出來", async () => {
+  // 帳本設定寫 9,056，但交易紀錄少了最後一筆 1,309
+  const { cash } = await load({ settings: S_REAL, trades: tradesCsv([...PRE, ...BUYS7.slice(0, 6)]) });
+  eq([cash.buys, cash.buysDiff, cash.closing, cash.poolDiff], [7747, -1309, 1333, 1309]);
+}]);
+
+for (const [name, fn] of cases) {
+  try {
+    await fn();
+    results.push([name, true, ""]);
+  } catch (e) {
+    results.push([name, false, e.message]);
+  }
+}
+window.fetch = realFetch;
+report();
+</script>
+</body>
+</html>
