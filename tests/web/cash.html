@@ -79,7 +79,7 @@ async function load(w) {
 }
 
 // 直接餵 cashTable 的假設定與交易
-const SET = { pool: 24, monthly: 3000, basis: "2026-10-06", basisFund: 6000, pocket: 80, depositMonths: 1, depositTotal: 3000, buysSince: 9056 };
+const SET = { pool: 24, monthly: 3000, basis: "2026-10-06", basisFund: 6000, pocket: 80, depositMonths: 1, depositTotal: 3000, buysSince: 9056, sellsSince: 0 };
 const buy = (date, code, amount, extra = {}) => ({ date, market: "tw", code, side: "買進", shares: 1, twd: amount, settle: amount, inPool: true, ...extra });
 const BUY7 = BUYS7.map(([d, , c, , , , twd]) => buy(d, c, Number(twd.replace(",", ""))));
 
@@ -129,6 +129,33 @@ test("買進合計跟帳本「基準日後買入合計」不一致：buysDiff �
 test("帳本沒有「基準日後買入合計」：不比，buysDiff 是 null，不是 0", () => {
   const c = cashTable({ settings: { ...SET, buysSince: null }, trades: BUY7 });
   eq([c.ledgerBuys, c.buysDiff, c.closing], [null, null, 24]);
+});
+const SELL500 = { date: "2026-11-10", market: "tw", code: "009816", side: "賣出", shares: 10, twd: 500, settle: 500, inPool: true };
+test("賣出合計跟帳本「基準日後賣出回收」一致：sellsDiff 是 0", () => {
+  const c = cashTable({ settings: { ...SET, pool: 524, sellsSince: 500 }, trades: [...BUY7, SELL500] });
+  eq([c.sells, c.ledgerSells, c.sellsDiff, c.poolDiff], [500, 500, 0, 0]);
+});
+test("賣出合計跟帳本不一致：交易紀錄 500、帳本 300 → sellsDiff 是 +200", () => {
+  const c = cashTable({ settings: { ...SET, pool: 524, sellsSince: 300 }, trades: [...BUY7, SELL500] });
+  eq([c.sells, c.ledgerSells, c.sellsDiff], [500, 300, 200]);
+});
+test("交易紀錄沒有賣出、帳本卻寫了賣出回收 300：sellsDiff 是 −300", () => {
+  const c = cashTable({ settings: { ...SET, sellsSince: 300 }, trades: BUY7 });
+  eq([c.sells, c.sellRows.length, c.ledgerSells, c.sellsDiff], [0, 0, 300, -300]);
+});
+test("帳本沒有「基準日後賣出回收」：不比，sellsDiff 是 null，不是 0，也不擋期末", () => {
+  const c = cashTable({ settings: { ...SET, sellsSince: null }, trades: [...BUY7, SELL500] });
+  eq([c.ledgerSells, c.sellsDiff], [null, null]);
+  eq(cashTable({ settings: { ...SET, sellsSince: null }, trades: BUY7 }).closing, 24);
+  eq(c.closing, 524);
+});
+test("兩邊都沒有賣出（交易紀錄沒有、帳本是 0）：sellsDiff 是 0", () => {
+  const c = cashTable({ settings: SET, trades: BUY7 });
+  eq([c.sells, c.ledgerSells, c.sellsDiff], [0, 0, 0]);
+});
+test("有一筆賣出讀不到金額：賣出合計與 sellsDiff 都不算，不把那筆當 0", () => {
+  const c = cashTable({ settings: { ...SET, sellsSince: 500 }, trades: [...BUY7, { ...SELL500, twd: null, settle: null }] });
+  eq([c.sells, c.sellsDiff, c.closing], [null, null, null]);
 });
 test("帳本沒有可用資金：期末照算，poolDiff 是 null，不是 0", () => {
   const c = cashTable({ settings: { ...SET, pool: null }, trades: BUY7 });
@@ -200,6 +227,28 @@ cases.push(["loadSettings 讀新欄位（照線上帳本的 A 欄項目名稱）
   world = { settings: S_REAL, trades: T_REAL };
   const s = await loadSettings();
   eq([s.basis, s.basisFund, s.pocket, s.depositMonths, s.depositTotal, s.buysSince], ["2026-10-06", 6000, 80, 1, 3000, 9056]);
+}]);
+cases.push(["loadSettings 讀「基準日後賣出回收」：帳本寫 0 就是 0；沒有這一列是 null、不丟錯", async () => {
+  clearCache();
+  world = { settings: S_REAL, trades: T_REAL };
+  eq((await loadSettings()).sellsSince, 0);
+  clearCache();
+  world = { settings: S_REAL.replace("基準日後賣出回收（NT$）,0,", "基準日後賣出回收（NT$）,\"1,200\","), trades: T_REAL };
+  eq((await loadSettings()).sellsSince, 1200);
+  clearCache();
+  world = { settings: S_OLD, trades: T_REAL };
+  eq((await loadSettings()).sellsSince, null);
+  clearCache();
+  world = { settings: S_REAL.replace("基準日後賣出回收（NT$）,0,", "基準日後賣出回收（NT$）,,"), trades: T_REAL };
+  eq((await loadSettings()).sellsSince, null);
+}]);
+cases.push(["整條線（假帳本）有一筆賣出 500：期末加回 500，賣出合計跟帳本對上；帳本寫 300 就標出差額", async () => {
+  const sells = [...PRE, ...BUYS7, ["2026-11-10", "台股", "009816", "賣出", 10, "500.00", "500"]];
+  const set500 = S_REAL.replace("基準日後賣出回收（NT$）,0,", "基準日後賣出回收（NT$）,500,").replace("可用資金（NT$）,24,", "可用資金（NT$）,524,");
+  const ok500 = (await load({ settings: set500, trades: tradesCsv(sells) })).cash;
+  eq([ok500.sells, ok500.closing, ok500.poolDiff, ok500.sellsDiff, ok500.sellRows.length], [500, 524, 0, 0, 1]);
+  const bad = (await load({ settings: set500.replace("基準日後賣出回收（NT$）,500,", "基準日後賣出回收（NT$）,300,"), trades: tradesCsv(sells) })).cash;
+  eq([bad.sellsDiff, bad.poolDiff], [200, 0]);
 }]);
 cases.push(["loadSettings 舊欄位的值與型別沒變", async () => {
   clearCache();

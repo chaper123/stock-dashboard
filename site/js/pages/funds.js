@@ -18,7 +18,7 @@ const LINKS = {
 };
 
 export async function render(root) {
-  root.append(pageHeader("資金", "看得到的進度：撲滿、20 年後、和巴菲特比、財富自由要多少。這一頁都是試算，不是投資建議。"));
+  root.append(pageHeader("資金", "看得到的進度：最上面是帳本裡現金的來去；「長期試算」以下（撲滿、20 年後、和巴菲特比、財富自由要多少）都是試算，不是預測，也不是投資建議。"));
   slot(root, cashCard);
   root.append(el("h2", { class: "date-head" }, "長期試算"));
   slot(root, piggyCard);
@@ -65,15 +65,22 @@ async function cashCard() {
   // 對帳：差額不是 0 就標出來；其中一邊讀不到就說沒辦法對，不當成對得起來
   const dir = (d) => (d > 0 ? "多" : "少");
   const poolCheck = c.poolDiff == null
-    ? notice("info", c.closing == null ? "期末算不出來，所以沒辦法跟帳本的可用資金對帳。" : `帳本的可用資金${NOT_IN_LEDGER}，沒辦法對帳。`)
+    ? notice("info", c.closing == null ? "期末算不出來，所以沒辦法跟帳本的可用資金對帳。" : `可用資金：${NOT_IN_LEDGER}，沒辦法對帳。`)
     : c.poolDiff === 0 ? kv("可用資金對帳", "對得起來")
       : notice("warn", el("strong", {}, `對不上，差 ${diffText(c.poolDiff)}`),
         `：算出來的期末比帳本的可用資金${dir(c.poolDiff)}。交易紀錄、入金或基準日資金其中有一邊跟帳本不同，請到帳本核對；網站只讀不改帳本。`);
   const buysCheck = c.buysDiff == null
-    ? notice("info", c.buys == null ? "買進合計算不出來，所以沒辦法跟帳本的「基準日後買入合計」對。" : `帳本的「基準日後買入合計」${NOT_IN_LEDGER}，沒辦法對。`)
+    ? notice("info", c.buys == null ? "買進合計算不出來，所以沒辦法跟帳本的「基準日後買入合計」對。" : `「基準日後買入合計」：${NOT_IN_LEDGER}，沒辦法對。`)
     : c.buysDiff === 0 ? [kv("買進合計對帳", "對得起來"), el("div", { class: "tiny" }, `對的是帳本「基準日後買入合計」${twd(c.ledgerBuys)}`)]
       : notice("warn", el("strong", {}, `買進合計對不上，差 ${diffText(c.buysDiff)}`),
         `：交易紀錄加起來 ${twd(c.buys)}，帳本「基準日後買入合計」是 ${twd(c.ledgerBuys)}。`);
+  // 賣出合計也對一次；兩邊都沒有賣出（交易紀錄沒有賣出、帳本是 0 或沒有這一列）時不多顯示任何東西
+  const sellsCheck = c.sellRows.length === 0 && !c.ledgerSells ? null
+    : c.sellsDiff == null
+      ? notice("info", c.sells == null ? "賣出合計算不出來，所以沒辦法跟帳本的「基準日後賣出回收」對。" : `「基準日後賣出回收」：${NOT_IN_LEDGER}，沒辦法對。`)
+      : c.sellsDiff === 0 ? [kv("賣出合計對帳", "對得起來"), el("div", { class: "tiny" }, `對的是帳本「基準日後賣出回收」${twd(c.ledgerSells)}`)]
+        : notice("warn", el("strong", {}, `賣出合計對不上，差 ${diffText(c.sellsDiff)}`),
+          `：交易紀錄加起來 ${twd(c.sells)}，帳本「基準日後賣出回收」是 ${twd(c.ledgerSells)}。`);
 
   return card("現金與投入",
     kv("基準日", c.basis ? slashDate(c.basis) : cashVal(null)),
@@ -91,6 +98,7 @@ async function cashCard() {
     kv("帳本的可用資金", cashVal(c.ledgerPool)),
     poolCheck,
     buysCheck,
+    sellsCheck,
     kv("下一次入金", `${slashDate(next.date)}・${twd(next.amount)}${depositNote(next)}`),
     el("ul", { class: "notes" },
       el("li", { class: "tiny" }, "入金是照「定投金額」分頁逐月推算，不是逐筆確認錢真的入帳。"),

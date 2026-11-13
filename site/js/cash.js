@@ -51,9 +51,11 @@ export function cashTable({ settings, trades }) {
     ? round2(opening + deposits - buy.total + sell.total) : null;
   const ledgerPool = isNum(s.pool) ? s.pool : null;
   const ledgerBuys = isNum(s.buysSince) ? s.buysSince : null;
+  const ledgerSells = isNum(s.sellsSince) ? s.sellsSince : null;
   // 差額＝算出來的 − 帳本的；其中一邊沒有就不比（null），不是 0
   const poolDiff = closing != null && ledgerPool != null ? round2(closing - ledgerPool) : null;
   const buysDiff = buy.total != null && ledgerBuys != null ? round2(buy.total - ledgerBuys) : null;
+  const sellsDiff = sell.total != null && ledgerSells != null ? round2(sell.total - ledgerSells) : null;
   // 累計入金是不是等於「已入金月數 × 每月入金」（定投金額中途改過就不會相等，畫面不能硬寫成乘法）
   const byMonths = isNum(s.depositMonths) && isNum(s.monthly) ? round2(s.depositMonths * s.monthly) : null;
 
@@ -66,7 +68,7 @@ export function cashTable({ settings, trades }) {
     depositsByMonths: byMonths != null && deposits != null ? byMonths === deposits : null,
     buys: buy.total, buyRows: buy.rows,
     sells: sell.total, sellRows: sell.rows,
-    closing, ledgerPool, poolDiff, ledgerBuys, buysDiff,
+    closing, ledgerPool, poolDiff, ledgerBuys, buysDiff, ledgerSells, sellsDiff,
     missing,
   };
 }

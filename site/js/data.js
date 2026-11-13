@@ -95,6 +95,7 @@ export const loadSettings = () => once("settings", async () => {
     depositMonths: num(get("已入金月數")),
     depositTotal: num(get("累計入金")),        // 照「定投金額」分頁逐月加總，是推算不是逐筆確認
     buysSince: num(get("基準日後買入合計")),   // 只計「計入資金池＝是」的列
+    sellsSince: num(get("基準日後賣出回收")),  // 同上，賣出
   };
   if (s.pool == null) throw new DataError(src, "找不到「可用資金」這一列");
   return s;
