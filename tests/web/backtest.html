@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>資金頁 N 年後的歷史回測</title></head>
+<body>
+<h1>資金頁「N 年後」的歷史回測（site/js/backtest.js）</h1>
+<p>docs/FUNDS_BACKTEST.md 的驗收：月報酬只取月底且不含未結束的月份；每月報酬都相同時，模擬結果等於現有的 fv 公式；
+滾動區間的個數、最差與最好的起點；區塊抽樣會接回開頭、長度正確；固定種子兩次結果相同；百分位的內插；低於本金的比例；樣本太少的標示。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import {
+  mulberry32, monthEnds, monthlyReturns, simulate, percentile, percentiles, rollingWindows, blockPath, blockSample,
+  describeBacktest, SAMPLE_SEED, SAMPLE_PATHS, BLOCK_MONTHS, MIN_ROLLING,
+} from "/site/js/backtest.js";
+import { fv } from "/site/js/pages/funds.js";
+
+const day = (date, value) => ({ date, value });
+// 每月都換算成同一個月報酬 m 的假報酬序列（ym 從 2000-01 起）
+const ymOf = (i) => `${2000 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`;
+const flat = (m, n) => Array.from({ length: n }, (_, i) => ({ ym: ymOf(i), r: m }));
+const mRate = (r) => Math.pow(1 + r, 1 / 12) - 1;
+
+// ── 月底與月報酬 ──
+const S1 = [day("2026-01-02", 100), day("2026-01-30", 101), day("2026-02-02", 102), day("2026-02-27", 110),
+  day("2026-03-02", 111), day("2026-03-31", 99), day("2026-04-01", 100), day("2026-04-15", 130)];
+test("月底：每個月只取最後一個交易日，最後一天所在的月份（還沒結束）不用", () => {
+  eq(monthEnds(S1).map((e) => [e.ym, e.date, e.value]), [["2026-01", "2026-01-30", 101], ["2026-02", "2026-02-27", 110], ["2026-03", "2026-03-31", 99]]);
+});
+test("最後一天剛好是月底，那個月也不用（照規格：最後一天所在的月份不用）", () => {
+  eq(monthEnds([day("2026-01-30", 100), day("2026-02-27", 110), day("2026-03-31", 120)]).map((e) => e.ym), ["2026-01", "2026-02"]);
+});
+test("月報酬：相鄰月底相除減 1；ym 是後一個月；第一筆是第二個月底相對第一個月底", () => {
+  const r = monthlyReturns(S1);
+  eq(r.map((x) => x.ym), ["2026-02", "2026-03"]);
+  near(r[0].r, 110 / 101 - 1, 1e-12);
+  near(r[1].r, 99 / 110 - 1, 1e-12);
+});
+test("月底不到兩個：月報酬是空的", () => {
+  eq(monthlyReturns([day("2026-01-05", 1), day("2026-01-20", 2)]), []);
+  eq(monthlyReturns([day("2026-01-30", 1), day("2026-02-10", 2)]), []);
+  eq(monthlyReturns([]), []);
+});
+
+// ── 模擬 ──
+test("每月報酬都相同：模擬結果等於現有 fv 公式（20 年、年 7%、起始 26,754、每月 3,000）", () => {
+  const m = mRate(0.07);
+  const v = simulate(26754, 3000, flat(m, 240));
+  eq(v.length, 240);
+  near(v[239] / fv(26754, 3000, 0.07, 240), 1, 1e-9);
+  near(v[119] / fv(26754, 3000, 0.07, 120), 1, 1e-9, "第 10 年底");
+});
+test("報酬 0：只是本金加每月投入；每月月底投入", () => {
+  eq(simulate(1000, 100, flat(0, 3)), [1100, 1200, 1300]);
+  near(simulate(1000, 100, flat(0.1, 1))[0], 1000 * 1.1 + 100, 1e-9);
+});
+test("simulate 也接受純數字的報酬", () => eq(simulate(100, 0, [0.1, -0.1]).map((x) => Math.round(x * 100) / 100), [110, 99]));
+
+// ── 百分位 ──
+test("百分位：[1,2,3,4] 第 50 是 2.5、第 10 是 1.3、第 0 是 1、第 100 是 4", () => {
+  near(percentile([1, 2, 3, 4], 0.5), 2.5, 1e-12);
+  near(percentile([1, 2, 3, 4], 0.1), 1.3, 1e-12);
+  near(percentile([1, 2, 3, 4], 0.9), 3.7, 1e-12);
+  eq([percentile([1, 2, 3, 4], 0), percentile([1, 2, 3, 4], 1)], [1, 4]);
+});
+test("百分位：先由小到大排序，不改動傳進來的陣列", () => {
+  const a = [30, 10, 20];
+  eq(percentile(a, 0.5), 20);
+  eq(a, [30, 10, 20]);
+  eq(percentiles([5, 1, 3, 2, 4], [0.1, 0.5, 0.9]).map((x) => Math.round(x * 100) / 100), [1.4, 3, 4.6]);
+});
+test("百分位：只有一個值回傳那個值；沒有資料是 null", () => {
+  eq(percentile([7], 0.9), 7);
+  eq(percentile([], 0.5), null);
+});
+
+// ── 滾動區間 ──
+test("滾動區間：個數、最差與最好各從哪個年月開始、中位數", () => {
+  // 10 個月報酬、湊 3 個月 → 8 個起點。第 3 個月（索引 3）跌 50%、第 7 個月（索引 7）漲 100%
+  const rs = flat(0, 10);
+  rs[3].r = -0.5;
+  rs[7].r = 1;
+  const w = rollingWindows(rs, 3, 100, 0);
+  // 起點 0..7 的期末：100、50、50、50、100、200、200、200
+  eq(w.count, 8);
+  eq(w.worst, { value: 50, start: rs[1].ym });
+  eq(w.best, { value: 200, start: rs[5].ym });
+  eq(w.median, 100);
+  eq(w.small, true);
+});
+test("滾動區間：每個起點都含每月投入，期末值＝模擬最後一個月底", () => {
+  const w = rollingWindows(flat(0.01, 14), 12, 1000, 100);
+  eq(w.count, 3);
+  near(w.worst.value, simulate(1000, 100, flat(0.01, 12)).at(-1), 1e-9);
+  eq(w.worst.start, "2000-01"); // 全部一樣大時取第一個
+});
+test("滾動區間：跟真實資料同樣的長度（285 個月報酬）→ 20 年 46 個起點、10 年 166 個起點", () => {
+  const rs = flat(0.01, 285);
+  eq([rollingWindows(rs, 240, 0, 1).count, rollingWindows(rs, 120, 0, 1).count], [46, 166]);
+});
+test("樣本太少的標示：不到 24 個起點標 small，剛好 24 個不標", () => {
+  eq(MIN_ROLLING, 24);
+  const a = rollingWindows(flat(0.01, 240 + 22), 240, 0, 1), b = rollingWindows(flat(0.01, 240 + 23), 240, 0, 1);
+  eq([a.count, a.small], [23, true], "23 個起點要標");
+  eq([b.count, b.small], [24, false], "24 個起點不標");
+  eq(rollingWindows(flat(0.01, 285), 240, 0, 1).small, false, "46 個不標");
+  eq(rollingWindows(flat(0.01, 285), 270, 0, 1).small, true, "16 個標");
+});
+test("歷史不夠長（月報酬比要湊的月數少）：個數 0，沒有最差與最好", () => {
+  const w = rollingWindows(flat(0.01, 285), 300, 100, 10);
+  eq([w.count, w.small, w.worst, w.median, w.best], [0, true, null, null, null]);
+});
+
+// ── 區塊抽樣 ──
+test("固定種子的亂數：mulberry32 跟 Python 另外實作的結果一致，兩次相同", () => {
+  const g = mulberry32(1), h = mulberry32(1);
+  eq([g(), g(), g()], [0.6270739405881613, 0.002735721180215478, 0.5274470399599522]);
+  eq([h(), h(), h()], [0.6270739405881613, 0.002735721180215478, 0.5274470399599522]);
+  const k = mulberry32(SAMPLE_SEED);
+  eq([k(), k(), k()], [0.7961874215397984, 0.2869089210871607, 0.6110482160001993]);
+});
+test("固定種子：種子寫成具名常數、預設 2,000 條、區塊 12 個月", () => eq([SAMPLE_SEED, SAMPLE_PATHS, BLOCK_MONTHS], [20261113, 2000, 12]));
+test("區塊接回開頭：從最後一個月起取 3 個月，接回第 1、2 個月", () => {
+  const rs = [1, 2, 3, 4, 5];
+  eq(blockPath(rs, 7, () => 0.99, 3), [5, 1, 2, 5, 1, 2, 5]);
+});
+test("區塊路徑長度剛好是 months（最後一個區塊截斷）；每個區塊連續取", () => {
+  const rs = Array.from({ length: 10 }, (_, i) => i);
+  const seq = [0, 0.6, 0];
+  let i = 0;
+  const p = blockPath(rs, 5, () => seq[i++], 2);
+  eq(p, [0, 1, 6, 7, 0]);
+  eq(blockPath(rs, 30, mulberry32(3), 12).length, 30);
+  eq(blockPath(rs, 24, mulberry32(3), 12).length, 24);
+});
+test("區塊路徑也接受 { ym, r } 的月報酬", () => eq(blockPath([{ ym: "a", r: 0.1 }, { ym: "b", r: 0.2 }], 3, () => 0.99, 2), [0.2, 0.1, 0.2]));
+test("固定種子：同樣的輸入兩次算出來完全一樣；換種子結果不同", () => {
+  const rs = flat(0.01, 60).map((x, i) => ({ ...x, r: Math.sin(i) / 10 }));
+  const a = blockSample(rs, 120, 1000, 100), b = blockSample(rs, 120, 1000, 100);
+  eq(a, b);
+  ok(JSON.stringify(blockSample(rs, 120, 1000, 100, { seed: SAMPLE_SEED + 1 })) !== JSON.stringify(a), "換種子應該不同");
+});
+test("抽樣：每月報酬都相同時，三個百分位都等於 fv，逐年的值也一樣、低於本金的比例是 0", () => {
+  const m = mRate(0.07);
+  const s = blockSample(flat(m, 50), 240, 26754, 3000);
+  const want = fv(26754, 3000, 0.07, 240);
+  near(s.final.p10 / want, 1, 1e-9);
+  near(s.final.p50 / want, 1, 1e-9);
+  near(s.final.p90 / want, 1, 1e-9);
+  eq(s.yearly.length, 20);
+  near(s.yearly[9].p50 / fv(26754, 3000, 0.07, 120), 1, 1e-9, "第 10 年");
+  near(s.yearly[19].p90 / want, 1, 1e-9);
+  eq([s.principal, s.below, s.paths], [26754 + 3000 * 240, 0, 2000]);
+});
+test("低於本金的比例：全部虧損是 1、全部賺錢是 0", () => {
+  eq(blockSample(flat(-0.1, 30), 24, 1000, 10).below, 1);
+  eq(blockSample(flat(0.1, 30), 24, 1000, 10).below, 0);
+  // 期末剛好等於本金（報酬 0）不算低於
+  eq(blockSample(flat(0, 30), 24, 1000, 10).below, 0);
+});
+test("抽樣跟逐條另外重算一致：百分位、逐年、低於本金的比例", () => {
+  const rs = Array.from({ length: 80 }, (_, i) => ({ ym: ymOf(i), r: Math.sin(i * 1.7) / 8 }));
+  const months = 30, pv = 5000, pmt = 200, paths = 300;
+  const s = blockSample(rs, months, pv, pmt, { paths, seed: 7 });
+  const rng = mulberry32(7);
+  const finals = [], y1 = [];
+  for (let k = 0; k < paths; k++) {
+    const sim = simulate(pv, pmt, blockPath(rs, months, rng));
+    finals.push(sim.at(-1));
+    y1.push(sim[11]);
+  }
+  near(s.final.p10, percentile(finals, 0.1), 1e-9);
+  near(s.final.p50, percentile(finals, 0.5), 1e-9);
+  near(s.final.p90, percentile(finals, 0.9), 1e-9);
+  near(s.yearly[0].p50, percentile(y1, 0.5), 1e-9);
+  eq(s.yearly.length, 2);
+  eq(s.below, finals.filter((v) => v < pv + pmt * months).length / paths);
+  ok(s.final.p10 <= s.final.p50 && s.final.p50 <= s.final.p90, "p10 ≤ p50 ≤ p90");
+});
+test("抽樣：沒有月報酬或 months 是 0 時不算，回傳 null", () => {
+  eq(blockSample([], 120, 1, 1).final, null);
+  eq(blockSample(flat(0.01, 12), 0, 1, 1).below, null);
+});
+
+// ── 回測期間的描述 ──
+test("回測期間：起訖年月、年化、最大回落（月底資料）", () => {
+  const d = describeBacktest([day("2026-01-30", 100), day("2026-02-27", 110), day("2026-03-31", 99), day("2026-04-30", 120), day("2026-05-12", 130)]);
+  eq([d.base, d.from, d.to, d.months], ["2026-01", "2026-02", "2026-04", 3]);
+  near(d.annualized, Math.pow(1.2, 12 / 3) - 1, 1e-12);
+  near(d.maxDrawdown, 99 / 110 - 1, 1e-12);
+  eq(d.drawdown, { peak: "2026-02", trough: "2026-03" });
+  near(d.years, 0.25, 1e-12);
+});
+test("回測期間：一路上漲沒有回落（最大回落是 0）；月底不到兩個是 null", () => {
+  const d = describeBacktest([day("2026-01-30", 100), day("2026-02-27", 110), day("2026-03-31", 120), day("2026-04-02", 125)]);
+  eq([d.maxDrawdown, d.drawdown], [0, null]);
+  eq(describeBacktest([day("2026-01-30", 100), day("2026-01-31", 101)]), null);
+});
+
+// ── 跟真實資料同樣長度的合成日資料（2003-01 ～ 2026-11-12）──
+test("合成日資料（286 個月底、最後一個月只有半個月）：月報酬 285 個、20 年 46 個起點、10 年 166 個起點", () => {
+  const series = [];
+  let v = 4500;
+  for (let i = 0; i < 24 * 12 - 2; i++) {
+    const ym = `${2003 + Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`;
+    series.push(day(`${ym}-02`, v), day(`${ym}-28`, (v *= 1.01)));
+  }
+  series.push(day("2026-11-12", v * 1.02));
+  const rs = monthlyReturns(series);
+  eq(rs.length, 285);
+  eq([rs[0].ym, rs.at(-1).ym], ["2003-02", "2026-10"]);
+  eq([rollingWindows(rs, 240, 1000, 100).count, rollingWindows(rs, 120, 1000, 100).count], [46, 166]);
+  near(rs[0].r, 0.01, 1e-9);
+});
+
+report();
+</script>
+</body>
+</html>

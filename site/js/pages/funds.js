@@ -4,6 +4,7 @@
 import { loadSettings, loadTrades, loadDividends, loadDaily, loadIndex, loadDca } from "../data.js";
 import { dcaFor } from "../discipline.js";
 import { cashTable, nextDeposit } from "../cash.js";
+import { monthlyReturns, describeBacktest, rollingWindows, blockSample, SAMPLE_PATHS } from "../backtest.js";
 import { loadPortfolio } from "../portfolio.js";
 import { loadPerformance } from "../perf.js";
 import { el, twd, pct, int, isNum, taipeiToday, extLink, shortDate } from "../fmt.js";
@@ -262,36 +263,70 @@ function fireworks() {
   return box;
 }
 
-// ── 20 年後 ──
+// ── N 年後（歷史回測推算，docs/FUNDS_BACKTEST.md）──
+// 把加權報酬指數歷史上的月報酬，套在現在的總資產與每月定投上：一是歷史上真的發生過（每個月都當起點的滾動區間），
+// 二是區塊抽樣（隨機接出 2,000 條路徑，取第 10、50、90 百分位）。算法在 backtest.js，這裡只負責畫面
+const ymText = (ym) => ym.replace("-", "/");
+const PCT_ROWS = [["p10", "偏差的情況（第 10 百分位）", "s1"], ["p50", "中間（中位數）", "s2"], ["p90", "偏好的情況（第 90 百分位）", "s3"]];
+
 async function futureCard() {
   const tot = await totalAssets();
   // 起始本金不完整就不算：拿部分資產算出來的 20 年後看起來完整，其實偏低或偏高
   if (!tot.complete) return card("20 年後", partialNotice(tot, "20 年後的試算要從完整的總資產開始，所以先不算"));
   const pv = tot.value;
-  const dep = await monthlyDeposit();
-  const state = { pmt: dep.amount, years: 20, custom: 0.07 };
+  const [dep, series] = await Promise.all([monthlyDeposit(), loadIndex("TAIEX_TR")]);
+  const rets = monthlyReturns(series);
+  const bt = describeBacktest(series);
+  if (!bt || !rets.length) return card("20 年後", notice("warn", "加權報酬指數的歷史資料不夠，這張卡先不算。"));
+  const state = { pmt: dep.amount, years: 20 };
   const outBox = el("div");
+  let heading = null;
   const draw = () => {
     const n = state.years * 12;
-    const rows = [...F.scenarios.map((r, i) => ({ r, label: `${Math.round(r * 100)}%`, cls: `s${i + 1}` })),
-      { r: state.custom, label: `自訂 ${(state.custom * 100).toFixed(1)}%`, cls: "s0" }];
-    for (const x of rows) x.v = fv(pv, state.pmt, x.r, n);
-    outBox.replaceChildren(
+    if (heading) heading.textContent = `${state.years} 年後`;
+    const s = blockSample(rets, n, pv, state.pmt);
+    const rows = PCT_ROWS.map(([k, label, cls]) => ({ label, cls, v: s.final[k], line: [pv, ...s.yearly.map((y) => y[k])] }));
+    const roll = rollingWindows(rets, n, pv, state.pmt);
+    outBox.replaceChildren(...[
       el("div", { class: "scen" }, rows.map((x) => el("div", { class: `scen-item ${x.cls}` },
-        el("div", { class: "tiny" }, `年報酬 ${x.label}`), el("div", { class: "scen-v" }, wan(x.v))))),
-      futureChart(pv, state, rows));
+        el("div", { class: "tiny" }, x.label), el("div", { class: "scen-v" }, wan(x.v)),
+        el("div", { class: "tiny" }, `約投入本金的 ${(x.v / s.principal).toFixed(1)} 倍`)))),
+      // 年數超過歷史長度時，滾動區間湊不出來，抽樣推估也只是把歷史重新排列延伸出來的
+      state.years > bt.years && el("p", { class: "tiny" }, `超過歷史長度（約 ${bt.years.toFixed(1)} 年）的年數只有抽樣推估，是把歷史重新排列延伸出來的，參考價值更低。`),
+      el("p", { class: "small" }, `投入本金合計 ${twd(s.principal)}（現在的總資產 ${twd(pv)} ＋ 每月 ${twd(state.pmt)} × ${n} 個月）；`
+        + `期末低於投入本金的機率 ${pct(s.below * 100, 1, false)}（${int(s.paths)} 條路徑裡有 ${int(Math.round(s.below * s.paths))} 條）。`),
+      futureChart(state, rows),
+      el("h3", {}, "歷史上真的發生過"),
+      roll.count === 0
+        ? el("p", { class: "small" }, `歷史資料只有約 ${bt.years.toFixed(1)} 年，湊不出 ${state.years} 年的連續區間。`)
+        : el("p", { class: "small" }, `每個月都當一次起點、各投 ${state.years} 年，共 ${roll.count} 個起點：`
+          + `最差 ${wan(roll.worst.value)}（${ymText(roll.worst.start)} 開始）、中位數 ${wan(roll.median)}、最好 ${wan(roll.best.value)}（${ymText(roll.best.start)} 開始）。`),
+      roll.count > 0 && roll.small && notice("warn", el("strong", {}, "樣本太少"),
+        `：只有 ${roll.count} 個起點，而且彼此高度重疊（相鄰起點的 ${state.years} 年幾乎是同一段歷史），只能當參考。`)].filter(Boolean));
   };
   draw();
-  return card("20 年後",
+  const c = card("20 年後",
+    el("p", {}, "用加權報酬指數的歷史回測推算，不是預測。"),
     range("每月投入", { min: 0, max: 30000, step: 500, value: state.pmt, fmt: (v) => twd(v) }, (v) => { state.pmt = v; draw(); }),
-    range("年數", { min: 5, max: 40, step: 1, value: state.years, fmt: (v) => `${v} 年` }, (v) => { state.years = v; draw(); }),
-    range("自訂年報酬", { min: 0, max: 15, step: 0.5, value: 7, fmt: (v) => `${v.toFixed(1)}%` }, (v) => { state.custom = v / 100; draw(); }),
+    range("年數", { min: 5, max: 30, step: 1, value: state.years, fmt: (v) => `${v} 年` }, (v) => { state.years = v; draw(); }),
     outBox,
-    el("p", {}, `從目前總資產 ${twd(pv)} 開始、每月月底投入，用固定年報酬試算；實際報酬每年不同，有的年份會虧損，結果不保證。`),
-    el("p", { class: "tiny" }, `每月投入預設是這個月的定投金額${depositNote(dep)}。不用你未滿一年的實際報酬推估。`));
+    el("p", {}, `從目前總資產 ${twd(pv)} 開始、每月月底投入。實際報酬每年不同，有的年份會虧損，結果不保證。`),
+    el("ul", { class: "notes" },
+      el("li", { class: "tiny" }, `回測期間 ${ymText(bt.from)}～${ymText(bt.to)}（${bt.months} 個月）：這段期間加權報酬指數年化 ${pct(bt.annualized * 100, 1, false)}、`
+        + `最大回落 ${pct(bt.maxDrawdown * 100, 1, false)}${bt.drawdown ? `（${ymText(bt.drawdown.peak)} 高點到 ${ymText(bt.drawdown.trough)}）` : ""}。月報酬取每個月最後一個交易日的收盤。`),
+      el("li", { class: "tiny" }, "用加權報酬指數（含股利）代表整個組合：009816、00981A 上市太短沒有足夠的歷史，美股部位也用同一條近似。"),
+      el("li", { class: "tiny" }, "指數不含 ETF 的費用與稅（管理費、證交稅、股利所得稅等），實際報酬會比指數低一些。"),
+      el("li", { class: "tiny" }, "沒有扣通膨：金額是名目的，未來的錢購買力比較低。"),
+      el("li", { class: "tiny" }, `這段期間台股表現很好（指數年化 ${pct(bt.annualized * 100, 1, false)}），用它推算偏樂觀。過去不代表未來。`),
+      el("li", { class: "tiny" }, `「偏差、中間、偏好」是抽樣推估：從這段月報酬隨機接出 ${state.years} 年的路徑（每次連續取 12 個月、超過結尾就接回開頭），共 ${SAMPLE_PATHS.toLocaleString("en-US")} 條，`
+        + "取期末值的第 10、50、90 百分位；亂數種子固定，同樣的輸入每次結果相同。"),
+      el("li", { class: "tiny" }, `每月投入預設是這個月的定投金額${depositNote(dep)}。不用你未滿一年的實際報酬推估。`)));
+  heading = c.querySelector("h2");
+  return c;
 }
 
-function futureChart(pv, state, rows) {
+// 圖：三個百分位逐年的值（rows[i].line 是第 0 年到第 N 年）
+function futureChart(state, rows) {
   const NS = "http://www.w3.org/2000/svg";
   const W = 320, H = 150, L = 6, R = 64, T = 8, Bm = 18;
   const max = Math.max(...rows.map((x) => x.v));
@@ -311,8 +346,7 @@ function futureChart(pv, state, rows) {
   };
   add("line", { x1: L, x2: W - R, y1: H - Bm, y2: H - Bm, class: "fc-axis" });
   for (const x of rows) {
-    const pts = [];
-    for (let y = 0; y <= state.years; y++) pts.push(`${X(y).toFixed(1)},${Y(fv(pv, state.pmt, x.r, y * 12)).toFixed(1)}`);
+    const pts = x.line.map((v, y) => `${X(y).toFixed(1)},${Y(v).toFixed(1)}`);
     const line = add("polyline", { points: pts.join(" "), class: `fc-line ${x.cls}` });
     line.append(Object.assign(document.createElementNS(NS, "title"), { textContent: `${x.label}：${wan(x.v)}` }));
     add("text", { x: W - R + 4, y: Y(x.v) + 4, class: "fc-label" }, wan(x.v));
