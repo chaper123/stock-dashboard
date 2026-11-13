@@ -291,6 +291,8 @@ async function futureCard() {
       el("div", { class: "scen" }, rows.map((x) => el("div", { class: `scen-item ${x.cls}` },
         el("div", { class: "tiny" }, x.label), el("div", { class: "scen-v" }, wan(x.v)),
         el("div", { class: "tiny" }, `約投入本金的 ${(x.v / s.principal).toFixed(1)} 倍`)))),
+      // 年數超過歷史長度時，滾動區間湊不出來，抽樣推估也只是把歷史重新排列延伸出來的
+      state.years > bt.years && el("p", { class: "tiny" }, `超過歷史長度（約 ${bt.years.toFixed(1)} 年）的年數只有抽樣推估，是把歷史重新排列延伸出來的，參考價值更低。`),
       el("p", { class: "small" }, `投入本金合計 ${twd(s.principal)}（現在的總資產 ${twd(pv)} ＋ 每月 ${twd(state.pmt)} × ${n} 個月）；`
         + `期末低於投入本金的機率 ${pct(s.below * 100, 1, false)}（${int(s.paths)} 條路徑裡有 ${int(Math.round(s.below * s.paths))} 條）。`),
       futureChart(state, rows),
@@ -306,7 +308,7 @@ async function futureCard() {
   const c = card("20 年後",
     el("p", {}, "用加權報酬指數的歷史回測推算，不是預測。"),
     range("每月投入", { min: 0, max: 30000, step: 500, value: state.pmt, fmt: (v) => twd(v) }, (v) => { state.pmt = v; draw(); }),
-    range("年數", { min: 5, max: 40, step: 1, value: state.years, fmt: (v) => `${v} 年` }, (v) => { state.years = v; draw(); }),
+    range("年數", { min: 5, max: 30, step: 1, value: state.years, fmt: (v) => `${v} 年` }, (v) => { state.years = v; draw(); }),
     outBox,
     el("p", {}, `從目前總資產 ${twd(pv)} 開始、每月月底投入。實際報酬每年不同，有的年份會虧損，結果不保證。`),
     el("ul", { class: "notes" },
