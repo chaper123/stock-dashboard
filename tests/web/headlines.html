@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>R15 新聞去噪</title></head>
+<body>
+<h1>R15 新聞去噪：VOO 清單分三類（site/js/headlines.js 的 vooKind、foldKind）</h1>
+<p>market 大盤事件、peer 別的標的、advice 理財與預測文；判斷不出來一律 market。樣本是 2026-11-13 抓的 VOO 嚴格模式 57 則，標題人工標類（tests/web/fixtures/voo_headlines.json）。</p>
+<script type="module">
+import { test, eq, ok, report } from "./harness.js";
+import { vooKind, foldKind, TABS } from "/site/js/headlines.js";
+
+// 單則標題 → 類別。year 決定「明年以後」的年份判斷
+const k = (title, year = "2026") => vooKind({ title, published_taipei: `${year}-11-13 10:00` });
+const all = (kind, titles) => titles.forEach((t) => eq(k(t), kind, t));
+
+// ── peer：每一條線索各一個例子
+test("peer：括號裡的代號 (SPY)、(IVV)", () => all("peer", [
+  "Institutional Flow in SPDR S&P 500 ETF (SPY): 60% of the Options Money Is in Puts",
+  "Is Invesco S&P 500 Equal Weight Health Care ETF (RSPH) a Strong ETF Right Now?",
+  "Corteva Inc. (CTVA) Falls Harder Than Wall Street — Here’s Why"]));
+test("peer：交易所前綴 NYSEARCA:IVV、(NASDAQ:QQQ)、(SPY.US)", () => all("peer", [
+  "iShares Core S&P 500 NYSEARCA:IVV Position Raised",
+  "Invesco QQQ Trust (NASDAQ:QQQ) Stock Price Up",
+  "$SPDR S&P 500 ETF (SPY.US)$ today was a good day"]));
+test("peer：別家 ETF 的品牌 SPDR、iShares、Invesco、ProShares、Direxion", () => all("peer", [
+  "SPDR Portfolio S&P 500 Growth Sold Nvidia", "iShares Core S&P 500 gains inflows", "Invesco S&P 500 Equal Weight tops funds",
+  "ProShares Ultra S&P 500 sees record volume", "Direxion Daily S&P 500 Bull 3X adds Apple"]));
+test("peer：別檔 Vanguard 基金（Vanguard ETF、Index Funds）", () => all("peer", [
+  "This Vanguard ETF Has Outperformed the S&P 500 and Nasdaq Composite",
+  "2 Vanguard Index Funds for Your Portfolio"]));
+test("peer：機構買賣的例行稿句型", () => all("peer", [
+  "Contoso Capital LLC Shares Sold by Fabrikam Advisors",
+  "Fabrikam Advisors Acquires New Stake in Contoso Fund",
+  "Northwind Boosts Position in Contoso Index Trust",
+  "Adatum Trims Holdings in Contoso Index Fund",
+  "Fabrikam Purchases 1,200 Shares of Contoso Index Trust",
+  "Shares of Contoso Index Trust Bought by Fabrikam",
+  "Fund X Buys $15.2 Million More Apple on Tuesday",
+  "What Fund X Bought: Moderna Leads on Nov. 6"]));
+test("peer：別的 ETF 勝過 S&P 500 的比較稿", () => all("peer", [
+  "This Growth ETF Has Crushed the S&P 500 Since 2004",
+  "Two Dividend Funds Beating the S&P 500 This Year",
+  "This Overlooked ETF Is Quietly Giving the S&P 500 a Run for Its Money"]));
+test("「勝過 S&P 500」在講大盤時不算 peer（平均個股、歐股、Nasdaq）", () => all("market", [
+  "The Average Stock Just Beat the S&P 500 by the Most Since 2009",
+  "European Stocks Fall as Technology Sell-Off Deepens, but STOXX 600 Outperforms S&P 500 in 2026",
+  "Stocks Without AI Are Beating the S&P 500 by 6 Points This Month",
+  "Nasdaq Beats S&P 500 Again This Week"]));
+test("peer：台灣 ETF 代號（自己的 009816、00981A 不算）", () => {
+  eq(k("00646 元大S&P500 配息公布"), "peer");
+  eq(k("009816 凱基台灣TOP50 與標普 500 比較"), "market");
+  eq(k("00981A 統一台股增長 對照標普 500"), "market");
+});
+
+// ── advice：每一條線索各一個例子（中英文）
+test("advice：該不該買", () => all("advice", [
+  "Few S&P 500 Stocks Yield Over 5%. Here's My Top Pick to Buy Now.",
+  "Should You Buy the S&P 500 Before the Election?",
+  "Is the S&P 500 a Buy Right Now?",
+  "3 Stocks to Buy Before the S&P 500 Rebounds",
+  "S&P 500 Sell-Off: Is Now the Right Time to Buy the Dip?"]));
+test("單獨的「to buy」（併購、庫藏股新聞）不算 advice", () => all("market", [
+  "SoftBank to buy chip designer as S&P 500 futures edge higher", "Apple to buy back $100 billion of stock; S&P 500 rises"]));
+test("advice：幾檔最佳", () => eq(k("The Best Index Funds to Own in 2026"), "advice"));
+test("advice：目標價與預測", () => all("advice", [
+  "UBS keeps S&P 500 end-2026 target at 8,900, says derating sets up strong returns",
+  "S&P 500 Index Stock Forecast & Price Target",
+  "Ed Yardeni on his 7,900 S&P 500 year-end target: 'Santa is coming'",
+  "Prediction: The S&P 500 Will Do This Next"]));
+test("advice：歷史告訴我們", () => all("advice", [
+  "History Says 1 Month Has Been the S&P 500's Most Reliable Since 1950.",
+  "Wall Street’s Year-End Rally Starts Oct. 27: History Points to S&P 500 Gains",
+  "Only 2 Novembers Since 1950 Have Started Worse for the S&P 500. Here's What Followed.",
+  "The S&P 500 Fell in Both September and October for Only the 17th Time. Here's What Usually Followed."]));
+test("advice：退休與被動收入", () => all("advice", [
+  "He Thinks His $500,000 S&P 500 401(k) Protects Him From Big Losses",
+  "How the S&P 500 Can Fund Your Retirement",
+  "Build Passive Income With an S&P 500 Index Fund"]));
+test("advice：教你怎麼做", () => all("advice", [
+  "3 Ways to Protect Your Portfolio After the S&P 500's Worst Day Since April 2025",
+  "S&P 500 Sell-Off: 1 Investing Step to Take Right Now",
+  "Here's How Investors Can Prepare for S&P 500 Volatility"]));
+test("advice：中文句型", () => all("advice", [
+  "標普 500 ETF 該不該買？三個重點", "存股族看這裡：VOO 值不值得長期持有", "華爾街預測標普 500 年底目標價", "退休族怎麼靠標普 500 領被動收入",
+  "歷史告訴我們，11 月之後標普 500 通常這樣走"]));
+test("advice：標題提到明年以後的預測年份，依這則的發布年份算", () => {
+  eq(k("Can The S&P 500 Keep Rising In 2027?"), "advice");
+  eq(k("Why this top strategist isn't bullish on the S&P 500 for 2027"), "advice");
+  eq(k("UBS portfolio manager: S&P 500 could hit 9,500 by June 2027 on AI"), "advice");
+  eq(k("Can The S&P 500 Keep Rising In 2027?", "2027"), "market", "發布當年的年份不算預測");
+  eq(k("S&P 500 posts best day since 2025"), "market", "過去的年份不算");
+});
+
+// ── 判斷不出來算 market；VOO 自己不算 peer；盤勢快報不誤藏
+test("判斷不出來一律 market", () => all("market", [
+  "S&P 500 Recovered $1 Trillion in 90 Minutes Despite Wider Market Crash",
+  "Stock Market: Will S&P 500 Open Up or Down Today?",
+  "Is the S&P 500 Heading for a Correction?",
+  "Why the S&P 500 Could Be Heading for a Repeat of 2018",
+  "標普 500 收高 台積電帶頭", "", "   "]));
+test("缺欄位不丟錯：沒有標題、沒有時間", () => {
+  eq(vooKind({}), "market");
+  eq(vooKind({ title: "S&P 500 rallies" }), "market");
+  eq(vooKind({ title: "Can The S&P 500 Keep Rising In 2027?" }), "market", "沒有發布時間就不判斷年份");
+});
+test("VOO 自己的名稱不算 peer：VOO、Vanguard S&P 500 ETF、Vanguard 500 Index", () => all("market", [
+  "Vanguard S&P 500 ETF (NYSEARCA:VOO) Hits New High",
+  "Vanguard S&P 500 ETF Tops Fund Flows This Week",
+  "VOO vs. SPDR S&P 500 ETF (SPY): Which Is Better?",
+  "Vanguard 500 Index Fund Admiral Shares Lowers Fee",
+  "Vanguard S&P 500 ETF Shares Sold by Contoso Capital"]));
+test("VOO 自己的名稱不擋住 advice（該不該買 VOO 還是理財文）", () => eq(k("Should You Buy Vanguard S&P 500 ETF (VOO) Now?"), "advice"));
+test("括號裡的總經縮寫、指數代號不是代號", () => all("market", [
+  "S&P 500 Slips as US Inflation (CPI) Beats Forecasts", "S&P 500 (^GSPC) Charts, Data & News", "Check out S&P 500 INDEX's stock price (.SPX) in real time",
+  "Stocks Slide as Fed (FOMC) Signals Pause", "Markets Brace for Jobs Report (NFP)"]));
+test("盤勢快報（期貨、盤前、Stock Market Today）括號裡點名個股，整則還是大盤", () => all("market", [
+  "S&P 500 Futures Edge Higher; Nvidia (NVDA), CoreWeave (CRWV) Lead", "Stock Market Today: S&P 500 Slips as Apple (AAPL) Falls",
+  "Premarket: S&P 500 Up as Tesla (NASDAQ:TSLA) Jumps"]));
+test("沒有對象的比較不算 peer（Nasdaq 對 S&P 500）", () => eq(k("Nasdaq Beats S&P 500 Again This Week"), "market"));
+test("品牌字是別的字的一部分時不誤判", () => all("market", ["Fed Chair Says Rates Hold", "S&P 500 rises as inflation cools"]));
+
+// ── foldKind：只有 VOO 分頁與全部持股裡「只因為 VOO」的項目套用
+const mk = (title, queries, extra = {}) => ({ title, queries, tier: 2, published_taipei: "2026-11-13 10:00", ...extra });
+const peerVoo = mk("iShares Core S&P 500 ETF (IVV) Sells $26.6 Million of Apple", ["MARKET"]);
+const adviceVoo = mk("History Says 1 Month Has Been the S&P 500's Most Reliable Since 1950", ["MARKET"]);
+const marketVoo = mk("S&P 500 futures fall sharply after October inflation data", ["MARKET"]);
+test("VOO 分頁：peer、advice 收起來，market 照列", () => {
+  eq(["VOO", "全部持股"].map((t) => foldKind(t, peerVoo)), ["peer", "peer"]);
+  eq(["VOO", "全部持股"].map((t) => foldKind(t, adviceVoo)), ["advice", "advice"]);
+  eq(["VOO", "全部持股"].map((t) => foldKind(t, marketVoo)), ["market", "market"]);
+});
+test("其他分頁不套用分類（GOOGL、009816、00981A、台股大盤、國安基金、總經）", () => {
+  const others = TABS.map(([n]) => n).filter((n) => n !== "VOO" && n !== "全部持股");
+  eq(others, ["00981A", "009816", "台股大盤", "GOOGL", "國安基金", "總經"]);
+  for (const x of [peerVoo, adviceVoo, mk("Alphabet (GOOGL) stock: should you buy?", ["GOOGL"]), mk("Fed 預測 2027 降息", ["FED"])])
+    for (const n of others) eq(foldKind(n, x), "market", `${n} ${x.title}`);
+});
+test("不是 VOO 的項目一律 market，標題再像 peer／advice 也一樣", () => {
+  const x = mk("Alphabet (GOOGL) Shares Sold by Contoso — should you buy?", ["GOOGL"]);
+  eq(["VOO", "全部持股"].map((t) => foldKind(t, x)), ["market", "market"]);
+});
+test("全部持股：也跟 GOOGL、009816、00981A 有關的項目不收起來", () => {
+  const both = mk("Alphabet Inc. (GOOGL) Shares Sold by Contoso, Beat the S&P 500 stock", ["MARKET", "GOOGL"], { tier: 2 });
+  ok(TABS.find(([n]) => n === "GOOGL")[1](both, true), "寬鬆模式它在 GOOGL 分頁");
+  eq(foldKind("全部持股", both, true), "market", "寬鬆");
+  eq(foldKind("VOO", both, true), "peer", "VOO 分頁本身還是分類");
+  const tw = mk("009816 凱基台灣TOP50 vs iShares Core S&P 500 (IVV)", ["MARKET", "009816"]);
+  eq(foldKind("全部持股", tw, true), "market");
+});
+test("TABS 的篩選沒被改動：VOO 分頁仍是 MARKET 查詢＋主要媒體＋標題提到", () => {
+  const f = TABS.find(([n]) => n === "VOO")[1];
+  eq([f(peerVoo, false), f(mk("Wall Street slips", ["MARKET"]), false), f(mk("Wall Street slips", ["MARKET"]), true)], [true, false, true]);
+});
+
+// ── 樣本的兩個門檻
+const sample = await (await fetch("/tests/web/fixtures/voo_headlines.json")).json();
+const cnt = (kind) => sample.filter((x) => x.label === kind).length;
+const mkt = sample.filter((x) => x.label === "market");
+const shown = mkt.filter((x) => vooKind(x) === "market");
+const folded = sample.filter((x) => vooKind(x) !== "market");
+const rightFold = folded.filter((x) => x.label !== "market");
+test("樣本：57 則，三類都有", () => {
+  eq(sample.length, 57);
+  ok(cnt("market") > 0 && cnt("peer") > 0 && cnt("advice") > 0, "三類都要有");
+  ok(sample.every((x) => ["market", "peer", "advice"].includes(x.label) && x.title && x.published_taipei && Array.isArray(x.queries)), "欄位");
+});
+test("樣本門檻一：人工標 market 的至少 90% 仍然顯示", () => ok(shown.length / mkt.length >= 0.9,
+  `${shown.length}／${mkt.length}，被誤藏：${mkt.filter((x) => vooKind(x) !== "market").map((x) => x.title).join("｜")}`));
+test("樣本門檻二：被收起來的至少 85% 真的是 peer 或 advice", () => ok(rightFold.length / folded.length >= 0.85,
+  `${rightFold.length}／${folded.length}，收錯：${folded.filter((x) => x.label === "market").map((x) => x.title).join("｜")}`));
+
+report();
+// 把樣本的實際數字與所有判錯的標題寫在頁面上
+const wrong = sample.filter((x) => vooKind(x) !== x.label);
+const pre = document.createElement("pre");
+pre.id = "stats";
+pre.textContent = [
+  `樣本 ${sample.length} 則：market ${cnt("market")}、peer ${cnt("peer")}、advice ${cnt("advice")}`,
+  `門檻一：人工標 market 仍顯示 ${shown.length}／${mkt.length} = ${(shown.length / mkt.length * 100).toFixed(1)}%`,
+  `門檻二：被收起來 ${folded.length} 則，其中真的是 peer／advice ${rightFold.length} 則 = ${(rightFold.length / folded.length * 100).toFixed(1)}%`,
+  `三類完全一致 ${sample.length - wrong.length}／${sample.length}；不一致的 ${wrong.length} 則：`,
+  ...wrong.map((x) => `  人工 ${x.label} → 規則 ${vooKind(x)}：${x.title}`),
+].join("\n");
+document.body.append(pre);
+</script>
+</body>
+</html>

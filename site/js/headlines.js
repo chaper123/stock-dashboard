@@ -82,6 +82,96 @@ export function nsfStatus(official, media, today, now = Date.now()) {
   return st;
 }
 
+// ── R15 新聞去噪（docs/R15_R18.md）：VOO 的新聞分三類，只看標題與既有欄位，不經 AI。
+//   market 大盤事件（講美股大盤、S&P 500、總經）；peer 別的標的（標題主角是別檔 ETF 或個股）；advice 理財與預測文。
+//   判斷不出來的一律 market：寧可多顯示，不要誤藏。peer 先於 advice 檢查（標題主角是別檔 ETF 時，不管它在賣什麼都算別的標的）。
+export const VOO_KIND_LABEL = { peer: "別的標的", advice: "理財與預測文" };
+
+// VOO 自己的寫法：標題有這些就不算 peer（「Vanguard S&P 500 ETF」「VOO」是 VOO 本人，Vanguard 500 Index 是同一檔的另一種寫法）
+const VOO_SELF = /\bVOO\b|Vanguard\s+(?:S&P\s*500|500\s+Index)/i;
+
+// 括號或交易所前綴裡的代號：「(SPY)」「(NYSEARCA:IVV)」「(SPY.US)」。VOO、總經縮寫、指數代號不算
+const TICKER_PAREN = /\(\s*(?:[A-Z]{3,10}\s*:\s*)?\$?([A-Z]{2,5})(?:\.[A-Z]{1,2})?\s*\)/g;
+const TICKER_PREFIX = /\b(?:NYSEARCA|NYSEAMERICAN|NYSE|NASDAQ|BATS|AMEX|CBOE)\s*:\s*([A-Z]{1,5})\b/g;
+const NOT_TICKER = new Set(["VOO", "SPX", "GSPC", "DJI", "DJIA", "IXIC", "NDX", "VIX", // 指數與波動率
+  "CPI", "PCE", "PPI", "GDP", "PMI", "ISM", "NFP", "FOMC", "FED", "SEC", "FDA", "FTC", "DOJ", // 總經與機構縮寫
+  "OPEC", "NATO", "WTO", "IMF", "ECB", "BOJ", "BOE", "PBOC",
+  "AI", "US", "UK", "EU", "EV", "ETF", "IPO", "CEO", "CFO", "USD", "EUR", "JPY", "CNY", "TWD", // 常見縮寫與幣別
+  "AP", "WSJ", "CNBC", "BBC"]); // 通訊社與媒體的署名
+// 盤勢快報的版型（期貨、盤前、Stock Market Today）：括號裡的代號只是順帶點名的個股，整則還是大盤，不算 peer
+const MARKET_REPORT = /\bfutures\b|\bpremarket\b|\bstock market (?:today|midday|news)\b|\bmarkets? (?:live|wrap)\b/i;
+// 別家 ETF 的發行商品牌：SPDR、iShares、Invesco、ProShares、Direxion 等
+const PEER_BRAND = /\b(?:SPDR|iShares|Invesco|ProShares|Direxion|WisdomTree|VanEck|Global X|First Trust|Roundhill|YieldMax|Defiance)\b/i;
+// 別檔 Vanguard 基金：「Vanguard ETF」「Vanguard Index Funds」（VOO 自己的寫法在 VOO_SELF 先排除了）
+const OTHER_VANGUARD = /\bVanguard\b(?:\s+[\w&.-]+){0,4}?\s+(?:ETFs?|Index Funds?|Funds?)\b/i;
+// 機構買賣的例行稿句型：「Shares Sold by」「Acquires New Stake in」「Boosts Position in」「Buys $15.2 Million More Apple」「What … Bought」
+const FILING = [
+  /\bShares?\s+(?:Sold|Bought|Purchased|Acquired)\s+by\b/i,
+  /\b(?:Acquires?|Buys|Purchases?|Sells|Sold|Trims?|Boosts?|Raises?|Lowers?|Cuts?|Lifts?|Increases?|Decreases?|Reduces?|Adds?|Grows?|Takes|Opens)\b.{0,30}\b(?:Stake|Position|Holdings?)\s+(?:in|of)\b/i,
+  /\b(?:Purchases?|Buys|Sells|Sold|Acquires?|Bought)\b.{0,25}\bShares of\b/i,
+  /\bShares of\b.{0,80}\b(?:Bought|Sold|Purchased|Acquired)\b/i,
+  /\b(?:Buys|Sells|Adds|Trims)\s+\$[\d.,]+\s*(?:Million|Billion|M|B)\b/i,
+  /\bWhat\b.{0,60}\b(?:Bought|Sold|Buys|Sells):/i,
+];
+// 「別的 ETF 勝過 S&P 500」的比較稿：動詞緊接 S&P 500，而且標題有 ETF／基金。
+// 只認 ETF 與基金：「Nasdaq 勝過 S&P 500」「平均個股勝過 S&P 500」「歐股勝過 S&P 500」是在講大盤，不能收起來
+const BEATS_INDEX = /\b(?:beat(?:s|ing)?|outperform(?:s|ed|ing)?|outpac(?:e|es|ed|ing)|crush(?:es|ed|ing)?|obliterat(?:e|es|ed|ing)|trounc(?:e|es|ed|ing))\s+(?:the\s+)?S&P\s*500\b|\bS&P\s*500\s+a\s+run\s+for\s+its\s+money/i;
+const ETF_OR_FUND = /\b(?:ETFs?|funds?)\b/i;
+// 台灣 ETF 代號（00646、00929…）：別檔 ETF；使用者自己的 009816、00981A 不算
+const TW_ETF_CODE = /\b00\d{3,4}[A-Z]?\b/g;
+const OWN_ETF = new Set(["009816", "00981A"]);
+
+const codesOf = (t, re) => [...t.matchAll(re)].map((m) => m[1] ?? m[0]);
+
+function isPeer(t) {
+  if (VOO_SELF.test(t)) return false;
+  const tickers = [...codesOf(t, TICKER_PAREN), ...codesOf(t, TICKER_PREFIX)].filter((c) => !NOT_TICKER.has(c));
+  if (tickers.length && !MARKET_REPORT.test(t)) return true;
+  if (PEER_BRAND.test(t) || OTHER_VANGUARD.test(t) || FILING.some((re) => re.test(t))) return true;
+  if (BEATS_INDEX.test(t) && ETF_OR_FUND.test(t)) return true;
+  return codesOf(t, TW_ETF_CODE).some((c) => !OWN_ETF.has(c));
+}
+
+// 理財與預測文（英文）：每一條抓一種句型
+const ADVICE_EN = [
+  // 該不該買：「Stocks to Buy」「Time to Buy」「Buy Now」「a Buy」「Should You Buy」「Top Pick」「must-buy」（單獨的「to buy」可能是併購新聞，不算）
+  /\b(?:(?:stocks?|etfs?|funds?)\s+to\s+(?:buy|own|hold)|time to (?:buy|sell|invest)|buy now|buy and hold|a (?:strong |good |top )?buy|should (?:you|i|investors) (?:buy|invest|sell|own|hold)|worth (?:buying|owning)|top picks?|must[- ](?:buys?|own))\b/i,
+  // 幾檔最佳：「Best … ETFs」
+  /\bbest\b.{0,30}\b(?:etfs?|stocks?|funds?|investments?)\b/i,
+  // 目標價與預測：「Price Target」「Stock Forecast」「target at 8,900」「year-end target」「Prediction:」
+  /\bprice targets?\b|\b(?:stock|price)\s+(?:forecast|prediction)s?\b|\btargets?\s+(?:at|of|to)\s+[\d$]|\b(?:year-?end|end-20\d\d)\s+(?:S&P\s*500\s+)?targets?\b|\bprediction:/i,
+  // 歷史告訴我們：「History Says／Points to」「Historically」「Here's What (Usually) Followed」
+  /\bhistory\s+(?:says|shows|suggests|tells|repeats|points|favou?rs|warns|hints|teaches)\b|\bhistorically\b|\bhere['’]?s what (?:usually |typically |has |have )?(?:happened|followed|came|happens|comes)\b/i,
+  // 退休與被動收入：「401(k)」「IRA」「Roth」「retirement」「passive income」
+  /401\(k\)|\b(?:IRAs?|Roth|retire(?:es?|ment|d)?|passive income|nest egg|social security)\b/i,
+  // 教你怎麼做：「your portfolio」「protect your」「3 Ways to」「1 Investing Step」「How Investors Can Prepare」
+  /\b(?:your (?:portfolio|savings|retirement|money)|protect (?:your|his|her)|how (?:to|investors can|you can)\s+(?:\w+\s+){0,2}(?:invest|prepare|protect|profit|build|save|retire)|\d+\s+(?:\w+\s+){0,2}(?:ways?|steps?|moves?|tips?|mistakes?))\b/i,
+];
+// 理財與預測文（中文）：該不該買、推薦、存股、退休、被動收入、目標價與預測、歷史怎麼說
+const ADVICE_ZH = /該不該買|不該買|該買|值不值得|值得(?:買|投資|入手)|要不要買|必買|買什麼|買哪|怎麼買|推薦|存股|定期定額|退休|被動收入|目標價|預測|歷史(?:告訴|顯示|證明|上)/;
+// 標題提到「明年以後」的年份：「in 2027」「for 2027」「by June 2027」「end-2027」是在講未來的預測，不是現在發生的事
+const FUTURE_YEAR = /(?:\b(?:in|for|by|through|until)\s+(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+)?|\bend-|\byear-end\s+)(20\d\d)\b/gi;
+const futureYear = (x) => {
+  const now = Number((x.published_taipei || "").slice(0, 4));
+  return now > 0 && [...x.title.matchAll(FUTURE_YEAR)].some((m) => Number(m[1]) > now);
+};
+
+export function vooKind(x) {
+  const t = x.title || "";
+  if (isPeer(t)) return "peer";
+  if (ADVICE_EN.some((re) => re.test(t)) || ADVICE_ZH.test(t) || futureYear(x)) return "advice";
+  return "market";
+}
+
+// 這則在這個分頁裡算哪一類，要不要收進摺疊。只有 VOO 分頁、以及全部持股裡「只因為 VOO 才列進來」的項目套用；
+// 其他分頁、也跟 GOOGL／00981A／009816 有關的項目一律 market（不收起來）。寬鬆模式照樣分類，摺疊裡仍可展開看
+export function foldKind(tabName, x, loose = false) {
+  if (!has(x, "MARKET")) return "market";
+  if (tabName === "VOO") return vooKind(x);
+  if (tabName === "全部持股" && !["00981A", "009816", "GOOGL"].some((n) => TABS.find(([m]) => m === n)[1](x, loose))) return vooKind(x);
+  return "market";
+}
+
 // 多家媒體都在報：最近 36 小時、跟持股或台股有關、不只一家報導，依報導家數
 export function hotList(items, now = Date.now(), n = 8) {
   return items.filter((x) => x.also?.length && now - timeOf(x) < 36 * 3600e3
