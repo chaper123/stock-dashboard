@@ -7,7 +7,7 @@ import { cnnReading, gaugeBlock, pocketBlock } from "../gauge.js";
 import { el, taipeiTime, shortDate, taipeiToday, extLink, daysBetween, int, pct, twd, tone } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
 import { DROPPED } from "../config.js";
-import { TABS, holdTags, sortItems, hotList, nsfNews, nsfStatus, ago, timeOf } from "../headlines.js";
+import { TABS, holdTags, sortItems, hotList, nsfNews, nsfStatus, ago, timeOf, foldKind, VOO_KIND_LABEL } from "../headlines.js";
 import { macroTiles } from "../macro.js";
 import { outlookEvents, review009816, dayLabel } from "../outlook.js";
 import { loadPortfolio } from "../portfolio.js";
@@ -302,6 +302,14 @@ async function macroView() {
 }
 
 // ── 持股新聞（不經 AI）＋ 多家媒體都在報
+// R15：VOO 的兩個摺疊各自收什麼（分類規則在 headlines.js 的 vooKind）
+const FOLD_HINT = {
+  peer: "標題主角是別檔 ETF 或個股：別家 ETF 的買賣紀錄、機構持股的例行稿、「勝過 S&P 500」的比較稿。",
+  advice: "該不該買、幾檔必買、目標價與預測、歷史怎麼說、退休與被動收入這類理財文。",
+};
+// R15：「等 N 家」「N 家報導」的算法沒變（also 的家數＋1），只補一句說明，免得被當成 N 個獨立來源
+const COUNT_NOTE = (label) => `${label}是標題相同或幾乎相同的報導數，包含轉載，不代表 N 個獨立來源。`;
+
 async function feedView(arg) {
   const d = await loadHeadlines();
   const items = sortItems(d.items || []);
@@ -310,6 +318,7 @@ async function feedView(arg) {
   let cur = Math.max(0, tabNames.indexOf(arg));
   let loose = false;
   let shown = 15;
+  const unfolded = {}; // R15：VOO 的「別的標的」「理財與預測文」摺疊現在是不是打開的（重畫時保留）
 
   const tabs = el("div", { class: "ftabs", role: "group", "aria-label": "篩選持股" });
   const list = el("div", { class: "feed" });
@@ -323,31 +332,43 @@ async function feedView(arg) {
       tags.length > 0 && el("div", { class: "fi-tags" }, tags));
   };
   const draw = () => {
-    const rows = items.filter((x) => TABS[cur][1](x, loose));
+    const [curName, curF] = TABS[cur];
+    // R15：VOO 分頁與全部持股裡來自 VOO 的項目分三類，預設只列大盤事件，另外兩類各收成一個摺疊；其他分頁全部算大盤事件（照舊）
+    const by = { market: [], peer: [], advice: [] };
+    for (const x of items) if (curF(x, loose)) by[foldKind(curName, x, loose)].push(x);
+    const rows = by.market;
     tabs.replaceChildren(...TABS.map(([name, f], i) => el("button", {
       class: "ftab", type: "button", "aria-pressed": String(i === cur),
-      onclick: () => { cur = i; shown = 15; draw(); },
-    }, name, el("span", { class: "n" }, items.filter((x) => f(x, loose)).length))));
+      onclick: () => { cur = i; shown = 15; for (const k of Object.keys(unfolded)) delete unfolded[k]; draw(); }, // 換分頁時摺疊回到預設（收起來）
+    }, name, el("span", { class: "n" }, items.filter((x) => f(x, loose) && foldKind(name, x, loose) === "market").length))));
+    const folds = Object.entries(VOO_KIND_LABEL).filter(([k]) => by[k].length).map(([k, label]) => el("details", {
+      class: "more", open: unfolded[k], ontoggle: (e) => { unfolded[k] = e.target.open; },
+    }, el("summary", {}, `${label} ${by[k].length} 則`), el("p", { class: "tiny" }, FOLD_HINT[k]), by[k].map(item)));
+    const moreBtn = rows.length > shown && el("button", { class: "btn", type: "button", onclick: () => { shown += 15; draw(); } },
+      `顯示更多（還有 ${rows.length - shown} 則）`);
+    const looseBtn = el("button", { class: "btn ghost", type: "button", onclick: () => { loose = !loose; shown = 15; draw(); } },
+      loose ? "只看標題提到持股、主要媒體的" : "也顯示內文提到、非主要媒體的");
     list.replaceChildren(
-      ...(rows.length ? rows.slice(0, shown).map(item) : [el("p", { class: "muted" }, "72 小時內沒有符合的新聞。")]),
-      el("div", { class: "row more-btn" },
-        rows.length > shown && el("button", { class: "btn", type: "button", onclick: () => { shown += 15; draw(); } },
-          `顯示更多（還有 ${rows.length - shown} 則）`),
-        el("button", { class: "btn ghost", type: "button", onclick: () => { loose = !loose; shown = 15; draw(); } },
-          loose ? "只看標題提到持股、主要媒體的" : "也顯示內文提到、非主要媒體的")));
+      ...(rows.length ? rows.slice(0, shown).map(item)
+        : [el("p", { class: "muted" }, folds.length ? "沒有大盤事件的新聞，別的標的與理財文在下面。" : "72 小時內沒有符合的新聞。")]),
+      // 沒有摺疊時（其他分頁）維持原來的一列按鈕；有摺疊時，摺疊夾在「顯示更多」和「也顯示…」之間
+      ...(folds.length ? [moreBtn && el("div", { class: "row more-btn" }, moreBtn), ...folds, el("div", { class: "row more-btn" }, looseBtn)]
+        : [el("div", { class: "row more-btn" }, moreBtn, looseBtn)]).filter(Boolean));
   };
   draw();
 
   const hot = hotList(items, now);
   return el("div", { class: "layout" },
     card("持股新聞", tabs, list,
-      el("p", { class: "tiny" }, `${taipeiTime(d.generated_at_utc)} 整理（最近 72 小時，Google News 與中央社的標題，沒有經過 AI）。`)),
+      el("p", { class: "tiny" }, `${taipeiTime(d.generated_at_utc)} 整理（最近 72 小時，Google News 與中央社的標題，沒有經過 AI）。`),
+      el("p", { class: "tiny" }, COUNT_NOTE("「等 N 家」"))),
     card("多家媒體都在報",
       hot.length ? el("ol", { class: "hot" }, hot.map((x) => el("li", {},
         el("a", { href: x.url || x.link, target: "_blank", rel: "noopener noreferrer" }, x.title),
         el("span", { class: "k" }, `${x.also.length + 1} 家報導・${ago(timeOf(x), now)}`))))
         : el("p", { class: "muted small" }, "最近沒有多家同時報導的持股新聞。"),
-      el("p", { class: "tiny" }, "最近 36 小時，跟持股或台股有關、不只一家報導的，依家數排。")));
+      el("p", { class: "tiny" }, "最近 36 小時，跟持股或台股有關、不只一家報導的，依家數排。"),
+      el("p", { class: "tiny" }, COUNT_NOTE("「N 家報導」"))));
 }
 
 // ── 新聞晨報整理的事件、話題、情緒
