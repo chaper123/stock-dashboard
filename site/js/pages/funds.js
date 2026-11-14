@@ -4,7 +4,10 @@
 import { loadSettings, loadTrades, loadDividends, loadDaily, loadIndex, loadDca } from "../data.js";
 import { dcaFor } from "../discipline.js";
 import { cashTable, nextDeposit } from "../cash.js";
-import { monthlyReturns, describeBacktest, rollingWindows, blockSample, SAMPLE_PATHS } from "../backtest.js";
+import {
+  monthlyReturns, describeBacktest, rollingWindows, blockSample, SAMPLE_PATHS,
+  pathGrowth, requiredMonthly, hitProbability, monthsToTarget, rollingRequired,
+} from "../backtest.js";
 import { loadPortfolio } from "../portfolio.js";
 import { loadPerformance } from "../perf.js";
 import { el, twd, pct, int, isNum, taipeiToday, extLink, shortDate } from "../fmt.js";
@@ -122,11 +125,6 @@ function monthsToReach(target, pv, pmt, r) {
     if (v >= target) return n;
   }
   return null;
-}
-function pmtFor(target, pv, r, months) {
-  const m = mRate(r), g = Math.pow(1 + m, months);
-  const need = target - pv * g;
-  return need <= 0 ? 0 : m ? need * m / (g - 1) : need / months;
 }
 // 年數只寫到整數（R11：不用 18.3 年這種精細數字營造確定感）
 const yearsText = (n) => (n == null ? "100 年以上" : n < 12 ? `${n} 個月` : `${Math.round(n / 12)} 年`);
@@ -269,6 +267,22 @@ function fireworks() {
 const ymText = (ym) => ym.replace("-", "/");
 const PCT_ROWS = [["p10", "偏差的情況（第 10 百分位）", "s1"], ["p50", "中間（中位數）", "s2"], ["p90", "偏好的情況（第 90 百分位）", "s3"]];
 
+// 「N 年後」與「財富自由試算」兩張回測卡共用的註腳：回測期間、代表性、不含費用與稅、沒扣通膨、偏樂觀、過去不代表未來。
+// samplingNote 是各卡自己對抽樣方式的說明，extra 是各卡自己的補充（字串陣列）
+function backtestNotes(bt, samplingNote, extra = []) {
+  return el("ul", { class: "notes" },
+    el("li", { class: "tiny" }, `回測期間 ${ymText(bt.from)}～${ymText(bt.to)}（${bt.months} 個月）：這段期間加權報酬指數年化 ${pct(bt.annualized * 100, 1, false)}、`
+      + `最大回落 ${pct(bt.maxDrawdown * 100, 1, false)}${bt.drawdown ? `（${ymText(bt.drawdown.peak)} 高點到 ${ymText(bt.drawdown.trough)}）` : ""}。月報酬取每個月最後一個交易日的收盤。`),
+    el("li", { class: "tiny" }, "用加權報酬指數（含股利）代表整個組合：009816、00981A 上市太短沒有足夠的歷史，美股部位也用同一條近似。"),
+    el("li", { class: "tiny" }, "指數不含 ETF 的費用與稅（管理費、證交稅、股利所得稅等），實際報酬會比指數低一些。"),
+    el("li", { class: "tiny" }, "沒有扣通膨：金額是名目的，未來的錢購買力比較低。"),
+    el("li", { class: "tiny" }, `這段期間台股表現很好（指數年化 ${pct(bt.annualized * 100, 1, false)}），用它推算偏樂觀。過去不代表未來。`),
+    el("li", { class: "tiny" }, samplingNote),
+    extra.map((t) => el("li", { class: "tiny" }, t)));
+}
+// 年數超過歷史長度時，滾動區間湊不出來，抽樣推估也只是把歷史重新排列延伸出來的
+const beyondNote = (bt) => el("p", { class: "tiny" }, `超過歷史長度（約 ${bt.years.toFixed(1)} 年）的年數只有抽樣推估，是把歷史重新排列延伸出來的，參考價值更低。`);
+
 async function futureCard() {
   const tot = await totalAssets();
   // 起始本金不完整就不算：拿部分資產算出來的 20 年後看起來完整，其實偏低或偏高
@@ -291,8 +305,7 @@ async function futureCard() {
       el("div", { class: "scen" }, rows.map((x) => el("div", { class: `scen-item ${x.cls}` },
         el("div", { class: "tiny" }, x.label), el("div", { class: "scen-v" }, wan(x.v)),
         el("div", { class: "tiny" }, `約投入本金的 ${(x.v / s.principal).toFixed(1)} 倍`)))),
-      // 年數超過歷史長度時，滾動區間湊不出來，抽樣推估也只是把歷史重新排列延伸出來的
-      state.years > bt.years && el("p", { class: "tiny" }, `超過歷史長度（約 ${bt.years.toFixed(1)} 年）的年數只有抽樣推估，是把歷史重新排列延伸出來的，參考價值更低。`),
+      state.years > bt.years && beyondNote(bt),
       el("p", { class: "small" }, `投入本金合計 ${twd(s.principal)}（現在的總資產 ${twd(pv)} ＋ 每月 ${twd(state.pmt)} × ${n} 個月）；`
         + `期末低於投入本金的機率 ${pct(s.below * 100, 1, false)}（${int(s.paths)} 條路徑裡有 ${int(Math.round(s.below * s.paths))} 條）。`),
       futureChart(state, rows),
@@ -311,16 +324,10 @@ async function futureCard() {
     range("年數", { min: 5, max: 30, step: 1, value: state.years, fmt: (v) => `${v} 年` }, (v) => { state.years = v; draw(); }),
     outBox,
     el("p", {}, `從目前總資產 ${twd(pv)} 開始、每月月底投入。實際報酬每年不同，有的年份會虧損，結果不保證。`),
-    el("ul", { class: "notes" },
-      el("li", { class: "tiny" }, `回測期間 ${ymText(bt.from)}～${ymText(bt.to)}（${bt.months} 個月）：這段期間加權報酬指數年化 ${pct(bt.annualized * 100, 1, false)}、`
-        + `最大回落 ${pct(bt.maxDrawdown * 100, 1, false)}${bt.drawdown ? `（${ymText(bt.drawdown.peak)} 高點到 ${ymText(bt.drawdown.trough)}）` : ""}。月報酬取每個月最後一個交易日的收盤。`),
-      el("li", { class: "tiny" }, "用加權報酬指數（含股利）代表整個組合：009816、00981A 上市太短沒有足夠的歷史，美股部位也用同一條近似。"),
-      el("li", { class: "tiny" }, "指數不含 ETF 的費用與稅（管理費、證交稅、股利所得稅等），實際報酬會比指數低一些。"),
-      el("li", { class: "tiny" }, "沒有扣通膨：金額是名目的，未來的錢購買力比較低。"),
-      el("li", { class: "tiny" }, `這段期間台股表現很好（指數年化 ${pct(bt.annualized * 100, 1, false)}），用它推算偏樂觀。過去不代表未來。`),
-      el("li", { class: "tiny" }, `「偏差、中間、偏好」是抽樣推估：從這段月報酬隨機接出 ${state.years} 年的路徑（每次連續取 12 個月、超過結尾就接回開頭），共 ${SAMPLE_PATHS.toLocaleString("en-US")} 條，`
-        + "取期末值的第 10、50、90 百分位；亂數種子固定，同樣的輸入每次結果相同。"),
-      el("li", { class: "tiny" }, `每月投入預設是這個月的定投金額${depositNote(dep)}。不用你未滿一年的實際報酬推估。`)));
+    backtestNotes(bt,
+      `「偏差、中間、偏好」是抽樣推估：從這段月報酬隨機接出和你選的年數一樣長的路徑（每次連續取 12 個月、超過結尾就接回開頭），共 ${SAMPLE_PATHS.toLocaleString("en-US")} 條，`
+        + "取期末值的第 10、50、90 百分位；亂數種子固定，同樣的輸入每次結果相同。",
+      [`每月投入預設是這個月的定投金額${depositNote(dep)}。不用你未滿一年的實際報酬推估。`]));
   heading = c.querySelector("h2");
   return c;
 }
@@ -396,7 +403,8 @@ async function buffettCard() {
 // ── 財富自由試算（改進報告 R11）──
 // 兩種問題分開算：「以歷史配息率估算的稅前現金流」（高股息 ETF 近 12 個月配息 ÷ 最新收盤，股價跌時這個比率會變高、
 // 配息也會變）與「退休可持續提領」（4% 法則的提領率）。通膨是使用者可調的假設（預設年 2%），金額可以用今天的購買力
-// 或未來的名目金額表示；年數與每月要投用 4%／7%／10% 三種年報酬寫成區間，不給精細到小數的年數。
+// 或未來的名目金額表示。「多久存到」「每月要投」改用加權報酬指數的歷史回測（backtest.js，docs/FUNDS_BACKTEST.md 第二部分），
+// 寫成「中間（偏好的情況、偏差的情況）」與達標機率；目標金額與配息率的算法不變。
 export const FIRE_INFL = 0.02;
 export const FIRE_RULES = [[0.04, "4%", "Bengen：退休 30 年"], [0.035, "3.5%", "退休更久或更保守（情境假設）"], [0.03, "3%", "很保守（情境假設）"]];
 export const FIRE_CUTS = [[0, "配息維持近 12 個月的水準"], [0.2, "配息減少 2 成"], [0.4, "配息減少 4 成"]];
@@ -412,6 +420,7 @@ export function weightedYield(etfs, weights) {
 // 需要的本金（名目）：每月想領（今天的錢）照通膨漲到 months 個月後，再除以年提領率／配息率
 export const needAt = (monthly, rate, infl, months) => (monthly * 12 * Math.pow(1 + infl, months / 12)) / rate;
 
+// 固定年報酬的舊算法（頁面已改用回測，monthsToNeed 與 yearsRange 只留給 tests/web/fire.html 當對照）。
 // 幾個月後存到（目標跟著通膨變大）；每月月底投入固定金額。100 年內到不了回傳 null
 export function monthsToNeed(monthly, rate, infl, pv, pmt, r) {
   const m = mRate(r);
@@ -432,10 +441,6 @@ export function yearsRange(list) {
   const top = ys.length < list.length ? "100 年以上" : `${hi} 年`;
   return lo === hi && ys.length === list.length ? `約 ${lo} 年` : `約 ${lo} 年～${top}`;
 }
-const moneyRange = (xs) => {
-  const lo = Math.min(...xs), hi = Math.max(...xs);
-  return wan(lo) === wan(hi) ? wan(lo) : `${wan(lo)}～${wan(hi)}`;
-};
 
 async function fireCard() {
   const tot = await totalAssets();
@@ -450,22 +455,56 @@ async function fireCard() {
     const close = bars?.at(-1)?.close;
     return { code: c, ttm: e?.ttm_cash, n: e?.ttm_count, close, date: bars?.at(-1)?.time, yield: e?.ttm_cash && close ? e.ttm_cash / close : null };
   }));
+  // 歷史回測：讀不到指數時，「需要本金」照算，「多久存到」「每月要投」「達標機率」先不算
+  const series = await loadIndex("TAIEX_TR").catch(() => null);
+  const rets = series ? monthlyReturns(series) : [];
+  const bt = series && rets.length ? describeBacktest(series) : null;
   const state = { monthly: F.fire.monthly, infl: FIRE_INFL, real: true, pmt: dep.amount, years: 20, w: Object.fromEntries(etfs.map((x) => [x.code, 1])) };
-  const R = F.scenarios;
   const outBox = el("div");
+  // 路徑的 G、A 只跟年數有關：年數沒變就不重抽。多久存到只跟目標、每月投入、通膨有關，同樣的輸入算過就不再算
+  let growth = null;
+  const growthFor = (n) => (growth?.months === n ? growth : (growth = pathGrowth(rets, n)));
+  const reach = new Map();
+  const reachFor = (rate) => {
+    const key = `${rate}|${state.monthly}|${state.infl}|${state.pmt}`;
+    if (!reach.has(key)) {
+      if (reach.size > 60) reach.clear();
+      reach.set(key, monthsToTarget(rets, pv, state.pmt, (k) => needAt(state.monthly, rate, state.infl, k)));
+    }
+    return reach.get(key);
+  };
+  const monthsText = (m) => (m === Infinity ? "100 年以上" : m === 0 ? "已達到" : m < 12 ? `${Math.round(m)} 個月` : `${Math.round(m / 12)} 年`);
+  // 「中間 X（偏好的情況 Y、偏差的情況 Z）」：第 10 百分位是偏好的情況（投得少、存得快），第 90 是偏差的情況
+  const spread = (a, f) => `中間 ${f(a.p50)}（偏好的情況 ${f(a.p10)}、偏差的情況 ${f(a.p90)}）`;
 
-  // 每個情境一塊（手機上不用左右捲表格）：需要本金、多久存到、N 年存到每月要投
+  // 每個情境一塊（手機上不用左右捲表格）：需要本金、多久存到、N 年存到每月要投、照現在每月投的達標機率
   const cell = (k, v) => el("div", {}, el("span", { class: "k" }, k), el("span", { class: "v" }, v));
   const row = (label, sub, rate) => {
     const title = el("div", {}, el("strong", {}, label), sub && el("span", { class: "tiny" }, `　${sub}`));
     if (!isNum(rate) || rate <= 0) return el("div", { class: "pos" }, title, el("div", { class: "small muted" }, "資料準備中"));
     const n = state.years * 12;
     const need = needAt(state.monthly, rate, state.real ? 0 : state.infl, state.real ? 0 : n);
-    const stop = "缺資料，先不算";
+    const stop = pv == null ? "缺資料，先不算" : !bt ? "歷史資料讀不到，先不算" : null;
+    // N 年後的名目目標（跟原本一樣：每個月跟著通膨長）
+    const target = needAt(state.monthly, rate, state.infl, n);
+    let reachV = stop, payV = stop, hitV = stop, rolling = null;
+    if (!stop) {
+      const ga = growthFor(n);
+      reachV = spread(reachFor(rate), monthsText);
+      payV = spread(requiredMonthly(ga, pv, target), wan);
+      hitV = pct(hitProbability(ga, pv, state.pmt, target) * 100, 1, false);
+      // N 年不超過歷史長度而且起點夠多，才列「歷史上真的發生過」
+      const roll = state.years <= bt.years ? rollingRequired(rets, n, pv, target) : null;
+      if (roll && roll.count > 0 && !roll.small) {
+        rolling = el("p", { class: "tiny" }, `歷史上真的發生過（${roll.count} 個起點，每個都從某個月開始連續 ${state.years} 年）：每月要投，`
+          + `最差 ${wan(roll.worst.value)}（${ymText(roll.worst.start)} 開始）、中位數 ${wan(roll.median)}、最好 ${wan(roll.best.value)}（${ymText(roll.best.start)} 開始）。`);
+      }
+    }
     return el("div", { class: "pos" }, title, el("div", { class: "pos-grid" },
       cell(state.real ? "需要本金（今天的購買力）" : `需要本金（${state.years} 年後名目）`, wan(need)),
-      cell("多久存到", pv == null ? stop : yearsRange(R.map((r) => monthsToNeed(state.monthly, rate, state.infl, pv, state.pmt, r)))),
-      cell(`${state.years} 年存到，每月要投`, pv == null ? stop : moneyRange(R.map((r) => pmtFor(needAt(state.monthly, rate, state.infl, n), pv, r, n))))));
+      cell("多久存到", reachV),
+      cell(`${state.years} 年存到，每月要投`, payV),
+      cell(`照現在每月投 ${twd(state.pmt)}，${state.years} 年內達標的機率`, hitV)), rolling);
   };
   const unit = () => (state.real ? "本金是今天的購買力（實質）" : `本金是 ${state.years} 年後的名目金額（照年通膨 ${(state.infl * 100).toFixed(1)}% 換算）`);
 
@@ -476,10 +515,12 @@ async function fireCard() {
     outBox.replaceChildren(...[
       el("p", { class: "small" }, `通膨是假設、不是預測：年 ${(state.infl * 100).toFixed(1)}% 的話，今天每月 ${twd(state.monthly)} 的購買力，`
         + `${state.years} 年後每月要 ${twd(state.monthly * later)}（名目）。`),
+      bt && state.years > bt.years && beyondNote(bt),
       el("h3", {}, "退休可持續提領（4% 法則）"),
       FIRE_RULES.map(([r, label, sub]) => row(`提領率 ${label}`, sub, r)),
       el("p", { class: "tiny" }, `口徑：每月想領的是稅前金額；${unit()}；每月要投是名目的固定金額。提領率是退休第一年領起始資產的比例，之後每年照通膨調整領的金額。`
-        + `「多久存到」「每月要投」用年報酬 ${R.map((r) => `${Math.round(r * 100)}%`).join("、")} 三種情境寫成區間，目標金額每年照通膨變大。`),
+        + "「多久存到」「每月要投」用加權報酬指數的歷史回測抽樣推估，寫成「中間（偏好的情況、偏差的情況）」：偏好的情況是 2,000 條路徑裡第 10 百分位（投得少、存得快），"
+        + "偏差的情況是第 90 百分位；目標金額每年照通膨變大。"),
       el("h3", {}, "以歷史配息率估算的稅前現金流（高股息 ETF）"),
       wy.missing.length > 0 && notice("warn", `${wy.missing.join("、")} 沒有近 12 個月的配息率，`
         + (wy.used.length ? `下面只用 ${wy.used.join("、")} 算，不是三檔的完整組合。` : "先不算。")),
@@ -505,12 +546,14 @@ async function fireCard() {
     }));
   const okEtfs = etfs.filter((x) => isNum(x.yield));
   return card("財富自由試算",
+    el("p", {}, "用加權報酬指數的歷史回測推算，不是預測。"),
     range("每月想領（今天的錢，稅前）", { min: 30000, max: 300000, step: 10000, value: state.monthly, fmt: (v) => twd(v) }, set("monthly")),
     range("每月投入", { min: 0, max: 30000, step: 500, value: state.pmt, fmt: (v) => twd(v) }, set("pmt")),
     range("幾年存到", { min: 5, max: 40, step: 1, value: state.years, fmt: (v) => `${v} 年` }, set("years")),
     range("年通膨（假設）", { min: 0, max: 5, step: 0.5, value: state.infl * 100, fmt: (v) => `${v.toFixed(1)}%` }, (v) => set("infl")(v / 100)),
     el("div", { class: "row" }, el("span", { class: "small" }, "本金用："), modes),
     !tot.complete && partialNotice(tot, "「需要本金」照算，「多久存到」和「每月要投」要從完整的總資產開始，所以先不算"),
+    !bt && notice("warn", "加權報酬指數的歷史資料讀不到，「多久存到」「每月要投」「達標機率」先不算；重新整理再試一次。"),
     outBox,
     el("h3", {}, "高股息 ETF 近 12 個月配息（比例可調）"),
     okEtfs.length ? okEtfs.map((x) => range(`${x.code} ${NAMES[x.code] || ""}：配息率 ${pct(x.yield * 100, 2, false)}（${x.n} 次 ${x.ttm} 元／${shortDate(x.date)} 收盤 ${x.close}）`,
@@ -523,6 +566,10 @@ async function fireCard() {
       el("li", {}, "4% 法則（Bengen 1994）：退休第一年提領起始資產的 4%，之後每年照通膨調整這個金額（不是每年重新領當時餘額的 4%）。這是用美國股債歷史資料、30 年退休期做的研究，不保證未來，也不是提領建議；3.5%、3% 是退休更久或更保守時的情境假設。"),
       el("li", {}, pv == null ? "這是試算，不是投資建議。"
         : `從目前總資產 ${twd(pv)} 開始試算；每月投入預設是這個月的定投金額${depositNote(dep)}，可用滑桿改。這是試算，不是投資建議。`)),
+    bt && backtestNotes(bt,
+      `「偏好、中間、偏差」是抽樣推估：從這段月報酬隨機接出 ${SAMPLE_PATHS.toLocaleString("en-US")} 條路徑（每次連續取 12 個月、超過結尾就接回開頭）。`
+        + "每月要投與達標機率看每條路徑在你選的年數結束時的結果；多久存到是每條路徑照現在的每月投入一個月一個月往下跑到達標為止，最長 100 年，到不了記成「100 年以上」；"
+        + "取第 10、50、90 百分位。亂數種子固定，同樣的輸入每次結果相同。"),
     el("p", { class: "tiny" }, "官方說明（2026-11-07 查核網址）：",
       extLink(LINKS.twseDividend, "證交所 ETF 配息清單"), "（每檔的收益分配標準與歷次配息）、",
       extLink(LINKS.nhi, "健保署補充保險費計算公式"), "（股利、利息所得的門檻、上限與例外）、",
