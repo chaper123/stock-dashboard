@@ -56,6 +56,8 @@ export function percentiles(values, ps) {
   const s = Float64Array.from(values).sort();
   return ps.map((p) => {
     const pos = p * (s.length - 1), lo = Math.floor(pos), hi = Math.ceil(pos);
+    if (s[lo] === s[hi]) return s[lo];
+    if (!Number.isFinite(s[hi])) return s[hi]; // 到不了（Infinity）的路徑排在最後，內插到它就算到不了
     return s[lo] + (s[hi] - s[lo]) * (pos - lo);
   });
 }
@@ -140,4 +142,100 @@ export function describeBacktest(series) {
     annualized: Math.pow(ends.at(-1).value / ends[0].value, 12 / months) - 1,
     maxDrawdown: maxDd, drawdown: dd,
   };
+}
+
+// ── 財富自由試算（docs/FUNDS_BACKTEST.md 第二部分）──
+export const MAX_MONTHS = 1200; // 多久存到的上限：100 年，到上限還沒達標就是 Infinity（畫面寫「100 年以上」）
+
+// 每條抽樣路徑的 G（累積成長倍數）與 A（每月月底投 1 元，累積到期末的金額）。
+// 同一條路徑上，期末值 ＝ pv × G ＋ pmt × A（對 pv、pmt 都是線性的），所以需要的每月投入可以直接算、不用試誤。
+// 路徑的抽法跟 blockSample 完全一樣（同一個種子、同一個順序），所以「N 年後」與這裡看的是同一批路徑
+export function pathGrowth(returns, months, { paths = SAMPLE_PATHS, block = BLOCK_MONTHS, seed = SAMPLE_SEED } = {}) {
+  if (!returns.length || months <= 0) return { paths: 0, months, G: new Float64Array(0), A: new Float64Array(0) };
+  const rng = mulberry32(seed);
+  const G = new Float64Array(paths), A = new Float64Array(paths);
+  for (let k = 0; k < paths; k++) {
+    let g = 1, a = 0;
+    for (const r of blockPath(returns, months, rng, block)) {
+      g *= 1 + r;
+      a = a * (1 + r) + 1;
+    }
+    G[k] = g;
+    A[k] = a;
+  }
+  return { paths, months, G, A };
+}
+
+// N 年內要達標，每月要投多少：每條路徑需要 max(0, (目標 − pv × G) ÷ A)，2,000 條取第 10、50、90 百分位。
+// 第 10 是偏好的情況（投得少就夠）、第 90 是偏差的情況（要投更多）。target 是 N 年後的金額
+export function requiredMonthly(ga, pv, target) {
+  if (!ga.paths) return null;
+  const need = new Float64Array(ga.paths);
+  for (let k = 0; k < ga.paths; k++) need[k] = Math.max(0, (target - pv * ga.G[k]) / ga.A[k]);
+  const [p10, p50, p90] = percentiles(need, PERCENTILES);
+  return { p10, p50, p90 };
+}
+
+// 照現在的每月投入，N 年內達標的機率：期末值大於等於目標的路徑比例
+export function hitProbability(ga, pv, pmt, target) {
+  if (!ga.paths) return null;
+  let hit = 0;
+  for (let k = 0; k < ga.paths; k++) if (pv * ga.G[k] + pmt * ga.A[k] >= target) hit++;
+  return hit / ga.paths;
+}
+
+// 多久存到目標：每條路徑照現在的每月投入一個月一個月往下跑（區塊不夠就繼續抽），到資產大於等於「當月的目標」為止。
+// targetAt(n) 是第 n 個月底的目標（有通膨時每個月跟著長）；第 0 個月就達標回 0；到 max 個月還沒達標是 Infinity。
+// 回傳第 10、50、90 百分位（單位：月；第 10 是偏好的情況、比較快，第 90 是偏差的情況、比較慢）與沒達標的路徑比例。
+// 這一項自己從種子開始抽，不跟其他計算共用亂數
+export function monthsToTarget(returns, pv, pmt, targetAt, { paths = SAMPLE_PATHS, block = BLOCK_MONTHS, seed = SAMPLE_SEED, max = MAX_MONTHS } = {}) {
+  const len = returns.length;
+  if (!len) return null;
+  const rng = mulberry32(seed);
+  const out = new Float64Array(paths);
+  let never = 0;
+  for (let k = 0; k < paths; k++) {
+    let v = pv, hit = Infinity, start = 0, j = block;
+    if (v >= targetAt(0)) hit = 0;
+    else {
+      for (let n = 1; n <= max; n++) {
+        if (j >= block) {
+          start = Math.floor(rng() * len);
+          j = 0;
+        }
+        v = v * (1 + rate(returns[(start + j++) % len])) + pmt;
+        if (v >= targetAt(n)) {
+          hit = n;
+          break;
+        }
+      }
+    }
+    out[k] = hit;
+    if (hit === Infinity) never++;
+  }
+  const [p10, p50, p90] = percentiles(out, PERCENTILES);
+  return { p10, p50, p90, unreached: never / paths };
+}
+
+// 歷史上真的發生過：每個能湊滿 months 個連續月報酬的起點，實際需要的每月投入。
+// best 是需要最少的（含起始年月）、worst 是需要最多的、median 是中位數；起點不到 MIN_ROLLING 個標 small
+export function rollingRequired(returns, months, pv, target) {
+  const n = returns.length - months + 1;
+  if (months <= 0 || n < 1) return { count: 0, small: true, worst: null, median: null, best: null };
+  const need = [];
+  let worst = null, best = null;
+  for (let i = 0; i < n; i++) {
+    let g = 1, a = 0;
+    for (let j = 0; j < months; j++) {
+      const r = rate(returns[i + j]);
+      g *= 1 + r;
+      a = a * (1 + r) + 1;
+    }
+    const v = Math.max(0, (target - pv * g) / a);
+    need.push(v);
+    const start = returns[i].ym ?? i;
+    if (!best || v < best.value) best = { value: v, start };
+    if (!worst || v > worst.value) worst = { value: v, start };
+  }
+  return { count: n, small: n < MIN_ROLLING, worst, median: percentile(need, 0.5), best };
 }

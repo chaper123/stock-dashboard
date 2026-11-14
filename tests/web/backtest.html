@@ -10,8 +10,9 @@ import { test, eq, near, ok, report } from "./harness.js";
 import {
   mulberry32, monthEnds, monthlyReturns, simulate, percentile, percentiles, rollingWindows, blockPath, blockSample,
   describeBacktest, SAMPLE_SEED, SAMPLE_PATHS, BLOCK_MONTHS, MIN_ROLLING,
+  pathGrowth, requiredMonthly, hitProbability, monthsToTarget, rollingRequired, MAX_MONTHS,
 } from "/site/js/backtest.js";
-import { fv } from "/site/js/pages/funds.js";
+import { fv, needAt, monthsToNeed } from "/site/js/pages/funds.js";
 
 const day = (date, value) => ({ date, value });
 // 每月都換算成同一個月報酬 m 的假報酬序列（ym 從 2000-01 起）
@@ -209,6 +210,146 @@ test("合成日資料（286 個月底、最後一個月只有半個月）：月�
   eq([rs[0].ym, rs.at(-1).ym], ["2003-02", "2026-10"]);
   eq([rollingWindows(rs, 240, 1000, 100).count, rollingWindows(rs, 120, 1000, 100).count], [46, 166]);
   near(rs[0].r, 0.01, 1e-9);
+});
+
+// ── 財富自由試算（第二部分）──
+// 路徑的 G（累積成長）與 A（每月投 1 元累積到期末）：期末值＝pv × G ＋ pmt × A
+const wiggle = (n, k = 1.7, d = 8) => Array.from({ length: n }, (_, i) => ({ ym: ymOf(i), r: Math.sin(i * k) / d }));
+test("線性關係：pv × G ＋ pmt × A 等於同一條路徑直接模擬的期末值", () => {
+  const rs = wiggle(80), months = 30, pv = 5000, pmt = 200, paths = 40;
+  const ga = pathGrowth(rs, months, { paths, seed: 11 });
+  const rng = mulberry32(11);
+  for (let k = 0; k < paths; k++) {
+    const direct = simulate(pv, pmt, blockPath(rs, months, rng)).at(-1);
+    near(pv * ga.G[k] + pmt * ga.A[k], direct, 1e-6 * Math.abs(direct), `第 ${k} 條`);
+  }
+  eq([ga.paths, ga.months, ga.G.length, ga.A.length], [paths, months, paths, paths]);
+});
+test("每月報酬都相同：G ＝ (1+m)^n、A ＝ ((1+m)^n − 1) ÷ m，pv × G ＋ pmt × A 等於 fv", () => {
+  const m = mRate(0.07), n = 240, ga = pathGrowth(flat(m, 50), n, { paths: 5 });
+  near(ga.G[0] / Math.pow(1 + m, n), 1, 1e-12);
+  near(ga.A[4] / ((Math.pow(1 + m, n) - 1) / m), 1, 1e-12);
+  near((26754 * ga.G[2] + 3000 * ga.A[2]) / fv(26754, 3000, 0.07, n), 1, 1e-12);
+});
+test("跟「N 年後」同一批路徑：用 G、A 算出的期末值百分位等於 blockSample 的", () => {
+  const rs = wiggle(120), months = 60, pv = 9000, pmt = 500;
+  const ga = pathGrowth(rs, months);
+  const finals = Array.from(ga.G, (g, k) => pv * g + pmt * ga.A[k]);
+  const s = blockSample(rs, months, pv, pmt);
+  near(percentile(finals, 0.1), s.final.p10, 1e-6 * s.final.p10);
+  near(percentile(finals, 0.9), s.final.p90, 1e-6 * s.final.p90);
+});
+test("需要的每月投入：每月報酬都相同時，等於用 fv 反推（原本固定報酬的公式）", () => {
+  const r = 0.07, m = mRate(r), n = 240, pv = 26754, target = needAt(100000, 0.04, 0.02, n);
+  const g = Math.pow(1 + m, n), want = (target - pv * g) / ((g - 1) / m);
+  const q = requiredMonthly(pathGrowth(flat(m, 50), n, { paths: 20 }), pv, target);
+  near(q.p10 / want, 1, 1e-9);
+  near(q.p50 / want, 1, 1e-9);
+  near(q.p90 / want, 1, 1e-9);
+  near(fv(pv, q.p50, r, n) / target, 1, 1e-9, "照這個每月投入剛好達標");
+});
+test("需要的每月投入：目標已經達到就是 0，不會是負的", () => {
+  const q = requiredMonthly(pathGrowth(flat(0.01, 30), 24, { paths: 10 }), 1000, 500);
+  eq([q.p10, q.p50, q.p90], [0, 0, 0]);
+});
+test("需要的每月投入：第 10 百分位最少（偏好的情況）、第 90 最多（偏差的情況）", () => {
+  const q = requiredMonthly(pathGrowth(wiggle(120), 120), 10000, 2_000_000);
+  ok(q.p10 <= q.p50 && q.p50 <= q.p90 && q.p10 < q.p90, `${q.p10} ${q.p50} ${q.p90}`);
+});
+test("達標機率：每月報酬都相同時只有 0 或 1；目標剛好是中位數時是一半", () => {
+  const m = mRate(0.07), n = 120, ga = pathGrowth(flat(m, 50), n, { paths: 10 });
+  const end = fv(1000, 100, 0.07, n);
+  eq(hitProbability(ga, 1000, 100, end * 0.99), 1);
+  eq(hitProbability(ga, 1000, 100, end * 1.01), 0);
+  const rs = wiggle(120), g2 = pathGrowth(rs, 60), s = blockSample(rs, 60, 9000, 500);
+  eq(hitProbability(g2, 9000, 500, s.final.p50), 0.5, "大於等於中位數的路徑剛好一半");
+  eq(hitProbability(g2, 9000, 500, 0), 1);
+});
+test("達標機率：每月投得越多機率越高", () => {
+  const ga = pathGrowth(wiggle(120), 120);
+  ok(hitProbability(ga, 10000, 1000, 800_000) <= hitProbability(ga, 10000, 3000, 800_000));
+});
+test("沒有月報酬或 months 是 0：需要的每月投入與達標機率回傳 null", () => {
+  const ga = pathGrowth([], 120);
+  eq([ga.paths, requiredMonthly(ga, 1, 1), hitProbability(ga, 1, 1, 1)], [0, null, null]);
+});
+
+test("多久存到：每月報酬都相同時，等於現有固定報酬公式 monthsToNeed（無通膨與有通膨）", () => {
+  const m = mRate(0.07);
+  for (const infl of [0, 0.02]) {
+    const want = monthsToNeed(100000, 0.04, infl, 26754, 3000, 0.07);
+    ok(want != null && want > 0, `基準 ${want}`);
+    const r = monthsToTarget(flat(m, 50), 26754, 3000, (k) => needAt(100000, 0.04, infl, k), { paths: 20 });
+    eq([r.p10, r.p50, r.p90, r.unreached], [want, want, want, 0], `通膨 ${infl}`);
+  }
+});
+test("多久存到：有通膨時目標逐月成長，比沒通膨慢", () => {
+  const rs = flat(0, 10), tgt = (infl) => (k) => 1000 * Math.pow(1 + infl, k / 12);
+  const a = monthsToTarget(rs, 0, 100, tgt(0), { paths: 3 }), b = monthsToTarget(rs, 0, 100, tgt(0.1), { paths: 3 });
+  eq(a.p50, 10);
+  let want = 0;
+  while (100 * want < tgt(0.1)(want)) want++;
+  eq(b.p50, want);
+  ok(want > 10);
+});
+test("多久存到：已經達標回 0；上限 1,200 個月（含），到不了記成 Infinity", () => {
+  eq(MAX_MONTHS, 1200);
+  eq(monthsToTarget(flat(0, 10), 500, 0, () => 500, { paths: 3 }).p50, 0);
+  eq(monthsToTarget(flat(0, 10), 0, 1, () => 1200, { paths: 3 }).p50, 1200);
+  const never = monthsToTarget(flat(0, 10), 0, 1, () => 1201, { paths: 3 });
+  eq([never.p10, never.p50, never.p90, never.unreached], [Infinity, Infinity, Infinity, 1]);
+  eq(monthsToTarget(flat(0, 10), 0, 1, () => 30, { paths: 3, max: 24 }).p50, Infinity, "max 可調");
+});
+test("多久存到：區塊不夠就繼續抽（只有 3 個月的報酬也能往下跑）", () => {
+  const r = monthsToTarget(flat(0.005, 3), 100, 10, (k) => 200 + 15 * k, { paths: 20 });
+  ok(Number.isFinite(r.p50) && r.p50 > 12, `${r.p50}`);
+});
+test("多久存到：偏好的情況（第 10）比偏差的情況（第 90）快；到不了的路徑排在最後", () => {
+  const r = monthsToTarget(wiggle(120, 1.3, 6), 1000, 100, () => 60000, { paths: 300, seed: 5 });
+  ok(r.p10 <= r.p50 && r.p50 <= r.p90, `${r.p10} ${r.p50} ${r.p90}`);
+  const hard = monthsToTarget(flat(0, 5), 0, 1, () => 5000, { paths: 10, max: 100 });
+  eq([hard.p10, hard.p90, hard.unreached], [Infinity, Infinity, 1]);
+});
+test("百分位遇到 Infinity：內插到它就算到不了，不會變 NaN", () => {
+  eq(percentile([1, 2, Infinity], 0.5), 2);
+  eq(percentile([1, Infinity, Infinity], 0.5), Infinity);
+  eq(percentile([1, 2, 3, Infinity], 0.9), Infinity);
+  eq(percentile([Infinity], 0.5), Infinity);
+  near(percentile([1, 2, 3, 4], 0.1), 1.3, 1e-12);
+});
+test("固定種子可重現；每一項計算各自從種子開始（先跑別的計算不影響結果）", () => {
+  const rs = wiggle(100), tgt = (k) => 50000 * Math.pow(1.02, k / 12);
+  const a = monthsToTarget(rs, 1000, 200, tgt);
+  pathGrowth(rs, 120);
+  blockSample(rs, 60, 1, 1);
+  eq(monthsToTarget(rs, 1000, 200, tgt), a);
+  const ga = pathGrowth(rs, 120);
+  eq(requiredMonthly(ga, 1000, 1e6), requiredMonthly(pathGrowth(rs, 120), 1000, 1e6));
+  ok(JSON.stringify(monthsToTarget(rs, 1000, 200, tgt, { seed: 99 })) !== JSON.stringify(a), "換種子應該不同");
+});
+test("滾動區間的需要每月投入：跟逐個起點直接算一致，最好最少、最差最多，含起始年月", () => {
+  const rs = wiggle(60, 0.9, 5), months = 24, pv = 5000, target = 200000;
+  const w = rollingRequired(rs, months, pv, target);
+  const all = [];
+  for (let i = 0; i + months <= rs.length; i++) {
+    const win = rs.slice(i, i + months);
+    const g = simulate(1, 0, win).at(-1), a = simulate(0, 1, win).at(-1);
+    all.push({ v: Math.max(0, (target - pv * g) / a), start: rs[i].ym });
+  }
+  eq(w.count, all.length);
+  const lo = all.reduce((x, y) => (y.v < x.v ? y : x)), hi = all.reduce((x, y) => (y.v > x.v ? y : x));
+  near(w.best.value, lo.v, 1e-6 * lo.v);
+  near(w.worst.value, hi.v, 1e-6 * hi.v);
+  eq([w.best.start, w.worst.start], [lo.start, hi.start]);
+  near(w.median, percentile(all.map((x) => x.v), 0.5), 1e-6);
+  ok(w.best.value <= w.median && w.median <= w.worst.value);
+});
+test("滾動區間的需要每月投入：起點個數與樣本太少的標示跟「N 年後」一樣（46、166；不到 24 標 small；湊不出是 0）", () => {
+  const rs = flat(0.01, 285);
+  eq([rollingRequired(rs, 240, 0, 1e6).count, rollingRequired(rs, 120, 0, 1e6).count], [46, 166]);
+  eq([rollingRequired(rs, 240, 0, 1e6).small, rollingRequired(rs, 270, 0, 1e6).small], [false, true]);
+  const none = rollingRequired(rs, 300, 0, 1e6);
+  eq([none.count, none.small, none.best, none.median, none.worst], [0, true, null, null, null]);
 });
 
 report();
