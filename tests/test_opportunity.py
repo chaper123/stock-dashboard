@@ -139,6 +139,44 @@ def test_pct_format():
     assert op.pct(-20.31) == "−20.3%" and op.MINUS == "−"
 
 
+def test_pct_two_decimals_when_rounding_would_show_an_unreached_tier():
+    # 還沒到級距、但一位小數會顯示成級距（或更大）：改用兩位小數
+    assert (op.pct(-9.96), op.pct(-9.99), op.pct(-9.951)) == ("−9.96%", "−9.99%", "−9.95%")
+    assert (op.pct(-19.96), op.pct(-29.97)) == ("−19.96%", "−29.97%")
+    # 兩位小數還是會進位成級距：無條件捨去，「還沒到」的數字不會顯示成級距
+    assert (op.pct(-9.9996), op.pct(-9.99999999), op.pct(-19.999)) == ("−9.99%", "−9.99%", "−19.99%")
+    # 其他情況維持一位小數：不到顯示邊界、剛好到、超過、已到更深的級距
+    assert (op.pct(-9.94), op.pct(-9.949), op.pct(-9.95)) == ("−9.9%", "−9.9%", "−9.9%")   # 9.95 的浮點值略小於 9.95，一位小數是 9.9
+    assert (op.pct(-10.0), op.pct((90 / 100 - 1) * 100), op.pct(-10.04), op.pct(-10.96)) == ("−10.0%", "−10.0%", "−10.0%", "−11.0%")
+    assert (op.pct(-20.0), op.pct(-20.04), op.pct(-12.34), op.pct(-31.0)) == ("−20.0%", "−20.0%", "−12.3%", "−31.0%")
+    assert (op.pct(-3.1), op.pct(0), op.pct(-0.04)) == ("−3.1%", "0.0%", "0.0%")
+    # 一個「顯示成不是級距」的數字要和判定一致：顯示得出 −10.0% 的，一定是真的到了 −10%
+    for k in range(-1200, 0):
+        x = k / 100
+        s = op.pct(x)
+        for t in op.TIERS:
+            if s == f"−{t}.0%":
+                assert op.reached(x, t), (x, s)
+            if not op.reached(x, t):
+                assert float(s[1:-1]) < t or x > -0.05, (x, s, t)
+
+
+def test_brief_uses_two_decimals_near_a_tier():
+    # 離高點 −9.96%：判定還沒到 −10%，顯示 −9.96% 而不是 −10.0%
+    line = op.brief(op.compute(mk([100, 99, 90.04], start="2026-03-02")))
+    assert line == "【機會】加權離高點 −9.96%（03/04 收盤）；這一段高點 03/02；還沒到 −10%"
+    # 回彈：現在離高點 −9.96%、之前到過 −10%（最深 −11.0% 維持一位）
+    line = op.brief(op.compute(mk([100, 89, 90.04], start="2026-03-02")))
+    assert line == ("【機會】加權離高點 −9.96%（03/04 收盤）；這一段高點 03/02、最深 −11.0%（03/03）；"
+                    "03/03 跌破 −10%；−20%、−30% 沒到")
+    # 最深 −19.96%（只到 −10%）：最深也改兩位
+    line = op.brief(op.compute(mk([100, 80.04, 85], start="2026-03-02")))
+    assert line == ("【機會】加權離高點 −15.0%（03/04 收盤）；這一段高點 03/02、最深 −19.96%（03/03）；"
+                    "03/03 跌破 −10%；−20%、−30% 沒到")
+    # 剛好到 −10%：已到，維持一位
+    assert op.brief(op.compute(mk([100, 90], start="2026-03-02"))).startswith("【機會】加權離高點 −10.0%（03/03 收盤）")
+
+
 def test_matches_tier_crossings_on_random_series():
     """另一種寫法（opportunity.js 的 tierCrossings：逐日走一遍、創新高就重新開始）的最後一段要和這裡一樣。"""
     rng = random.Random(20261114)

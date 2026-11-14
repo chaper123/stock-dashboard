@@ -109,9 +109,20 @@ def md(date):
     return f"{date[5:7]}/{date[8:10]}"
 
 
-def pct(x):
-    """離高點的百分比，一位小數、負數用「−」；0 寫成 0.0%。"""
-    s = f"{abs(x):.1f}%"
+def pct(x, tiers=TIERS):
+    """離高點的百分比，一位小數、負數用「−」；0 寫成 0.0%。
+    例外：還沒到某個級距（reached 為假），但四捨五入到一位小數會顯示成剛好等於或超過那個級距
+    （−9.96% 會變成 −10.0%，卻判定還沒到 −10%）時改用兩位小數（−9.96%）。
+    兩位小數還是會進位到級距（−9.9996% → −10.00%）時改成無條件捨去（−9.99%），所以「還沒到」的數字不會顯示成級距。"""
+    a = abs(x)
+    if x < 0:
+        for t in tiers:
+            if not reached(x, t) and float(f"{a:.1f}") >= t:
+                two = f"{a:.2f}"
+                if float(two) >= t:
+                    two = f"{int(a * 100 + 1e-9) / 100:.2f}"
+                return f"{MINUS}{two}%"
+    s = f"{a:.1f}%"
     return s if x > -0.05 else MINUS + s
 
 
