@@ -3,7 +3,7 @@
 > 新 session 先讀這份（現況、待辦、注意事項）。舊決定與測試細節在 [HISTORY.md](HISTORY.md)，要查時用搜尋找相關段落，不要整份讀。
 > 每次 commit 一起更新。這份保持精簡：做完的事在這裡只留一兩句，細節寫進主題文件（見文件地圖）或接在 HISTORY.md 最後面。程式註解裡的「PROGRESS.md 第 N 項」指 HISTORY.md 的編號。
 
-最後更新：2026-11-12
+最後更新：2026-11-16
 
 ## 網址
 - repo：https://github.com/chaper123/stock-dashboard
@@ -11,7 +11,7 @@
 - 行情資料：https://github.com/chaper123/market-data（本機 `C:\market-data`）
 
 ## 現在在跑的東西
-- **新聞晨報 v4.1**（claude.ai 雲端排程，平日 08:40 晨間、11:30 午間）：讀 market-data 的標題清單與資料、共用帳本（只讀）、私人持股 repo（只讀），寫「儀表板資料」試算表的「新聞」分頁並推播。2026-11-10 上線，做法與測試見 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 13 節；排程 ID、提示詞、退回 v4 的設定在 `private/routines/v41/README.md`。晨間 2026-11-11 16:34 改成 **v4.1a**（CMoney 同學風向先搜尋再開；午間沒改）。engine 釘選 stock-dashboard 3a59b67（`engine/news_select.py`、`discipline.py`、`fund_moves.py`）。
+- **新聞晨報 v4.2**（claude.ai 雲端排程，平日 08:40 晨間、11:30 午間）：讀 market-data 的標題清單與資料、共用帳本（只讀）、私人持股 repo（只讀），寫「儀表板資料」試算表的「新聞」分頁並推播。2026-11-16 18:24／18:25 兩個正式排程從 v4.1a／v4.1 換成 v4.2：大波動日重點第 1 條多一句機會觀察（到了哪一級、指到網站機會頁），另修四個小瑕疵。規劃、測試與上線結果見 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14 節；排程 ID、提示詞、退回上一版的設定在 `private/routines/v42/README.md`。engine 釘選 stock-dashboard 318aa86（`engine/news_select.py`、`discipline.py`、`fund_moves.py`、`opportunity.py`）。
 - 舊的美股、台股兩個買點晨報 2026-11-03 停用（轉型，見 [PIVOT.md](PIVOT.md)）。
 - **market-data**（公開）：GitHub Actions 抓行情、新聞標題、總經、法人、行事曆，cron-job.org 觸發（fetch 06:15、news 08:20、11:10 等），狀態看 `data/meta.json`。台股不再程式抓證交所／櫃買網站（改 FinMind＋OpenAPI）；盤中價由網站在使用者瀏覽器用富果查（金鑰只在使用者裝置）。
 - **market-data-private**（私人，本機 `C:\market-data-private`）：00981A、009816 每日持股。投信網站不得轉載，所以不放公開 repo；公開的「新聞」分頁不能寫股數、權重、排名、檔數。
@@ -20,11 +20,11 @@
 - **使用者的投資規則**：每月 6 日照帳本「定投金額」投入台股 009816 80%、00981A 20%；4、10 月檢查，偏離超過 5 個百分點才整筆補偏低的一檔；美股 VOO、GOOGL 保留、不加碼。所有輸出都是依規則的訊號，不是投資建議。
 
 ## 待辦
-1. **v4.1 後續**（11/11 第一次正式執行兩次都成功、網站新聞頁正常，結果見 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 13 節）：
-   - v4.1a 第一次正式執行（11/12 08:40）已確認：CMoney 三檔都先搜尋再開、都拿到分數（2330 61 分、009816 61 分、00981A 69 分），log 裡沒有網址權限問題；2330 與 00981A 分數的對應 log 無法證實。
-   - 還沒遇到實際情況：費半漲跌在 3%～5% 之間（不該用大波動日格式）。遇到那天再看一次執行紀錄。（Fed 例行核准略過在 v4.1a 測試已用到。）
-   - 下次改提示詞時一起修的小瑕疵：話題列理由的相對時間（「今天」「這兩天」）、總經總結的「外資連 5 天賣超」（資料只有 5 個交易日，實際連 9 天）、009816／00981A 的列偶爾類別寫成「總經」、偶爾把 apnews.com 放進 allowed_domains 被拒。
-2. **機會頁**（INSIGHTS 第 4 批）：2026-11-11 討論完方向，記在 [INSIGHTS.md](INSIGHTS.md) 5.2——只當參考分析、不設預備金、不放 00735、−10% 只提醒、−20%／−30% 才展開；「積極」可以打破 80／20 但只當分析呈現。**第一版 2026-11-12 部署上線（sw.js 2026-11-12-1）**：`#/opportunity`，從分析頁與首頁市場狀態卡連過去；本機用預覽設定 `site` 開 `http://localhost:8765/?nosw#/opportunity`。**第二版「積極」的新標的候選篩選**：規格寫在 [OPPORTUNITY.md](OPPORTUNITY.md)（2026-11-12，使用者已決定候選範圍與排序條件）；使用者決定候選日線放公開的 market-data。進度見 OPPORTUNITY.md 7.1：market-data 已 push、第一批資料 2026-11-13 06:15 產生；網站部分 2026-11-12 使用者看過後合併進本機 main（`42faeb2`），**第二版 2026-11-13 部署上線（sw.js 2026-11-13-1）**，候選資料由 market-data 每月重排、每天更新。晨報的「機會觀察」：使用者 2026-11-14 決定做精簡版，連同四個小瑕疵一起改成 v4.2，規劃在 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14 節，交給「排程維護」session 分三段做（每段之間要高階模型或使用者確認）。
+1. **v4.2 後續**（2026-11-16 上線，見 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14 節）：
+   - 第一次正式執行（11/17 08:40、11:30）還沒看：四支程式的核對、兩檔的類別、日期寫法、搜尋有沒有被拒。機會觀察那一句只在大波動日才會出現，11/17 不一定看得到。
+   - 還沒遇到實際情況：費半漲跌在 3%～5% 之間（不該用大波動日格式）。遇到那天再看一次執行紀錄。
+   - 下次改提示詞時一起修的小瑕疵：午間重點理由寫過「前 3 天賣超」（實際連 11 天；往前數整個檔的規則只寫在總經總結）；`allowed_domains` 把 cnbc.com、bloomberg.com、wsj.com、ft.com 整組列成不要放，可能限制過頭。
+2. **機會頁**（INSIGHTS 第 4 批）：2026-11-11 討論完方向，記在 [INSIGHTS.md](INSIGHTS.md) 5.2——只當參考分析、不設預備金、不放 00735、−10% 只提醒、−20%／−30% 才展開；「積極」可以打破 80／20 但只當分析呈現。**第一版 2026-11-12 部署上線（sw.js 2026-11-12-1）**：`#/opportunity`，從分析頁與首頁市場狀態卡連過去；本機用預覽設定 `site` 開 `http://localhost:8765/?nosw#/opportunity`。**第二版「積極」的新標的候選篩選**：規格寫在 [OPPORTUNITY.md](OPPORTUNITY.md)（2026-11-12，使用者已決定候選範圍與排序條件）；使用者決定候選日線放公開的 market-data。進度見 OPPORTUNITY.md 7.1：market-data 已 push、第一批資料 2026-11-13 06:15 產生；網站部分 2026-11-12 使用者看過後合併進本機 main（`42faeb2`），**第二版 2026-11-13 部署上線（sw.js 2026-11-13-1）**，候選資料由 market-data 每月重排、每天更新。晨報的「機會觀察」：使用者 2026-11-14 決定做精簡版，2026-11-16 隨 v4.2 上線（見待辦 1）。
 3. **設計改版先擱置（使用者 2026-11-11 決定：先功能、後美化）**：等網頁的功能、版面、互動大致定案再做美化，免得之後改功能又要重調。IMPROVE 的 D01～D08 與 R16、R17（版面）跟著擱置；R15（新聞去噪）、R18（資金頁先講現金）是功能，使用者 2026-11-13 說照計劃繼續：規格在 [R15_R18.md](R15_R18.md)。**兩項 2026-11-13 做完、審過，合併進本機 main（`1f3e79f`、`be86a82`），2026-11-14 部署上線（sw.js 2026-11-14-1）**：新聞頁 VOO 預設清單 57 → 31 則（別的標的、理財與預測文收合）；資金頁最上面加「現金與投入」並跟帳本對帳。R18 不動帳本結構。部署交給「部署與例行檢查」session。資金頁「N 年後」改用歷史回測推算（使用者 2026-11-13 要求，規格與結果在 [FUNDS_BACKTEST.md](FUNDS_BACKTEST.md)）：2026-11-14 使用者看過後合併進本機 main（`d29769e`），跟 R15、R18 一起 2026-11-14 部署上線。使用者 2026-11-14：財富自由試算也改用回測（規格與結果在 FUNDS_BACKTEST.md 第二部分），同一天使用者看過後合併進本機 main（`64d2349`），**2026-11-14 部署上線（sw.js 2026-11-14-2）**；小豬撲滿不改（主要看存了多少錢）。同一天使用者同意部署 R15、R18 與「N 年後」回測，交給「部署與例行檢查」。使用者問過英文標題翻譯，決定先不做。
    - 首頁示意留在本機分支 `claude/fervent-merkle-1607ac`（工作目錄 `.claude/worktrees/fervent-merkle-1607ac`，cacbefe：docs/DESIGN.md、site/preview-home.html、site/css/v2.css、site/js/pages/home_v2.js），沒有 push、沒有合併。要看：在 `.claude/launch.json` 暫時加一組 `py -3.14 -m http.server 8766 --directory .claude/worktrees/fervent-merkle-1607ac/site`，開 `/preview-home.html`。
    - 使用者看過示意的意見（重啟時要照這個改）：只比現在好一點、沒有互動感、只用了一小部分參考。原因：六個範本只實際開了三個（Ledgely、Zapline、Fundora 沒開）、照報告只拿兩個當主參考、動態刻意做得很少（沒有跳數字、沒有背景動畫）。重啟時六個範本都要實際開來看，互動當成重點。
@@ -44,10 +44,10 @@
 
 ## 文件地圖
 - [PLAN.md](PLAN.md)：原始規劃（Phase 0～6）。[PIVOT.md](PIVOT.md)：2026-10-30 轉型（只管台股 80／20）。[INSIGHTS.md](INSIGHTS.md)：長期投資人資訊改版（4 批，第 1～3 批已做）。
-- [IMPROVE.md](IMPROVE.md)：第三方改進報告 R01～R20、D01～D08 與批次狀態。[NEWS_ROUTINE.md](NEWS_ROUTINE.md)：新聞排程 v1～v4.1。
+- [IMPROVE.md](IMPROVE.md)：第三方改進報告 R01～R20、D01～D08 與批次狀態。[NEWS_ROUTINE.md](NEWS_ROUTINE.md)：新聞排程 v1～v4.2。
 - [LEDGER_WRITE.md](LEDGER_WRITE.md)、[LEDGER_CONSISTENCY.md](LEDGER_CONSISTENCY.md)：網站記帳。[DATA_SOURCES.md](DATA_SOURCES.md)：資料來源。[BACKTEST.md](BACKTEST.md)：買點規則回測。[ROUTINE_V2.md](ROUTINE_V2.md)：舊晨報 v2（已停用）。
 - [HISTORY.md](HISTORY.md)：2026-10-16～11-10 完整進度紀錄（Phase 0～4 的勾選清單也在裡面）。
-- 私人（不進 git）：`private/routines/`——各版提示詞、`routines.json`、每版一個資料夾（v3、v4、v41）的 README 記排程 ID、測試與上線紀錄。
+- 私人（不進 git）：`private/routines/`——各版提示詞、`routines.json`、每版一個資料夾（v3、v4、v41、v42）的 README 記排程 ID、測試與上線紀錄；更新與核對的腳本在 `tools/`。
 
 ## Phase 狀態
 - Phase 0 基礎建設（tag v0.1）、Phase 1 強化資料、Phase 2 排程結構化輸出：勾選項目都已完成。
