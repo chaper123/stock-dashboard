@@ -394,7 +394,7 @@ details.card.more > summary { padding: 0; }
 .progress { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; margin: 8px 0; }
 .progress > span { display: block; height: 100%; background: var(--accent); border-radius: 5px; }
 
-/* 資金頁 */
+/* 試算頁 */
 .rng { display: grid; grid-template-columns: 1fr; gap: 2px; margin: 8px 0; font-size: .88rem; }
 .rng span { color: var(--ink-2); }
 .rng input { width: 100%; accent-color: var(--accent); }

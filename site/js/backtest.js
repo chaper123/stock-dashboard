@@ -1,4 +1,4 @@
-// 資金頁「N 年後」的歷史回測推算（docs/FUNDS_BACKTEST.md）。純函式：不讀網路、不碰 DOM。
+// 試算頁「N 年後」的歷史回測推算（docs/FUNDS_BACKTEST.md）。純函式：不讀網路、不碰 DOM。
 // 輸入是指數的日資料 [{ date: "YYYY-MM-DD", value }]（loadIndex("TAIEX_TR") 的結果，由舊到新）。
 // 推算只是「把歷史上的月報酬套在現在的資產與定投上」，不是預測。
 

@@ -2,11 +2,11 @@
 <html lang="zh-Hant">
 <head><meta charset="utf-8"><title>R11 財富自由試算</title></head>
 <body>
-<h1>R11 財富自由試算（site/js/pages/funds.js）</h1>
+<h1>R11 財富自由試算（site/js/pages/calc.js）</h1>
 <p>改進報告第 8 節「配息／通膨」：配息下降、通膨上升時本金需求合理變大；缺資料的 ETF 不默默排除；既有複利公式不能改壞（20 年、每月月底 3,000、年 7%、起始 24,774 約 161.85 萬）。</p>
 <script type="module">
 import { test, eq, near, ok, report } from "./harness.js";
-import { fv, needAt, monthsToNeed, weightedYield, yearsRange, FIRE_INFL } from "/site/js/pages/funds.js";
+import { fv, needAt, monthsToNeed, weightedYield, yearsRange, FIRE_INFL } from "/site/js/pages/calc.js";
 
 test("既有複利公式：24,774 起、每月月底 3,000、年 7%、20 年 ≈ 161.85 萬", () => {
   eq(Math.round(fv(24774, 3000, 0.07, 240) / 100) / 100, 161.85);

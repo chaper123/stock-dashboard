@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="zh-Hant">
-<head><meta charset="utf-8"><title>資金頁 N 年後的歷史回測</title></head>
+<head><meta charset="utf-8"><title>試算頁 N 年後的歷史回測</title></head>
 <body>
-<h1>資金頁「N 年後」的歷史回測（site/js/backtest.js）</h1>
+<h1>試算頁「N 年後」的歷史回測（site/js/backtest.js）</h1>
 <p>docs/FUNDS_BACKTEST.md 的驗收：月報酬只取月底且不含未結束的月份；每月報酬都相同時，模擬結果等於現有的 fv 公式；
 滾動區間的個數、最差與最好的起點；區塊抽樣會接回開頭、長度正確；固定種子兩次結果相同；百分位的內插；低於本金的比例；樣本太少的標示。</p>
 <script type="module">
@@ -13,7 +13,7 @@ import {
   pathGrowth, requiredMonthly, hitProbability, monthsToTarget, rollingRequired, MAX_MONTHS,
   lifecycleSpan, lifecycleSpend, lifecycleRun, principalLine,
 } from "/site/js/backtest.js";
-import { fv, needAt, monthsToNeed, splitNote, futureChart, LIFE_CHART_HEADROOM, lifeChartMax, wan } from "/site/js/pages/funds.js";
+import { fv, needAt, monthsToNeed, splitNote, futureChart, LIFE_CHART_HEADROOM, lifeChartMax, wan } from "/site/js/pages/calc.js";
 
 const day = (date, value) => ({ date, value });
 // 每月都換算成同一個月報酬 m 的假報酬序列（ym 從 2000-01 起）

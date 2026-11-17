@@ -10,21 +10,25 @@ const ROUTES = {
   overview: { title: "總覽", load: () => import("./pages/overview.js") },
   holdings: { title: "持倉", load: () => import("./pages/holdings.js") },
   record: { title: "記帳", load: () => import("./pages/record.js") },
-  funds: { title: "資金", load: () => import("./pages/funds.js") },
+  assets: { title: "資產", load: () => import("./pages/assets.js") },
+  calc: { title: "試算", load: () => import("./pages/calc.js") },
   news: { title: "新聞", load: () => import("./pages/news.js") },
   analysis: { title: "分析", load: () => import("./pages/analysis.js") },
-  // 機會頁不放進上方分頁（八個已滿），從分析頁與首頁市場狀態卡連過來；分頁列亮「分析」
+  // 機會頁不放進上方分頁（九個已滿），從分析頁與首頁市場狀態卡連過來；分頁列亮「分析」
   opportunity: { title: "機會", nav: "analysis", load: () => import("./pages/opportunity.js") },
   reports: { title: "報告歷史", load: () => import("./pages/reports.js") },
   charts: { title: "K 線", load: () => import("./pages/charts.js") },
 };
+// 舊網址：原本的「資金」頁改名「試算」（2026-11-17），#/funds 打開就是試算
+const ALIASES = { funds: "calc" };
 
 const view = document.getElementById("view");
 const banner = document.getElementById("banner");
 let seq = 0;
 
 async function route() {
-  const [name, ...rest] = location.hash.replace(/^#\/?/, "").split("/");
+  const [raw, ...rest] = location.hash.replace(/^#\/?/, "").split("/");
+  const name = ALIASES[raw] || raw;
   const key = ROUTES[name] ? name : "overview";
   const arg = decodeURIComponent(rest.join("/"));
   const navKey = ROUTES[key].nav || key;
