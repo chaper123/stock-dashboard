@@ -1,7 +1,7 @@
 // 記帳寫入的瀏覽器測試：apps_script/ledger_write.gs 在假的 Apps Script 服務上跑，加上網站 site/js/ledger_write.js 的
 // 未確認請求保存、查詢與錯誤分類。不連 Google、不碰正式帳本。說明見 docs/LEDGER_WRITE.md「本機測試」。
 // 第 B 批（docs/LEDGER_CONSISTENCY.md）的 6 個驗收案例：同時送兩次、回應遺失後查回、同編號不同內容、中途故障恢復、沖銷、對帳。
-import { makeEnv, loadGasSource, sha256, hex, TEST_KEY } from "./fake_gas.js";
+import { makeEnv, loadGasSource, sha256, hex, TEST_KEY, serialOf } from "./fake_gas.js";
 
 const params = new URLSearchParams(location.search);
 // ?src=/tmp/ledger_write.old.gs 可以拿舊版對照（只接受同網站、.gs 結尾的路徑）
@@ -577,6 +577,276 @@ async function reconcileTests() {
   });
 }
 
+// ── 每天自動記配息（docs/AUTO_DIVIDENDS.md 第 2 節） ─────────
+
+const INC = "其他入帳";
+const FX_CSV = "2026-12-24,32.1\n2026-12-28,32.5\n2026-12-29,32.9\n2026-12-31,33.5\n2027-01-05,31.0\n";
+const ev = (ex, pay, cash) => ({ ex_date: ex, pay_date: pay, cash, year: "115", source: "FinMind", official_checked: false });
+const usEv = (ex, cash) => ({ ex_date: ex, cash });
+const incAll = (e) => Array.from({ length: e.sheets[INC].getLastRow() - 1 }, (_, i) => e.rowAt(INC, i + 2));
+// 把市場資料放進假網路。twEv／usEv＝{ 代號: [事件] }；today＝假的今天
+function feed(e, { twEv = {}, usEvents = {}, fx = FX_CSV, today } = {}) {
+  e.web.tw = { etfs: Object.fromEntries(Object.entries(twEv).map(([c, events]) => [c, { events, ttm_cash: 0, ttm_count: 0, last: null, next: null }])) };
+  e.web.us = { symbols: Object.fromEntries(Object.entries(usEvents).map(([c, events]) => [c, { events, last: null, ttm_cash: 0, ttm_count: 0 }])) };
+  e.web.fx = fx;
+  if (today) e.today = today;
+}
+// 在交易紀錄最後加一列（只填會用到的欄）
+function addTradeRow(e, { date, market = "台股", code, side, shares }) {
+  const r = e.sheets["交易紀錄"].getLastRow() + 1;
+  const put = (h, v) => e.edit("交易紀錄", r, e.col("交易紀錄", h), v);
+  put("日期", date); put("市場", market); put("代號", code); put("買賣", side); put("股數", shares);
+  return r;
+}
+const NI0 = 2; // 種子其他入帳的資料列數
+
+async function autoDivTests() {
+  const G = "自動記配息";
+  const SAME = "；跟錢包實收不同可以直接改 G 欄";
+
+  await test(G, "台股：00981A 141 股 × 0.63＝89；整列 A～K 的內容；除息日前的舊事件不記", () => {
+    const e = env();
+    feed(e, { twEv: { "00981A": [ev("2026-06-16", "2026-07-09", 0.63), ev("2026-12-16", "2027-01-08", 0.63)], "009816": [] }, today: "2027-01-08" });
+    const before = incAll(e);
+    const r = e.auto();
+    ok(r.ok && r.added === 1, JSON.stringify(r));
+    eq(e.rows(INC), NI0 + 1, "只多一列");
+    eq(e.rowAt(INC, 4), ["2027-01-08", "台股", "00981A", "配息", "", "", "89", "是", "自動估算",
+      "除息 12/16，每單位 0.63 元 × 除息前 141 股" + SAME, "2026-12-16"], "新的一列");
+    eq(incAll(e).slice(0, NI0), before, "原本兩列不動");
+    return e.rowAt(INC, 4).join(" | ");
+  });
+
+  await test(G, "美股：VOO 0.1262 股的季配約 5 元；入帳日＝除息日＋7、匯率用入帳日或之前最近一天", () => {
+    const e = env();
+    e.edit("交易紀錄", 3, 5, 0.1262); // 種子的 VOO 那列改成 0.1262 股（跟實際帳本一樣）
+    feed(e, { usEvents: { VOO: [usEv("2026-12-23", 1.8)], GOOGL: [] }, today: "2026-12-30" });
+    const r = e.auto();
+    ok(r.ok && r.added === 1, JSON.stringify(r));
+    // 0.1262 × 1.8 × 0.7＝0.159；12/30 之前最近的匯率是 12/29 的 32.9（不是 12/31 的 33.5）；0.159 × 32.9＝5.23 → 5
+    eq(e.rowAt(INC, 4), ["2026-12-30", "美股", "VOO", "配息", "0.159", "USD", "5", "是", "自動估算",
+      "除息 12/23，每股 US$1.8 × 0.1262 股，扣 30% 預扣稅，匯率 32.9" + SAME, "2026-12-23"], "新的一列");
+  });
+
+  await test(G, "除息前股數：除息日當天買的不算、賣光的不算、沖銷的一對互相抵消", () => {
+    const e = env();
+    addTradeRow(e, { date: "2026-12-10", code: "00981A", side: "買進", shares: 5 });          // 算
+    addTradeRow(e, { date: "2026-12-16", code: "00981A", side: "買進", shares: 10 });         // 除息日當天：不算
+    addTradeRow(e, { date: "2026-12-12", code: "00981A", side: "買進", shares: 7 });          // 這筆跟下一列互相沖銷
+    addTradeRow(e, { date: "2026-12-12", code: "00981A", side: "買進", shares: -7 });
+    addTradeRow(e, { date: "2026-11-20", code: "0056", side: "買進", shares: 100 });          // 買了又賣光
+    addTradeRow(e, { date: "2026-12-01", code: "0056", side: "賣出", shares: 100 });
+    feed(e, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)], "0056": [ev("2026-12-16", "2027-01-08", 1.2)],
+      "0050": [ev("2026-12-16", "2027-01-08", 0.6)] }, today: "2027-01-08" }); // 0050 從來沒買過
+    const r = e.auto();
+    ok(r.ok && r.added === 1, JSON.stringify(r));
+    const row = e.rowAt(INC, 4);
+    eq(row[2], "00981A", "只有 00981A");
+    eq(row[6], "92", "146 股 × 0.63＝91.98 → 92");
+    ok(row[9].includes("除息前 146 股"), row[9]);
+  });
+
+  await test(G, "台股：沒有 pay_date 不記、pay_date 還沒到不記；到了（含當天）才記", () => {
+    const e = env();
+    feed(e, { twEv: { "00981A": [ev("2026-12-16", "", 0.63)] }, today: "2027-01-10" });
+    ok(e.auto().added === 0, "沒有 pay_date");
+    e.web.tw.etfs["00981A"].events[0].pay_date = null;
+    ok(e.auto().added === 0, "pay_date 是 null");
+    e.web.tw.etfs["00981A"].events[0].pay_date = "2027-01-08";
+    e.today = "2027-01-07";
+    ok(e.auto().added === 0, "發放日是明天");
+    eq(e.rows(INC), NI0, "什麼都沒寫");
+    e.today = "2027-01-08";
+    ok(e.auto().added === 1, "發放日當天就記");
+    eq(e.rowAt(INC, 4)[0], "2027-01-08", "入帳日");
+  });
+
+  await test(G, "美股：入帳日＝除息日＋7 天，沒到不記", () => {
+    const e = env();
+    feed(e, { usEvents: { VOO: [usEv("2026-12-23", 1.8)] }, today: "2026-12-29" });
+    ok(e.auto().added === 0, "12/29 還沒到");
+    e.today = "2026-12-30";
+    ok(e.auto().added === 1, "12/30＝12/23＋7");
+    eq(e.rowAt(INC, 4)[0], "2026-12-30", "入帳日");
+  });
+
+  await test(G, "重複跑不會多記；格子被改成 Date、斜線文字日期、小寫代號也認得是同一筆", () => {
+    const e = env();
+    feed(e, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, usEvents: { VOO: [usEv("2027-01-05", 1.8)] }, today: "2027-01-08" });
+    ok(e.auto().added === 1, "第一次：00981A（VOO 的入帳日 1/12 還沒到）");
+    ok(e.auto().added === 0, "第二次不再記");
+    // 使用者把那一列的除息日改成 Date 物件、入帳日改成文字、代號改小寫：還是同一筆
+    e.edit(INC, 4, 11, new Date(Date.UTC(2026, 11, 16)));
+    e.edit(INC, 4, 1, "2027/1/8");
+    e.edit(INC, 4, 3, "00981a");
+    ok(e.auto().added === 0, "改格式後不重複");
+    // 手動記的 VOO 配息，除息日填文字「2027/1/5」：入帳日到了也不重複
+    e.edit(INC, 2, 11, "2027/1/5");
+    e.today = "2027-01-12";
+    const r = e.auto();
+    ok(r.ok && r.added === 0, `手動記過的 VOO 不能再記：${JSON.stringify(r)}`);
+    eq(e.rows(INC), NI0 + 1, "最後只有自動記的那一列");
+  });
+
+  await test(G, "使用者改過的 G 欄不會被動到；既有的列一個字都不變", () => {
+    const e = env();
+    feed(e, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, today: "2027-01-08" });
+    e.auto();
+    e.edit(INC, 4, 7, 95); // 錢包實收 95
+    e.edit(INC, 4, 10, "我改的備註");
+    const snap = incAll(e);
+    feed(e, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63), ev("2027-03-17", "2027-04-09", 0.5)] }, today: "2027-04-10" });
+    e.auto();
+    const now = incAll(e);
+    eq(now.slice(0, snap.length), snap, "原本每一列都沒變（含改過的 G 與備註）");
+    eq(now.length, snap.length + 1, "只多一列");
+    eq(now[snap.length][6], "71", "新的一列：141 股 × 0.5＝70.5 → 71");
+    eq(now[snap.length][10], "2027-03-17", "新的一列的除息日");
+  });
+
+  await test(G, "AUTO_DIV_START（2026-11-18）：之前的除息不記，當天含", () => {
+    const e = env();
+    feed(e, { twEv: { "00981A": [ev("2026-09-16", "2026-10-13", 0.63), ev("2026-11-17", "2026-12-10", 0.6), ev("2026-11-18", "2026-12-11", 0.7)] },
+      usEvents: { VOO: [usEv("2026-11-10", 1.8)] }, today: "2026-12-31" });
+    const r = e.auto();
+    ok(r.ok && r.added === 1, JSON.stringify(r));
+    eq(e.rowAt(INC, 4).slice(0, 3), ["2026-12-11", "台股", "00981A"], "只有 11/18 當天的");
+    eq(e.rowAt(INC, 4)[10], "2026-11-18", "除息日");
+  });
+
+  await test(G, "H 欄：入帳日 ≥ 設定的基準日→是，之前→否", () => {
+    const run = (basis) => {
+      const e = env();
+      e.edit("設定", 2, 2, serialOf(basis));
+      feed(e, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, today: "2027-01-08" });
+      e.auto();
+      return e.rowAt(INC, 4)[7];
+    };
+    eq(run("2026-10-06"), "是", "基準日在入帳日之前");
+    eq(run("2027-01-08"), "是", "基準日＝入帳日");
+    eq(run("2027-01-09"), "否", "入帳日在基準日之前");
+  });
+
+  await test(G, "抓不到資料（HTTP 錯誤、連線失敗、不是 JSON、格式不對、沒有匯率）：整次不寫任何列，錯誤記在狀態", () => {
+    const good = { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, usEvents: { VOO: [usEv("2027-01-05", 1.8)] }, today: "2027-01-08" };
+    const cases = [
+      ["tw 404", (e) => { e.web.tw = null; }],
+      ["us 404（市場資料還沒有 us.json）", (e) => { e.web.us = null; }],
+      ["fx 404", (e) => { e.web.fx = null; }],
+      ["tw 連線失敗", (e) => { e.web.tw = new Error("Address unavailable"); }],
+      ["us 不是 JSON", (e) => { e.web.us = "<html>oops</html>"; }],
+      ["tw 格式不對", (e) => { e.web.tw = { hello: 1 }; }],
+      ["us 格式不對", (e) => { e.web.us = { etfs: {} }; }],
+      ["fx 沒有匯率", (e) => { e.web.fx = "date,value\n"; }],
+    ];
+    const got = [];
+    for (const [name, mess] of cases) {
+      const e = env();
+      feed(e, good);
+      mess(e);
+      const before = incAll(e);
+      const r = e.auto();
+      ok(r.ok === false && r.added === 0 && r.error, `${name}：${JSON.stringify(r)}`);
+      eq(incAll(e), before, `${name}：其他入帳不能變`);
+      const st = JSON.parse(e.props.AUTO_DIV_STATUS);
+      ok(st.error === r.error && st.added === 0 && st.lastRun, `${name}：狀態 ${JSON.stringify(st)}`);
+      got.push(`${name}：${r.error}`);
+      // 資料恢復後隔天照常記
+      feed(e, good);
+      ok(e.auto().added === 1, `${name}：恢復後要能記`);
+    }
+    return got.join("\n");
+  });
+
+  await test(G, "入帳日之前沒有匯率：那一筆美股不記並寫進錯誤，台股照記", () => {
+    const e = env();
+    feed(e, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, usEvents: { VOO: [usEv("2026-12-23", 1.8)] },
+      fx: "2027-01-05,31.0\n", today: "2027-01-08" });
+    const r = e.auto();
+    ok(r.ok === false && r.added === 1 && /VOO/.test(r.error) && /匯率/.test(r.error), JSON.stringify(r));
+    eq(incAll(e).map((x) => x[2]), ["VOO", "", "00981A"], "只多了 00981A");
+  });
+
+  await test(G, "其他入帳分頁不在、缺「除息日」欄、設定找不到基準日：什麼都不寫", () => {
+    const miss = env();
+    feed(miss, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, today: "2027-01-08" });
+    delete miss.sheets[INC];
+    const r1 = miss.auto();
+    ok(r1.ok === false && /其他入帳/.test(r1.error), JSON.stringify(r1));
+    const noK = env();
+    feed(noK, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, today: "2027-01-08" });
+    noK.edit(INC, 1, 11, "");
+    const r2 = noK.auto();
+    ok(r2.ok === false && /除息日/.test(r2.error), JSON.stringify(r2));
+    eq(noK.rows(INC), NI0, "沒寫");
+    const noBasis = env();
+    feed(noBasis, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, today: "2027-01-08" });
+    noBasis.edit("設定", 2, 1, "別的項目");
+    const r3 = noBasis.auto();
+    ok(r3.ok === false && /基準日/.test(r3.error), JSON.stringify(r3));
+    eq(noBasis.rows(INC), NI0, "沒寫");
+  });
+
+  await test(G, "用鎖：跟網站記帳互斥（鎖被占住就這次不檢查、不抓資料、不寫）；跑完一定放鎖", () => {
+    const e = env();
+    feed(e, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, today: "2027-01-08" });
+    e.setHeld(true);
+    const busy = e.auto();
+    ok(busy.ok === false && /正在寫入/.test(busy.error) && busy.added === 0, JSON.stringify(busy));
+    ok(!e.log.some((x) => x.startsWith("fetch")), "鎖不到就不抓資料");
+    eq(e.rows(INC), NI0, "沒寫");
+    ok(JSON.parse(e.props.AUTO_DIV_STATUS).error, "狀態記下這次沒檢查");
+    e.setHeld(false);
+    e.log.length = 0;
+    ok(e.auto().added === 1, "鎖放掉之後照常記");
+    ok(e.log.indexOf("lock") >= 0 && e.log.indexOf("lock") < e.log.indexOf("fetch tw") && e.log.at(-1) === "unlock", `鎖在抓資料之前拿、最後放：${e.log.join(" → ")}`);
+    // 失敗時也要放鎖：緊接著網站記帳寫得進去
+    e.web.tw = null;
+    e.auto();
+    ok(e.post({ action: "addTrade", id: ID, data: TRADE }).ok, "自動記配息失敗後，網站記帳不能被鎖卡住");
+  });
+
+  await test(G, "ping 與 status 帶 autoDividends: { lastRun, added, error }；沒跑過是 null", () => {
+    const e = env();
+    feed(e, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, today: "2027-01-08" });
+    const p0 = e.post({ action: "ping" });
+    ok(p0.ok && p0.autoDividends === null, JSON.stringify(p0));
+    e.auto();
+    const p1 = e.post({ action: "ping" });
+    eq(Object.keys(p1.autoDividends).sort(), ["added", "error", "lastRun"], "欄位");
+    ok(p1.autoDividends.added === 1 && p1.autoDividends.error === "" && p1.autoDividends.lastRun.startsWith("2027-01-08 "), JSON.stringify(p1.autoDividends));
+    ok(p1.version === "2026-11-B", `版本字串不變（live_check.js 認它）：${p1.version}`);
+    e.web.tw = null;
+    e.auto();
+    const s = e.post({ action: "status", data: { id: ID, action: "addTrade", data: TRADE } });
+    ok(s.ok && s.state === "none" && s.autoDividends.added === 0 && /tw_etf/.test(s.autoDividends.error), JSON.stringify(s));
+  });
+
+  await test(G, "網站記帳和自動記配息交錯：互不影響（持倉、其他入帳都對）", () => {
+    const e = env();
+    feed(e, { twEv: { "00981A": [ev("2026-12-16", "2027-01-08", 0.63)] }, today: "2027-01-08" });
+    ok(e.post({ action: "addTrade", id: ID, data: { ...TRADE, date: "2027-01-07" } }).ok, "網站記帳");
+    ok(e.auto().added === 1, "自動記配息");
+    ok(e.post({ action: "addTrade", id: ID2, data: { ...TRADE, date: "2027-01-08", code: "00981A", name: "主動統一台股增長" } }).ok, "再記一筆");
+    eq(bad(rec(e)), [], "對帳全過");
+    eq(e.rows(INC), NI0 + 1, "其他入帳");
+  });
+
+  await test(G, "installDividendTrigger：每天台北 9 點的時間觸發器，重複執行不會多建；removeDividendTrigger 拿掉", () => {
+    const e = env();
+    const m1 = e.installTrigger();
+    eq(e.triggers.length, 1, "建了一個");
+    eq(e.triggers[0].spec, { fn: "autoDividends", everyDays: 1, atHour: 9, tz: "Asia/Taipei" }, "設定");
+    const m2 = e.installTrigger();
+    eq(e.triggers.length, 1, "沒有重複建");
+    ok(/已經有/.test(m2), m2);
+    e.triggers.push({ spec: { fn: "別的函式" }, getHandlerFunction: () => "別的函式" });
+    e.removeTrigger();
+    eq(e.triggers.map((t) => t.getHandlerFunction()), ["別的函式"], "只拿掉自己的");
+    return `${m1}／${m2}`;
+  });
+}
+
 // ── 網站 site/js/ledger_write.js ─────────────────────
 
 const LS_KEYS = ["ledger.writeUrl", "ledger.writeKey", "ledger.pendingTrade"];
@@ -772,6 +1042,7 @@ try {
     await recoverTests();
     await reverseTests();
     await reconcileTests();
+    await autoDivTests();
     await siteTests();
   }
 } catch (e) {

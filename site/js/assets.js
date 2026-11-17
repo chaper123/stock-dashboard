@@ -1,6 +1,7 @@
 // 資產頁的計算（docs/ASSETS_PAGE.md）。純函式：不讀網路、不碰 DOM，tests/web/assets.html 直接呼叫。
 // 輸入多半是 perf.js 的 loadPerformance()／computePerf() 的 days：每個台股交易日一筆
-// { date, value 持倉市值, flow 當天投入（買進為正、賣出為負）, div 當天現金股利, invested 累計投入, index 時間加權指數, hv, px }。
+// { date, value 持倉市值, flow 當天投入（買進為正、賣出為負）, div 當天台股 ETF 現金股利, other 當天其他入帳（美股配息、手續費折抵；沒有就是 0 或沒有這個欄位）,
+//   invested 累計投入, index 時間加權指數, hv, px }。
 
 // 共用的期間選擇（一整塊資產變化共用一排）
 export const PERIODS = [["1w", "一週"], ["1m", "一月"], ["3m", "一季"], ["ytd", "年初至今"], ["1y", "一年"], ["all", "全部"]];
@@ -25,12 +26,12 @@ export function periodStart(key, first, last) {
   return s < first ? first : s;
 }
 
-// 每天的損益與報酬率。損益＝收盤市值 − 前一天收盤市值 − 當天投入 ＋ 當天現金股利；第一天沒有前一天，市值 − 投入（買進當天成交價到收盤價的差與手續費）。
+// 每天的損益與報酬率。損益＝收盤市值 − 前一天收盤市值 − 當天投入 ＋ 當天現金股利 ＋ 當天其他入帳；第一天沒有前一天，市值 − 投入（買進當天成交價到收盤價的差與手續費）。
 // 報酬率＝時間加權指數的單日變化（index(d) ÷ index(d−1) − 1），第一天沒有
 export function dailyPnl(days) {
   return days.map((d, i) => ({
     date: d.date,
-    pnl: (i ? d.value - days[i - 1].value : d.value) - d.flow + d.div,
+    pnl: (i ? d.value - days[i - 1].value : d.value) - d.flow + d.div + (d.other ?? 0),
     ret: i && days[i - 1].index > 0 ? d.index / days[i - 1].index - 1 : null,
   }));
 }

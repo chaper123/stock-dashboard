@@ -96,6 +96,7 @@ export const loadSettings = () => once("settings", async () => {
     depositTotal: num(get("累計入金")),        // 照「定投金額」分頁逐月加總，是推算不是逐筆確認
     buysSince: num(get("基準日後買入合計")),   // 只計「計入資金池＝是」的列
     sellsSince: num(get("基準日後賣出回收")),  // 同上，賣出
+    incomeSince: num(get("基準日後其他入帳")), // 「其他入帳」分頁計入資金池＝是的台幣金額合計（docs/OTHER_INCOME.md）；沒有這一列是 null
   };
   if (s.pool == null) throw new DataError(src, "找不到「可用資金」這一列");
   return s;
@@ -128,6 +129,38 @@ export const loadDca = () => once("dca", async () => {
   }).filter((x) => x && x.amount != null).sort((a, b) => a.ym.localeCompare(b.ym));
   if (!list.length) throw new DataError(src, "沒有讀到定投金額");
   return list;
+});
+
+// 帳本「其他入帳」分頁（配息與手續費折抵，docs/OTHER_INCOME.md）。
+// 回傳 { configured, rows }：configured 是 false＝分頁還沒接上（config.js 的 INCOME_GID 是 null），rows 是空的，呼叫端當成沒有其他入帳；
+// 讀不到（連不上、分頁沒發布）丟 DataError，由呼叫端決定怎麼顯示（不能當成 0）。
+// rows 每列：{ row 試算表列號, date 入帳日, market "us"｜"tw"｜""（手續費折抵常寫「台股＋美股」，不是單一市場就是空字串）, code, kind 配息｜手續費折抵,
+//   amount 原幣金額, currency, twd 實際進錢包的台幣（網站只用這欄算錢）, inPool 計入資金池, source, note,
+//   exDate 配息的除息日（K 欄，可以空白＝""；日期格式不對也當空白） }
+const INCOME_KINDS = new Set(["配息", "手續費折抵"]);
+export function parseIncome(text) {
+  return parseTable(text, "__row").map((r) => {
+    const mk = col(r, "市場");
+    return {
+      row: r.__row,
+      date: col(r, "入帳日"),
+      market: mk === "美股" ? "us" : mk === "台股" ? "tw" : "",
+      code: col(r, "代號"),
+      kind: col(r, "類型"),
+      amount: num(col(r, "原幣金額")),
+      currency: col(r, "幣別"),
+      twd: num(col(r, "台幣金額")),
+      inPool: col(r, "計入資金池") === "是",
+      source: col(r, "來源"),
+      note: col(r, "備註"),
+      exDate: /^\d{4}-\d{2}-\d{2}$/.test(col(r, "除息日")) ? col(r, "除息日") : "",
+    };
+  }).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.date) && INCOME_KINDS.has(x.kind));
+}
+
+export const loadIncome = () => once("income", async () => {
+  if (!SOURCES.ledger.income) return { configured: false, rows: [] };
+  return { configured: true, rows: parseIncome(await fetchText(SOURCES.ledger.income, "帳本「其他入帳」", true)) };
 });
 
 // 交易紀錄的每一列，含沖銷列與被沖銷的原列（記帳頁的沖銷清單用）
@@ -298,6 +331,9 @@ export const loadDaily = (market, code) => once(`daily:${market}:${code}`, async
 // 證交所 MIS 盤中快照、盤中淨值、台指 VIX 已停用（2026-11，條款不允許程式下載後公開）；盤中價改用 js/fugle.js
 export const loadCalendar = () => once("calendar", () => fetchJson(md("calendar/calendar.json"), "行事曆"));
 export const loadDividends = () => once("dividends", () => fetchJson(md("dividends/tw_etf.json"), "ETF 配息"));
+// 美股配息：{ symbols: { VOO: { events: [{ ex_date, cash 每股美元稅前 }], last, ttm_cash, ttm_count } } }（Yahoo 沒有發放日與未來的除息日）。
+// 檔案不存在（market-data 還沒產出）或讀不到會丟 DataError，呼叫端當成沒有美股配息資料
+export const loadUsDividends = () => once("usDividends", () => fetchJson(md("dividends/us.json"), "美股配息"));
 export const loadTopics = () => once("topics", () => fetchJson(md("news/topics.json"), "新聞話題統計"));
 export const loadFearGreed = () => once("fg", () => fetchJson(md("sentiment/cnn_fear_greed.json"), "CNN 恐懼貪婪"));
 // 新聞標題（第一層，最近 72 小時，約 2 MB；GitHub 傳輸時會壓縮）。格式見 market-data README「新聞標題格式」

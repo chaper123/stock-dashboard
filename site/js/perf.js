@@ -1,6 +1,6 @@
 // 組合績效（docs/PIVOT.md 第 6 節）：用帳本交易紀錄還原每天持股，台股用日線收盤、美股用日線收盤 × 當天美元兌台幣，
 // 算時間加權報酬（TWR，扣掉投入金額的影響）與資金加權報酬（XIRR）。都在瀏覽器計算。口徑寫在 computePerf 上面。
-import { loadTrades, loadDaily, loadFx, loadDividends, DataError } from "./data.js";
+import { loadTrades, loadDaily, loadFx, loadDividends, loadIncome, DataError } from "./data.js";
 
 // 已排序的日期陣列裡，最後一個 ≤ d 的位置
 function lastIdx(dates, d) {
@@ -57,11 +57,14 @@ async function build() {
   const codes = (m) => [...new Set(trades.filter((t) => t.market === m && (t.side === "買進" || t.side === "賣出")).map((t) => t.code))];
   const tw = codes("tw"), us = codes("us");
   if (!tw.length && !us.length) throw new DataError("組合績效", "帳本沒有交易紀錄");
-  const [fxRows, divs, ...bars] = await Promise.all([us.length ? loadFx() : Promise.resolve([]),
+  const [fxRows, divs, income, ...bars] = await Promise.all([us.length ? loadFx() : Promise.resolve([]),
     // 配息資料讀不到時不擋整張圖，但要標出來（台股 ETF 的股利就沒算進去）
     tw.length ? loadDividends().catch(() => null) : Promise.resolve({ etfs: {} }),
+    // 帳本「其他入帳」（美股配息、手續費折抵）：還沒接上或讀不到就不算，標 incomeKnown: false（報酬可能少算一點），不擋整張圖
+    loadIncome().catch(() => null),
     ...tw.map((c) => loadDaily("tw", c)), ...us.map((c) => loadDaily("us", c))]);
-  return computePerf({ trades, bars: Object.fromEntries([...tw, ...us].map((c, i) => [c, bars[i]])), fxRows, divs });
+  return computePerf({ trades, bars: Object.fromEntries([...tw, ...us].map((c, i) => [c, bars[i]])), fxRows, divs,
+    income: income?.configured ? income.rows : [], incomeKnown: !!income?.configured });
 }
 
 // 組合績效的計算（不碰網路，tests/web/perf.html 直接呼叫）。口徑（改進報告 R08）：
@@ -70,9 +73,14 @@ async function build() {
 // - 單日報酬＝（收盤市值 − 當天買進 ＋ 當天賣出 ＋ 當天除息的現金股利）÷ 前一天收盤市值；逐日連乘就是時間加權報酬
 //   （流入、流出都算在當天收盤，所以買進當天成交價到收盤價的差與手續費算在那一天）。首筆交易那天只建立部位，從那天收盤起算
 // - 台股 ETF 現金股利：market-data 的配息資料（每單位現金），除息日前一天收盤時的持股才領得到，除息日計入、稅前；
-//   帳本「交易紀錄」只有買進／賣出，沒有記股利。美股日線是價格（不含股利），美股的股利沒有算進來
-// trades：loadTrades()；bars：{ 代號: 日線 }；fxRows：loadFx()；divs：loadDividends()（null＝讀不到）
-export function computePerf({ trades, bars, fxRows = [], divs = { etfs: {} } }) {
+//   帳本「交易紀錄」只有買進／賣出，沒有記股利。美股日線是價格（不含股利）
+// - 其他入帳（帳本「其他入帳」分頁，docs/OTHER_INCOME.md）：美股配息（扣稅後實收的台幣金額）與手續費折抵，放在每天的 other 欄位，
+//   算法跟 div 一樣（單日報酬分子、累計損益、XIRR 的現金流）；計入資金池是或否都算，因為報酬從第一筆買進算起。
+//   台股配息不算：台股 ETF 的現金股利已經用除息資料在除息日算過，再加會重複。入帳日不是格子裡的交易日就算在下一個交易日；
+//   比第一筆交易還早、或比最後一個交易日還晚的入帳不在這段期間裡，不算。div 的意思不變（台股 ETF 除息的現金股利）
+// trades：loadTrades()；bars：{ 代號: 日線 }；fxRows：loadFx()；divs：loadDividends()（null＝讀不到）；
+// income：loadIncome().rows（預設空陣列；沒接上或讀不到時 loadPerformance 給空陣列並標 incomeKnown: false）
+export function computePerf({ trades, bars, fxRows = [], divs = { etfs: {} }, income = [], incomeKnown = true }) {
   const list = trades.filter((t) => (t.side === "買進" || t.side === "賣出") && t.shares > 0).sort((a, b) => a.date.localeCompare(b.date));
   if (!list.length) throw new DataError("組合績效", "帳本沒有交易紀錄");
   const codes = (m) => [...new Set(list.filter((t) => t.market === m).map((t) => t.code))];
@@ -97,6 +105,14 @@ export function computePerf({ trades, bars, fxRows = [], divs = { etfs: {} } }) 
     const local = t.settle ?? t.shares * t.price;
     return t.market === "us" ? local * (fx.at(t.date) ?? NaN) : local;
   };
+
+  // 其他入帳：美股配息與手續費折抵（台幣金額讀不到的列沒辦法算，略過並記在 incomeSkipped），日期由舊到新
+  const extra = (income || [])
+    .filter((x) => x && /^\d{4}-\d{2}-\d{2}$/.test(x.date || "") && (x.kind === "手續費折抵" || (x.kind === "配息" && x.market === "us")))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const incomeSkipped = extra.filter((x) => !Number.isFinite(x.twd)).length;
+  const otherRows = extra.filter((x) => Number.isFinite(x.twd) && x.date >= first);
+  let oi = 0;
 
   const shares = {}, lastPrice = {}, exAt = {};
   const days = [], dividends = [];
@@ -126,6 +142,8 @@ export function computePerf({ trades, bars, fxRows = [], divs = { etfs: {} } }) 
       flow += sign * costTwd(t);
     }
     invested += flow;
+    let other = 0; // 其他入帳：入帳日在（前一個格子, 今天］之間的美股配息、手續費折抵
+    while (oi < otherRows.length && otherRows[oi].date <= d) other += otherRows[oi++].twd;
     let value = 0;
     const hv = {}, pxd = {}; // 每檔的台幣市值與台幣價格（給 attribution 拆解用）
     for (const [c, n] of Object.entries(shares)) {
@@ -137,21 +155,23 @@ export function computePerf({ trades, bars, fxRows = [], divs = { etfs: {} } }) 
       hv[c] = n * q;
       value += n * q;
     }
-    if (prevV != null && prevV > 0) index *= (value - flow + div) / prevV;
-    days.push({ date: d, value, flow, div, invested, index, hv, px: pxd, dv });
+    if (prevV != null && prevV > 0) index *= (value - flow + div + other) / prevV;
+    days.push({ date: d, value, flow, div, other, invested, index, hv, px: pxd, dv });
     prevV = value;
     prevD = d;
   }
 
   const last = days.at(-1);
-  // XIRR：投入為負、賣出與股利為正，最後加上收盤市值
-  const cfs = days.filter((x) => x.flow || x.div).map((x) => ({ date: x.date, amount: -x.flow + x.div }));
+  // XIRR：投入為負、賣出與股利（含其他入帳）為正，最後加上收盤市值
+  const cfs = days.filter((x) => x.flow || x.div || x.other).map((x) => ({ date: x.date, amount: -x.flow + x.div + x.other }));
   cfs.push({ date: last.date, amount: last.value });
   return {
     days, first: days[0].date, last: last.date, value: last.value, invested: last.invested,
     twr: last.index - 1, xirr: xirr(cfs),
     flows: days.filter((x) => x.flow).map((x) => ({ date: x.date, amount: x.flow })),
     dividends, divTotal: dividends.reduce((a, x) => a + x.amount, 0), divsKnown: divs != null,
+    // 其他入帳（美股配息、手續費折抵）：合計、有沒有讀到帳本分頁、因為台幣金額讀不到而略過的列數
+    otherTotal: days.reduce((a, x) => a + x.other, 0), incomeKnown, incomeSkipped,
     // 每檔台股的配息概況（畫面說明用）：配息次數、最近一次除息日、第一次買進日
     exInfo: Object.fromEntries(tw.map((c) => [c, { count: ex[c].length, last: ex[c].at(-1)?.date || null, firstBuy: list.find((t) => t.code === c)?.date }])),
     years: (Date.parse(last.date) - Date.parse(days[0].date)) / (365 * 86400000),
@@ -189,9 +209,10 @@ export function attribution(perf, start, benchAt) {
   const sum = Object.values(by).reduce((a, x) => a + x, 0);
   let same = d0.value * (BN / B0);
   for (const d of days.slice(1)) {
-    // 投入照同一天的大盤買；領走的現金股利也從大盤那邊領走同樣金額，兩邊才比得起來
-    const b = d.flow || d.div ? benchAt(d.date) : null;
-    if (b) same += (d.flow - (d.div || 0)) * (BN / b);
+    // 投入照同一天的大盤買；領走的現金股利（含其他入帳的配息、折抵）也從大盤那邊領走同樣金額，兩邊才比得起來
+    const out = (d.div || 0) + (d.other || 0);
+    const b = d.flow || out ? benchAt(d.date) : null;
+    if (b) same += (d.flow - out) * (BN / b);
   }
   return {
     diff: diff * 100, other: (diff - sum) * 100, value: dN.value, same,

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>其他入帳</title></head>
+<body>
+<h1>其他入帳：配息與手續費折抵（docs/OTHER_INCOME.md）</h1>
+<p>讀帳本「其他入帳」分頁（parseIncome、還沒接上時的回傳）；算進可用資金與總資產走勢（cashTable、assetTrend）；算進組合績效（computePerf 的 other）。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { parseIncome, loadIncome } from "/site/js/data.js";
+import { SOURCES } from "/site/js/config.js";
+import { cashTable, assetTrend } from "/site/js/cash.js";
+import { computePerf } from "/site/js/perf.js";
+import { periodPnl, dailyPnl } from "/site/js/assets.js";
+
+// ── 讀「其他入帳」分頁 ──
+const HEAD = "入帳日,市場,代號,類型,原幣金額,幣別,台幣金額,計入資金池,來源,備註,除息日";
+test("parseIncome：欄位、金額（含千分位）、市場、計入資金池", () => {
+  const rows = parseIncome([HEAD,
+    "2026-05-08,台股＋美股,,手續費折抵,,,5,否,口袋錢包帳務明細,4 月台 3 美 2 折抵,",
+    "2026-07-06,美股,VOO,配息,0.17,USD,5,否,口袋錢包帳務明細,配息 VOO,2026-06-26",
+    "2026-12-01,台股,009816,配息,\"1,234\",TWD,\"1,200\",是,,,2026/11/20",
+  ].join("\n"));
+  eq(rows.length, 3);
+  eq(rows[0], { row: 2, date: "2026-05-08", market: "", code: "", kind: "手續費折抵", amount: null, currency: "", twd: 5, inPool: false, source: "口袋錢包帳務明細", note: "4 月台 3 美 2 折抵", exDate: "" });
+  eq([rows[1].exDate, rows[2].exDate], ["2026-06-26", ""]); // 除息日：K 欄，格式對才讀；沒有 K 欄（舊表頭）也是空字串
+  eq([rows[1].market, rows[1].code, rows[1].kind, rows[1].amount, rows[1].currency, rows[1].twd], ["us", "VOO", "配息", 0.17, "USD", 5]);
+  eq([rows[2].market, rows[2].amount, rows[2].twd, rows[2].inPool, rows[2].row], ["tw", 1234, 1200, true, 4]);
+});
+test("parseIncome：日期格式不對、類型不是配息／手續費折抵的列不要；空白列略過；台幣金額空白是 null（不補 0）", () => {
+  const rows = parseIncome([HEAD,
+    "2026/05/08,美股,VOO,配息,,,5,否,,",   // 日期格式不對
+    "2026-05-09,美股,VOO,利息,,,5,否,,",   // 類型不對
+    ",,,,,,,,,",
+    "2026-05-10,美股,VOO,配息,,,,是,,",    // 台幣金額空白
+  ].join("\n"));
+  eq(rows.length, 1);
+  eq([rows[0].date, rows[0].twd, rows[0].inPool], ["2026-05-10", null, true]);
+});
+test("parseIncome：只有表頭、完全空白都是空陣列", () => {
+  eq(parseIncome(HEAD), []);
+  eq(parseIncome(""), []);
+});
+// 這一項跟著設定走：gid 還是 null 才成立；填了 gid 之後 loadIncome 會讀真實分頁，所以只在沒設定時檢查
+const unsetResult = SOURCES.ledger.income ? null : await loadIncome();
+test("loadIncome：INCOME_GID 還沒設定（null）時回傳 { configured: false, rows: [] }，不讀網路", () => {
+  if (SOURCES.ledger.income) return;
+  eq(unsetResult, { configured: false, rows: [] });
+});
+
+// ── cashTable：其他入帳算進可用資金 ──
+const SET = { pool: 24, monthly: 3000, basis: "2026-10-06", basisFund: 6000, pocket: 80, depositMonths: 1, depositTotal: 3000, buysSince: 9056, sellsSince: 0 };
+const buy = (date, code, amount, extra = {}) => ({ date, market: "tw", code, side: "買進", shares: 1, twd: amount, settle: amount, inPool: true, ...extra });
+const BUY7 = [872, 1269, 1279, 835, 949, 2543, 1309].map((a, i) => buy(`2026-10-${13 + i}`, "X" + i, a)); // 合計 9,056
+const inc = (date, twd, extra = {}) => ({ row: 2, date, market: "", code: "", kind: "手續費折抵", amount: null, currency: "", twd, inPool: true, source: "", note: "", ...extra });
+const INC = (...rows) => ({ configured: true, rows });
+
+test("cashTable：有一筆基準日後折抵 4 元 → 期末多 4（28）、其他入帳合計 4、跟帳本「基準日後其他入帳」4 對得上（incomeDiff 0）", () => {
+  const c = cashTable({ settings: { ...SET, incomeSince: 4 }, trades: BUY7, income: INC(inc("2026-11-10", 4)) });
+  eq([c.closing, c.income, c.ledgerIncome, c.incomeDiff, c.incomeConfigured, c.missing], [28, 4, 4, 0, true, []]);
+  eq(c.incomeRows.map((r) => [r.date, r.kind, r.amount]), [["2026-11-10", "手續費折抵", 4]]);
+});
+test("cashTable：對不上就有差額（算出來 − 帳本）；帳本沒有那一列、其中一邊沒有時是 null 不是 0", () => {
+  const rows = INC(inc("2026-11-10", 4));
+  eq(cashTable({ settings: { ...SET, incomeSince: 3 }, trades: BUY7, income: rows }).incomeDiff, 1);
+  const noLedger = cashTable({ settings: SET, trades: BUY7, income: rows });
+  eq([noLedger.ledgerIncome, noLedger.incomeDiff, noLedger.closing], [null, null, 28]);
+});
+test("cashTable：只算「計入資金池＝是」的列；逐筆由舊到新；配息與折抵都算；金額加總只留兩位小數", () => {
+  const c = cashTable({ settings: SET, trades: BUY7, income: INC(
+    inc("2026-11-12", 0.2, { kind: "配息", market: "us", code: "VOO" }), inc("2026-11-10", 0.1),
+    inc("2026-05-08", 5, { inPool: false }), inc("2026-07-06", 5, { kind: "配息", market: "us", code: "VOO", inPool: false })) });
+  eq(c.incomeRows.map((r) => [r.date, r.amount]), [["2026-11-10", 0.1], ["2026-11-12", 0.2]]);
+  eq([c.income, c.closing], [0.3, 24.3]);
+});
+test("cashTable：income 是 null（分頁讀不到）→ 期末 null、missing 有「其他入帳」，不補 0；incomeConfigured 仍是 true", () => {
+  const c = cashTable({ settings: SET, trades: BUY7, income: null });
+  eq([c.closing, c.income, c.incomeDiff, c.incomeConfigured, c.incomeRows], [null, null, null, true, []]);
+  ok(c.missing.includes("其他入帳"), c.missing.join("、"));
+});
+test("cashTable：有一筆台幣金額讀不到 → 其他入帳合計與期末都是 null，missing 寫幾筆", () => {
+  const c = cashTable({ settings: SET, trades: BUY7, income: INC(inc("2026-11-10", 4), inc("2026-11-11", null)) });
+  eq([c.income, c.closing, c.incomeDiff], [null, null, null]);
+  ok(c.missing.includes("其他入帳（1 筆讀不到金額）"), c.missing.join("、"));
+  // 沒計入資金池、金額讀不到的列不影響
+  eq(cashTable({ settings: SET, trades: BUY7, income: INC(inc("2026-05-08", null, { inPool: false })) }).closing, 24);
+});
+test("cashTable：還沒設定（{ configured: false } 或沒給 income）→ 其他入帳當 0，跟現在一樣；incomeConfigured 是 false，不比對", () => {
+  const before = cashTable({ settings: SET, trades: BUY7 });
+  eq([before.closing, before.income, before.incomeConfigured, before.incomeDiff, before.incomeRows, before.missing], [24, 0, false, null, [], []]);
+  const off = cashTable({ settings: { ...SET, incomeSince: 9 }, trades: BUY7, income: { configured: false, rows: [] } });
+  eq([off.closing, off.income, off.incomeConfigured, off.incomeDiff], [24, 0, false, null]);
+});
+test("cashTable：「還沒設定」跟「讀不到」分得開（0 與 null）", () => {
+  const unset = cashTable({ settings: SET, trades: BUY7, income: { configured: false, rows: [] } });
+  const failed = cashTable({ settings: SET, trades: BUY7, income: null });
+  eq([unset.income, failed.income], [0, null]);
+  eq([unset.closing, failed.closing], [24, null]);
+});
+
+// ── assetTrend：入帳日起可用資金多那筆金額 ──
+// 2026-10-06 到 2026-12-10 的每個平日；同 asset.html 的假資料
+const weekdays = [];
+for (let t = Date.UTC(2026, 9, 6); t <= Date.UTC(2026, 11, 10); t += 86400000) {
+  const dow = new Date(t).getUTCDay();
+  if (dow !== 0 && dow !== 6) weekdays.push(new Date(t).toISOString().slice(0, 10));
+}
+const flat = (days, close) => days.map((time) => ({ time, open: close, high: close, low: close, close }));
+const bars = { A: flat(weekdays, 10), B: flat(weekdays, 20), U: [{ time: "2026-10-01", close: 100 }, { time: "2026-11-18", close: 110 }] };
+const fxRows = [{ date: "2026-10-01", value: 30 }, { date: "2026-11-16", value: 31 }];
+const dca = [{ ym: "2026-11", amount: 3000 }, { ym: "2026-12", amount: 5000 }];
+const settings = { basis: "2026-10-06", basisFund: 1000, pocket: 50, depositMonths: 2, depositTotal: 8000, pool: 8605 };
+const holdings = [{ market: "tw", code: "A", shares: 100 }, { market: "tw", code: "B", shares: 10 }, { market: "us", code: "U", shares: 2 }];
+const tr = (date, code, side, shares, twd, inPool = true, market = "tw") => ({ date, market, code, side, shares, price: 10, twd, settle: null, inPool });
+const trades = [tr("2026-10-13", "A", "買進", 30, 300), tr("2026-10-20", "B", "買進", 10, 200, false), tr("2026-11-10", "A", "買進", 20, 200), tr("2026-11-20", "A", "賣出", 5, 55)];
+const run = (over = {}) => assetTrend({ settings, trades, holdings, bars, fxRows, dca, ...over });
+const day = (a, d) => a.days.find((x) => x.date === d);
+
+test("assetTrend：入帳日（交易日）當天起可用資金多那筆金額；之前不變；最後一天等於 cashTable 的期末", () => {
+  const base = run();
+  const a = run({ income: INC(inc("2026-11-10", 4), inc("2026-10-20", 3, { inPool: false })) });
+  ok(a.ok && a.hasCash);
+  eq([day(a, "2026-11-09").cash, day(a, "2026-11-10").cash], [day(base, "2026-11-09").cash, day(base, "2026-11-10").cash + 4]);
+  eq([day(a, "2026-10-20").cash, day(a, "2026-10-19").cash], [day(base, "2026-10-20").cash, day(base, "2026-10-19").cash]); // 沒計入資金池的不算
+  eq([a.last.cash, a.closing, base.last.cash], [base.last.cash + 4, base.closing + 4, 8605]);
+  eq(a.last.total - base.last.total, 4);
+  eq([a.depositsAfter, a.pnl], [base.depositsAfter, base.pnl + 4]); // 對照線只加入金，其他入帳算投資損益
+});
+test("assetTrend：入帳日不是交易日（週六 11/14）→ 算在下一個交易日（週一 11/16）；基準日當天也成立", () => {
+  const base = run();
+  const a = run({ income: INC(inc("2026-11-14", 7)) });
+  eq([day(a, "2026-11-13").cash - day(base, "2026-11-13").cash, day(a, "2026-11-16").cash - day(base, "2026-11-16").cash], [0, 7]);
+  const b = run({ income: INC(inc("2026-10-06", 2)) });
+  eq(b.first.cash, base.first.cash + 2);
+});
+test("assetTrend：入帳日比最後一個交易日還晚 → 算在最後一天（資料落後時，最後一天才等於帳本現在的可用資金）", () => {
+  const a = run({ income: INC(inc("2026-12-20", 6)) });
+  eq([day(a, "2026-12-09").cash, a.last.cash], [8605, 8611]);
+});
+test("assetTrend：income 是 null（讀不到）→ 可用資金不畫、寫明原因，只畫持倉市值", () => {
+  const a = run({ income: null });
+  ok(a.ok && !a.hasCash);
+  ok(a.cashReason.includes("其他入帳"), a.cashReason);
+  eq([a.first.cash, a.last.cash, a.pnl], [null, null, null]);
+  near(a.last.total, a.last.hold, 1e-9);
+});
+test("assetTrend：還沒設定（沒給 income、或 { configured: false }）→ 跟現在一樣", () => {
+  const base = run();
+  const off = run({ income: { configured: false, rows: [] } });
+  eq(JSON.stringify(off), JSON.stringify(base));
+  eq([base.hasCash, base.last.cash], [true, 8605]);
+});
+
+// ── computePerf：美股配息、手續費折抵算進 other ──
+// 11/02～11/20 的平日；台股 A 100 股（1,000）、美股 U 1 股（100 美元 × 匯率 30 ＝ 3,000），11/02 買進後價格都不動，市值 4,000
+const pdays = weekdays.filter((d) => d >= "2026-11-02" && d <= "2026-11-20");
+const pbars = { A: flat(pdays, 10), U: flat(pdays, 100) };
+const pfx = pdays.map((date) => ({ date, value: 30 }));
+const ptrades = [
+  { date: "2026-11-02", market: "tw", code: "A", side: "買進", shares: 100, price: 10, twd: 1000, settle: null, inPool: true },
+  { date: "2026-11-02", market: "us", code: "U", side: "買進", shares: 1, price: 100, twd: 3000, settle: null, inPool: true },
+];
+const perf = (income, extra = {}) => computePerf({ trades: ptrades, bars: pbars, fxRows: pfx, ...(income === undefined ? {} : { income }), ...extra });
+const pday = (p, d) => p.days.find((x) => x.date === d);
+const usDiv = (date, twd) => inc(date, twd, { kind: "配息", market: "us", code: "U" });
+
+test("computePerf：美股配息與手續費折抵算進 other 與時間加權報酬；入帳日是休市日（週六 11/07）算到下一個交易日（11/09）", () => {
+  const p = perf([usDiv("2026-11-05", 5), inc("2026-11-07", 3)]);
+  eq(p.days.map((d) => [d.date, d.other]).filter(([, o]) => o), [["2026-11-05", 5], ["2026-11-09", 3]]);
+  eq(p.otherTotal, 8);
+  near(p.twr, (4005 / 4000) * (4003 / 4000) - 1, 1e-12);
+  eq(pday(p, "2026-11-05").div, 0); // div 的意思不變：台股 ETF 除息的現金股利
+});
+test("computePerf：台股配息列不算（已經用除息資料算過，再加會重複）；市場是空白的配息也不算；金額讀不到的列略過並計數", () => {
+  const p = perf([inc("2026-11-10", 50, { kind: "配息", market: "tw", code: "A" }), inc("2026-11-11", 9, { kind: "配息", market: "" }),
+    usDiv("2026-11-12", null), inc("2026-11-13", 1)]);
+  eq(p.otherTotal, 1);
+  eq(p.incomeSkipped, 1);
+  eq(pday(p, "2026-11-10").other, 0);
+});
+test("computePerf：比第一筆交易還早、比最後一個交易日還晚的入帳不在這段期間裡，不算", () => {
+  const p = perf([usDiv("2026-10-01", 5), usDiv("2026-12-01", 5), usDiv("2026-11-20", 2)]);
+  eq(p.otherTotal, 2);
+  eq(pday(p, "2026-11-20").other, 2);
+});
+test("computePerf：income 是空陣列（或沒給、只有台股配息）時，輸出跟現在完全一樣；other 都是 0", () => {
+  const base = perf(undefined);
+  eq(JSON.stringify(perf([])), JSON.stringify(base));
+  eq(JSON.stringify(perf([inc("2026-11-10", 50, { kind: "配息", market: "tw", code: "A" })])), JSON.stringify(base));
+  ok(base.days.every((d) => d.other === 0));
+  eq([base.otherTotal, base.incomeKnown, base.incomeSkipped], [0, true, 0]);
+  near(base.twr, 0, 1e-15);
+  eq(JSON.stringify(perf([], { incomeKnown: false }).days), JSON.stringify(base.days));   // 讀不到時只多標 incomeKnown: false
+  eq(perf([], { incomeKnown: false }).incomeKnown, false);
+});
+test("computePerf：XIRR 的現金流把其他入帳當成拿回的錢（有入帳的年化比沒有高）", () => {
+  const without = perf([]).xirr, withIncome = perf([usDiv("2026-11-05", 5), inc("2026-11-07", 3)]).xirr;
+  ok(Number.isFinite(without) && Number.isFinite(withIncome) && withIncome > without, `${without} → ${withIncome}`);
+});
+test("資產頁的損益：全部期間累計損益多其他入帳（＝持倉市值 − 累計投入 ＋ 其他入帳）、每日損益那天多 5；沒有入帳時不變", () => {
+  const p = perf([usDiv("2026-11-05", 5), inc("2026-11-07", 3)]);
+  const cum = periodPnl(p.days, p.first);
+  eq(cum.at(-1).cum, p.value - p.invested + 8);
+  eq(cum.find((x) => x.date === "2026-11-05").pnl, 5);
+  eq(cum.find((x) => x.date === "2026-11-09").pnl, 3);
+  const daily = dailyPnl(p.days);
+  eq(daily.reduce((a, x) => a + x.pnl, 0), 8);
+  eq(JSON.stringify(dailyPnl(perf([]).days)), JSON.stringify(dailyPnl(perf([]).days.map(({ other, ...rest }) => rest)))); // 沒有 other 欄位的舊資料也一樣
+  // 報酬日曆這一天的報酬率＝時間加權指數的單日變化
+  near(daily.find((x) => x.date === "2026-11-05").ret, 5 / 4000, 1e-12);
+});
+
+report();
+</script>
+</body>
+</html>

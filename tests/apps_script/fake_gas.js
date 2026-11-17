@@ -1,5 +1,5 @@
 // 假的 Apps Script 服務：讓 apps_script/ledger_write.gs 原封不動在瀏覽器裡跑（只在本機測試用，不連 Google）。
-// 換掉 SpreadsheetApp、LockService、CacheService、PropertiesService、ContentService、Utilities。
+// 換掉 SpreadsheetApp、LockService、CacheService、PropertiesService、ContentService、Utilities、UrlFetchApp（只認 market-data 的三個檔）、ScriptApp（時間觸發器）。
 // 一個 env＝一份假帳本＋共用的快取、鎖、指令碼屬性；同一個 env 呼叫多次 doPost 就像同一個部署收到多個請求。
 // 假帳本有和正式帳本一樣意思的公式欄（用 JS 算），也可以在任何一次寫入時「故障」（env.crashWhen），模擬執行中斷。
 
@@ -53,6 +53,7 @@ export const hex = (bytes) => [...bytes].map((b) => (b & 0xff).toString(16).padS
 // 儲存格 { v, f, fx }：v 值、f 數字格式、fx 公式 { text, fn(book, row) }。fn 用所在的列計算，所以複製到別列就像相對參照。
 const EPOCH = Date.UTC(1899, 11, 30);
 const ymdOf = (serial) => new Date(EPOCH + serial * 86400000).toISOString().slice(0, 10);
+export const serialOf = (ymd) => (Date.parse(ymd + "T00:00:00Z") - EPOCH) / 86400000; // YYYY-MM-DD → 試算表日期序號
 const blank = () => ({ v: "", f: "", fx: null });
 const asCell = (x) => (x && typeof x === "object" && ("fx" in x || "v" in x) ? { ...blank(), ...x } : { ...blank(), v: x });
 
@@ -86,6 +87,7 @@ class FakeSheet {
   display(cell, r) {
     const v = this.value(cell, r);
     if (v === "" || v == null) return "";
+    if (v instanceof Date && cell.f === "yyyy-mm-dd") return v.toISOString().slice(0, 10); // 測試放進去的 Date 物件
     if (typeof v === "number" && cell.f === "yyyy-mm-dd") return ymdOf(v);
     if (typeof v === "number" && cell.f === "yyyy-mm") return ymdOf(v).slice(0, 7);
     return String(v);
@@ -214,10 +216,17 @@ export function seedRows() {
       ["生效月份", "每月定投（NT$）", "設定日期", "備註", "這段期間入金次數", "這段期間入金合計（NT$）"],
       ["2026-11", 3000, "2026-11-05", "初始值", { fx: FX.dcaCount }, { fx: FX.dcaSum }],
     ],
+    // 和正式帳本的「其他入帳」（gid 11）一樣的表頭；兩列是使用者手動記的：美股配息（沒填除息日）、手續費折抵
+    其他入帳: [
+      ["入帳日", "市場", "代號", "類型", "原幣金額", "幣別", "台幣金額", "計入資金池", "來源", "備註", "除息日"],
+      [{ v: serialOf("2026-10-05"), f: "yyyy-mm-dd" }, "美股", "VOO", "配息", 0.15, "USD", 5, "否", "錢包", "手動記", ""],
+      [{ v: serialOf("2026-10-12"), f: "yyyy-mm-dd" }, "", "", "手續費折抵", "", "", 3, "否", "錢包", "3 筆委託", ""],
+    ],
   };
 }
 
-const GAS_NAMES = ["SpreadsheetApp", "LockService", "CacheService", "PropertiesService", "ContentService", "Utilities"];
+const GAS_NAMES = ["SpreadsheetApp", "LockService", "CacheService", "PropertiesService", "ContentService", "Utilities",
+  "UrlFetchApp", "ScriptApp"];
 
 export async function loadGasSource(src) {
   const res = await fetch(src, { cache: "no-store" });
@@ -232,7 +241,9 @@ export function makeEnv(source, { key = TEST_KEY } = {}) {
   const order = [];
   const store = new Map();
   const log = [];
-  const env = { sheets, store, log, beforeLock: [], onFlush: [], props: { WRITE_KEY: key }, crashWhen: null };
+  // today：假的「今天」（台北），測試可以改；web：市場資料檔（key＝tw／us／fx，值是物件或文字，null＝抓不到、Error＝連線失敗）；triggers：時間觸發器
+  const env = { sheets, store, log, beforeLock: [], onFlush: [], props: { WRITE_KEY: key }, crashWhen: null, today: TODAY,
+    web: { tw: null, us: null, fx: null }, triggers: [] };
   env.guard = (w) => {
     if (env.crashWhen && env.crashWhen(w)) {
       env.crashWhen = null;
@@ -288,17 +299,60 @@ export function makeEnv(source, { key = TEST_KEY } = {}) {
       },
     }),
   };
-  const PropertiesService = { getScriptProperties: () => ({ getProperty: (k) => env.props[k] ?? null }) };
+  const PropertiesService = {
+    getScriptProperties: () => ({
+      getProperty: (k) => env.props[k] ?? null,
+      setProperty: (k, v) => { env.props[k] = String(v); },
+    }),
+  };
+  // 網路：只認 market-data 的三個檔。連線失敗（Error）會丟例外；HTTP 錯誤（null）回 404（muteHttpExceptions）
+  const WEB_PATHS = { "dividends/tw_etf.json": "tw", "dividends/us.json": "us", "fx/usdtwd_mid.csv": "fx" };
+  const MD = "https://raw.githubusercontent.com/chaper123/market-data/main/data/";
+  const UrlFetchApp = {
+    fetch: (url, opts) => {
+      const k = url.startsWith(MD) ? WEB_PATHS[url.slice(MD.length)] : null;
+      if (!k) throw new Error(`假的 UrlFetchApp 不認識這個網址：${url}`);
+      if (!opts || opts.muteHttpExceptions !== true) throw new Error("要加 muteHttpExceptions: true，才能自己判斷 HTTP 狀態");
+      log.push(`fetch ${k}`);
+      const body = env.web[k];
+      if (body instanceof Error) throw body;
+      if (body == null) return { getResponseCode: () => 404, getContentText: () => "Not Found" };
+      return { getResponseCode: () => 200, getContentText: () => (typeof body === "string" ? body : JSON.stringify(body)) };
+    },
+  };
+  const ScriptApp = {
+    getProjectTriggers: () => env.triggers.slice(),
+    deleteTrigger: (t) => { env.triggers = env.triggers.filter((x) => x !== t); log.push("deleteTrigger"); },
+    newTrigger: (fn) => {
+      const spec = { fn };
+      const b = {
+        timeBased: () => b,
+        everyDays: (n) => { spec.everyDays = n; return b; },
+        atHour: (h) => { spec.atHour = h; return b; },
+        inTimezone: (tz) => { spec.tz = tz; return b; },
+        create: () => {
+          const t = { spec, getHandlerFunction: () => fn };
+          env.triggers.push(t);
+          log.push("newTrigger");
+          return t;
+        },
+      };
+      return b;
+    },
+  };
   const ContentService = {
     createTextOutput: (s) => ({ s, setMimeType() { return this; }, getContent() { return this.s; } }),
     MimeType: { JSON: "JSON" },
   };
   const Utilities = {
     formatDate: (d, tz, fmt) => {
-      if (fmt === "yyyy-MM-dd") return TODAY; // 固定今天，測試結果不隨日期變
+      if (fmt === "yyyy-MM-dd") { // 「現在」固定成 env.today，測試結果不隨日期變；測試放進去的 Date 物件照實轉換
+        if (d instanceof Date && Math.abs(d.getTime() - Date.now()) > 120000) return d.toISOString().slice(0, 10);
+        return env.today;
+      }
       if (fmt === "yyyy-MM-dd HH:mm:ss") { // 每次加一秒，紀錄的先後看得出來
         clock += 1;
-        return `${TODAY} 10:${String(Math.floor(clock / 60) % 60).padStart(2, "0")}:${String(clock % 60).padStart(2, "0")}`;
+        return `${env.today} 10:${String(Math.floor(clock / 60) % 60).padStart(2, "0")}:${String(clock % 60).padStart(2, "0")}`;
       }
       throw new Error(`假的 formatDate 不支援 ${fmt}`);
     },
@@ -311,8 +365,15 @@ export function makeEnv(source, { key = TEST_KEY } = {}) {
   };
 
   // eslint-disable-next-line no-new-func
-  const gas = new Function(...GAS_NAMES, `${source}\n;return { doPost, doGet };`)(
-    SpreadsheetApp, LockService, CacheService, PropertiesService, ContentService, Utilities);
+  // 舊版（?src= 對照）沒有自動記配息的函式：用 typeof 擋，不讓 return 因為找不到名稱丟錯
+  const gas = new Function(...GAS_NAMES, `${source}\n;return { doPost, doGet, autoDividends: typeof autoDividends === "function" ? autoDividends : undefined,
+      installDividendTrigger: typeof installDividendTrigger === "function" ? installDividendTrigger : undefined,
+      removeDividendTrigger: typeof removeDividendTrigger === "function" ? removeDividendTrigger : undefined };`)(
+    SpreadsheetApp, LockService, CacheService, PropertiesService, ContentService, Utilities, UrlFetchApp, ScriptApp);
+  env.auto = () => gas.autoDividends();               // 觸發器每天呼叫的函式
+  env.installTrigger = () => gas.installDividendTrigger();
+  env.removeTrigger = () => gas.removeDividendTrigger();
+  env.setHeld = (v) => { held = v; };                  // 模擬別的請求正拿著鎖
 
   env.raw = (contents) => JSON.parse(gas.doPost({ postData: { contents } }).getContent());
   env.post = (body) => env.raw(JSON.stringify({ key, ...body }));
