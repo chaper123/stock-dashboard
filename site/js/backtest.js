@@ -123,6 +123,11 @@ export function blockSample(returns, months, pv, pmt, { paths = SAMPLE_PATHS, bl
   };
 }
 
+// 投入本金逐年累積：第 y 年（0～years）是 pv ＋ pmt × 12y（圖上的灰色虛線）
+export function principalLine(pv, pmt, years) {
+  return Array.from({ length: years + 1 }, (_, y) => pv + pmt * 12 * y);
+}
+
 // 回測期間的描述：月報酬的起訖年月、這段期間的年化報酬、最大回落（月底資料，含第一個月底當起點）
 export function describeBacktest(series) {
   const ends = monthEnds(series);

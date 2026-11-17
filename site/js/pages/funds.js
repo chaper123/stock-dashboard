@@ -5,7 +5,7 @@ import { loadSettings, loadTrades, loadDividends, loadDaily, loadIndex, loadDca 
 import { dcaFor } from "../discipline.js";
 import { cashTable, nextDeposit } from "../cash.js";
 import {
-  monthlyReturns, describeBacktest, rollingWindows, blockSample, SAMPLE_PATHS,
+  monthlyReturns, describeBacktest, rollingWindows, blockSample, SAMPLE_PATHS, principalLine,
   pathGrowth, requiredMonthly, hitProbability, monthsToTarget, rollingRequired,
   lifecycleSpan, lifecycleSpend, lifecycleRun,
 } from "../backtest.js";
@@ -287,6 +287,12 @@ function backtestNotes(bt, samplingNote, extra = [], { realInfl = null } = {}) {
 // 年數超過歷史長度時，滾動區間湊不出來，抽樣推估也只是把歷史重新排列延伸出來的
 const beyondNote = (bt) => el("p", { class: "tiny" }, `超過歷史長度（約 ${bt.years.toFixed(1)} 年）的年數只有抽樣推估，是把歷史重新排列延伸出來的，參考價值更低。`);
 
+// 每一格的小字：其中獲利（期末低於本金時寫「比本金少」）與約投入本金的幾倍
+export function splitNote(value, principal) {
+  const gain = value - principal;
+  return `${gain < 0 ? "比本金少" : "其中獲利"} ${wan(Math.abs(gain))}・約投入本金的 ${(value / principal).toFixed(1)} 倍`;
+}
+
 async function futureCard() {
   const tot = await totalAssets();
   // 起始本金不完整就不算：拿部分資產算出來的 20 年後看起來完整，其實偏低或偏高
@@ -306,13 +312,17 @@ async function futureCard() {
     const rows = PCT_ROWS.map(([k, label, cls]) => ({ label, cls, v: s.final[k], line: [pv, ...s.yearly.map((y) => y[k])] }));
     const roll = rollingWindows(rets, n, pv, state.pmt);
     outBox.replaceChildren(...[
-      el("div", { class: "scen" }, rows.map((x) => el("div", { class: `scen-item ${x.cls}` },
-        el("div", { class: "tiny" }, x.label), el("div", { class: "scen-v" }, wan(x.v)),
-        el("div", { class: "tiny" }, `約投入本金的 ${(x.v / s.principal).toFixed(1)} 倍`)))),
+      el("div", { class: "scen" }, [
+        el("div", { class: "scen-item" },
+          el("div", { class: "tiny" }, "投入本金"), el("div", { class: "scen-v" }, wan(s.principal)),
+          el("div", { class: "tiny" }, `現在的總資產 ${twd(pv)} ＋ 每月 ${twd(state.pmt)} × ${n} 個月`)),
+        ...rows.map((x) => el("div", { class: `scen-item ${x.cls}` },
+          el("div", { class: "tiny" }, x.label), el("div", { class: "scen-v" }, wan(x.v)),
+          el("div", { class: "tiny" }, splitNote(x.v, s.principal))))]),
       state.years > bt.years && beyondNote(bt),
       el("p", { class: "small" }, `投入本金合計 ${twd(s.principal)}（現在的總資產 ${twd(pv)} ＋ 每月 ${twd(state.pmt)} × ${n} 個月）；`
         + `期末低於投入本金的機率 ${pct(s.below * 100, 1, false)}（${int(s.paths)} 條路徑裡有 ${int(Math.round(s.below * s.paths))} 條）。`),
-      futureChart(state, rows),
+      futureChart(state, rows, { principal: { line: principalLine(pv, state.pmt, state.years), v: s.principal } }),
       el("h3", {}, "歷史上真的發生過"),
       roll.count === 0
         ? el("p", { class: "small" }, `歷史資料只有約 ${bt.years.toFixed(1)} 年，湊不出 ${state.years} 年的連續區間。`)
@@ -338,13 +348,16 @@ async function futureCard() {
 
 // 圖：三個百分位逐年的值（rows[i].line 是第 0 年到第 N 年，v 是右端標的值）。
 // o：years 橫軸總年數、max 縱軸最大值、left／right 橫軸兩端的字、aria、retire（退休在第幾年，畫一條直線標「退休」）、
-// dedupe（右端標籤上下距離不到 10 個單位的不標，生命週期的三條線常常一起落到 0）
-function futureChart(state, rows, o = {}) {
+// dedupe（右端標籤上下距離不到 10 個單位的不標，生命週期的三條線常常一起落到 0）、
+// principal（{ line, v }：投入本金逐年累積的灰色虛線，右端標「本金 X」，跟其他標籤上下距離不到 10 個單位時不標）
+export function futureChart(state, rows, o = {}) {
   const NS = "http://www.w3.org/2000/svg";
   const W = 320, H = 150, L = 6, R = 64, T = 8, Bm = 18;
+  const { principal = null } = o;
   const {
-    years = state.years, max = Math.max(...rows.map((x) => x.v)), left = "今天", right = `${state.years} 年`,
-    aria = rows.map((x) => `${x.label} ${wan(x.v)}`).join("、"), retire = null, dedupe = false,
+    years = state.years, max = Math.max(...rows.map((x) => x.v), principal?.v ?? 0), left = "今天", right = `${state.years} 年`,
+    aria = rows.map((x) => `${x.label} ${wan(x.v)}`).join("、") + (principal ? `、投入本金 ${wan(principal.v)}` : ""),
+    retire = null, dedupe = false,
   } = o;
   const X = (y) => L + (y / years) * (W - L - R);
   const Y = (v) => T + (1 - v / max) * (H - T - Bm);
@@ -378,6 +391,13 @@ function futureChart(state, rows, o = {}) {
     const line = add("polyline", { points: pts.join(" "), class: `fc-line ${x.cls}` });
     line.append(Object.assign(document.createElementNS(NS, "title"), { textContent: `${x.label}：${wan(x.v)}` }));
     if (labelled.has(x)) add("text", { x: W - R + 4, y: Y(x.v) + 4, class: "fc-label" }, wan(x.v));
+  }
+  if (principal) {
+    const pts = principal.line.map((v, y) => `${X(y).toFixed(1)},${Y(v).toFixed(1)}`);
+    const line = add("polyline", { points: pts.join(" "), class: "fc-line s0" });
+    line.append(Object.assign(document.createElementNS(NS, "title"), { textContent: `投入本金：${wan(principal.v)}` }));
+    const y = Y(principal.v);
+    if (!placed.some((p) => Math.abs(p - y) < 10)) add("text", { x: W - R + 4, y: y + 4, class: "fc-label" }, `本金 ${wan(principal.v)}`);
   }
   add("text", { x: L, y: H - 4, class: "fc-label" }, left);
   add("text", { x: W - R, y: H - 4, class: "fc-label", "text-anchor": "end" }, right);

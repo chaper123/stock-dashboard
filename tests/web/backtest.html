@@ -11,9 +11,9 @@ import {
   mulberry32, monthEnds, monthlyReturns, simulate, percentile, percentiles, rollingWindows, blockPath, blockSample,
   describeBacktest, SAMPLE_SEED, SAMPLE_PATHS, BLOCK_MONTHS, MIN_ROLLING,
   pathGrowth, requiredMonthly, hitProbability, monthsToTarget, rollingRequired, MAX_MONTHS,
-  lifecycleSpan, lifecycleSpend, lifecycleRun,
+  lifecycleSpan, lifecycleSpend, lifecycleRun, principalLine,
 } from "/site/js/backtest.js";
-import { fv, needAt, monthsToNeed } from "/site/js/pages/funds.js";
+import { fv, needAt, monthsToNeed, splitNote, futureChart } from "/site/js/pages/funds.js";
 
 const day = (date, value) => ({ date, value });
 // 每月都換算成同一個月報酬 m 的假報酬序列（ym 從 2000-01 起）
@@ -446,6 +446,39 @@ test("生命週期：固定種子可重現；不同種子結果不同；年齡�
   const none = lifecycleSpend(rs, { ...p, S: 0 });
   eq([none.paths, none.spend, none.retire], [0, null, null]);
   eq([lifecycleRun(rs, { ...p, D: 0 }).paths, lifecycleRun(rs, { ...p, D: 0 }).survive], [0, null]);
+});
+
+// ── 「N 年後」本金與獲利分開（第四部分）──
+test("本金線：第 y 年是 pv ＋ pmt × 12y，共 years＋1 個點，第 0 年就是 pv", () => {
+  const line = principalLine(26754, 3000, 20);
+  eq(line.length, 21);
+  eq([line[0], line[1], line[10], line[20]], [26754, 62754, 386754, 746754]);
+  eq(principalLine(500, 0, 3), [500, 500, 500, 500]);
+});
+test("小字：獲利與約幾倍；期末低於本金寫「比本金少」", () => {
+  eq(splitNote(1500000, 500000), "其中獲利 100 萬・約投入本金的 3.0 倍");
+  eq(splitNote(400000, 500000), "比本金少 10.0 萬・約投入本金的 0.8 倍");
+  eq(splitNote(500000, 500000), "其中獲利 NT$0・約投入本金的 1.0 倍");
+  eq(splitNote(3000000, 745590), "其中獲利 225 萬・約投入本金的 4.0 倍");
+});
+test("圖：多一條灰色虛線（class fc-line s0）、右端標「本金 X」、aria-label 有本金；沒給 principal 時跟以前一樣", () => {
+  const rows = [["偏差", "s1", 200], ["中間", "s2", 600], ["偏好", "s3", 1800]].map(([label, cls, v]) => ({ label, cls, v, line: [100, v] }));
+  const without = futureChart({ years: 1 }, rows);
+  eq(without.querySelectorAll("polyline").length, 3);
+  eq(without.getAttribute("aria-label"), "偏差 NT$200、中間 NT$600、偏好 NT$1,800");
+  const withP = futureChart({ years: 1 }, rows, { principal: { line: [100, 400], v: 400 } });
+  const lines = [...withP.querySelectorAll("polyline")];
+  eq(lines.length, 4);
+  eq(lines.at(-1).getAttribute("class"), "fc-line s0");
+  eq(lines.at(-1).getAttribute("points").split(" ").length, 2);
+  ok([...withP.querySelectorAll("text")].some((t) => t.textContent === "本金 NT$400"), "沒有本金標籤");
+  ok(withP.getAttribute("aria-label").endsWith("、投入本金 NT$400"), withP.getAttribute("aria-label"));
+});
+test("圖：本金標籤跟其他標籤上下距離不到 10 個單位時不標（線還是畫）", () => {
+  const rows = [["偏差", "s1", 200], ["中間", "s2", 600], ["偏好", "s3", 1800]].map(([label, cls, v]) => ({ label, cls, v, line: [100, v] }));
+  const near = futureChart({ years: 1 }, rows, { principal: { line: [100, 205], v: 205 } });
+  eq(near.querySelectorAll("polyline").length, 4);
+  ok(![...near.querySelectorAll("text")].some((t) => t.textContent.startsWith("本金")), "太近還是標了");
 });
 
 report();
