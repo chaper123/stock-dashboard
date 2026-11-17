@@ -549,7 +549,7 @@ async function fireCard() {
     el("p", {}, "用加權報酬指數的歷史回測推算，不是預測。"),
     range("每月想領（今天的錢，稅前）", { min: 30000, max: 300000, step: 10000, value: state.monthly, fmt: (v) => twd(v) }, set("monthly")),
     range("每月投入", { min: 0, max: 30000, step: 500, value: state.pmt, fmt: (v) => twd(v) }, set("pmt")),
-    range("幾年存到", { min: 5, max: 40, step: 1, value: state.years, fmt: (v) => `${v} 年` }, set("years")),
+    range("幾年存到", { min: 5, max: 30, step: 1, value: state.years, fmt: (v) => `${v} 年` }, set("years")),
     range("年通膨（假設）", { min: 0, max: 5, step: 0.5, value: state.infl * 100, fmt: (v) => `${v.toFixed(1)}%` }, (v) => set("infl")(v / 100)),
     el("div", { class: "row" }, el("span", { class: "small" }, "本金用："), modes),
     !tot.complete && partialNotice(tot, "「需要本金」照算，「多久存到」和「每月要投」要從完整的總資產開始，所以先不算"),
