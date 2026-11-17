@@ -9,6 +9,8 @@ import { test, eq, near, ok, report } from "./harness.js";
 import { parseIncome, loadIncome } from "/site/js/data.js";
 import { SOURCES } from "/site/js/config.js";
 import { cashTable, assetTrend } from "/site/js/cash.js";
+import { computePerf } from "/site/js/perf.js";
+import { periodPnl, dailyPnl } from "/site/js/assets.js";
 
 // ── 讀「其他入帳」分頁 ──
 const HEAD = "入帳日,市場,代號,類型,原幣金額,幣別,台幣金額,計入資金池,來源,備註";
@@ -145,6 +147,65 @@ test("assetTrend：還沒設定（沒給 income、或 { configured: false }）�
   const off = run({ income: { configured: false, rows: [] } });
   eq(JSON.stringify(off), JSON.stringify(base));
   eq([base.hasCash, base.last.cash], [true, 8605]);
+});
+
+// ── computePerf：美股配息、手續費折抵算進 other ──
+// 11/02～11/20 的平日；台股 A 100 股（1,000）、美股 U 1 股（100 美元 × 匯率 30 ＝ 3,000），11/02 買進後價格都不動，市值 4,000
+const pdays = weekdays.filter((d) => d >= "2026-11-02" && d <= "2026-11-20");
+const pbars = { A: flat(pdays, 10), U: flat(pdays, 100) };
+const pfx = pdays.map((date) => ({ date, value: 30 }));
+const ptrades = [
+  { date: "2026-11-02", market: "tw", code: "A", side: "買進", shares: 100, price: 10, twd: 1000, settle: null, inPool: true },
+  { date: "2026-11-02", market: "us", code: "U", side: "買進", shares: 1, price: 100, twd: 3000, settle: null, inPool: true },
+];
+const perf = (income, extra = {}) => computePerf({ trades: ptrades, bars: pbars, fxRows: pfx, ...(income === undefined ? {} : { income }), ...extra });
+const pday = (p, d) => p.days.find((x) => x.date === d);
+const usDiv = (date, twd) => inc(date, twd, { kind: "配息", market: "us", code: "U" });
+
+test("computePerf：美股配息與手續費折抵算進 other 與時間加權報酬；入帳日是休市日（週六 11/07）算到下一個交易日（11/09）", () => {
+  const p = perf([usDiv("2026-11-05", 5), inc("2026-11-07", 3)]);
+  eq(p.days.map((d) => [d.date, d.other]).filter(([, o]) => o), [["2026-11-05", 5], ["2026-11-09", 3]]);
+  eq(p.otherTotal, 8);
+  near(p.twr, (4005 / 4000) * (4003 / 4000) - 1, 1e-12);
+  eq(pday(p, "2026-11-05").div, 0); // div 的意思不變：台股 ETF 除息的現金股利
+});
+test("computePerf：台股配息列不算（已經用除息資料算過，再加會重複）；市場是空白的配息也不算；金額讀不到的列略過並計數", () => {
+  const p = perf([inc("2026-11-10", 50, { kind: "配息", market: "tw", code: "A" }), inc("2026-11-11", 9, { kind: "配息", market: "" }),
+    usDiv("2026-11-12", null), inc("2026-11-13", 1)]);
+  eq(p.otherTotal, 1);
+  eq(p.incomeSkipped, 1);
+  eq(pday(p, "2026-11-10").other, 0);
+});
+test("computePerf：比第一筆交易還早、比最後一個交易日還晚的入帳不在這段期間裡，不算", () => {
+  const p = perf([usDiv("2026-10-01", 5), usDiv("2026-12-01", 5), usDiv("2026-11-20", 2)]);
+  eq(p.otherTotal, 2);
+  eq(pday(p, "2026-11-20").other, 2);
+});
+test("computePerf：income 是空陣列（或沒給、只有台股配息）時，輸出跟現在完全一樣；other 都是 0", () => {
+  const base = perf(undefined);
+  eq(JSON.stringify(perf([])), JSON.stringify(base));
+  eq(JSON.stringify(perf([inc("2026-11-10", 50, { kind: "配息", market: "tw", code: "A" })])), JSON.stringify(base));
+  ok(base.days.every((d) => d.other === 0));
+  eq([base.otherTotal, base.incomeKnown, base.incomeSkipped], [0, true, 0]);
+  near(base.twr, 0, 1e-15);
+  eq(JSON.stringify(perf([], { incomeKnown: false }).days), JSON.stringify(base.days));   // 讀不到時只多標 incomeKnown: false
+  eq(perf([], { incomeKnown: false }).incomeKnown, false);
+});
+test("computePerf：XIRR 的現金流把其他入帳當成拿回的錢（有入帳的年化比沒有高）", () => {
+  const without = perf([]).xirr, withIncome = perf([usDiv("2026-11-05", 5), inc("2026-11-07", 3)]).xirr;
+  ok(Number.isFinite(without) && Number.isFinite(withIncome) && withIncome > without, `${without} → ${withIncome}`);
+});
+test("資產頁的損益：全部期間累計損益多其他入帳（＝持倉市值 − 累計投入 ＋ 其他入帳）、每日損益那天多 5；沒有入帳時不變", () => {
+  const p = perf([usDiv("2026-11-05", 5), inc("2026-11-07", 3)]);
+  const cum = periodPnl(p.days, p.first);
+  eq(cum.at(-1).cum, p.value - p.invested + 8);
+  eq(cum.find((x) => x.date === "2026-11-05").pnl, 5);
+  eq(cum.find((x) => x.date === "2026-11-09").pnl, 3);
+  const daily = dailyPnl(p.days);
+  eq(daily.reduce((a, x) => a + x.pnl, 0), 8);
+  eq(JSON.stringify(dailyPnl(perf([]).days)), JSON.stringify(dailyPnl(perf([]).days.map(({ other, ...rest }) => rest)))); // 沒有 other 欄位的舊資料也一樣
+  // 報酬日曆這一天的報酬率＝時間加權指數的單日變化
+  near(daily.find((x) => x.date === "2026-11-05").ret, 5 / 4000, 1e-12);
 });
 
 report();
