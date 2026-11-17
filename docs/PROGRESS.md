@@ -30,7 +30,8 @@
    - 重啟時照使用者的意見改：六個範本都要實際開來看（上次 Ledgely、Zapline、Fundora 沒開），互動當成重點（上次沒有跳數字、沒有背景動畫，使用者覺得只比現在好一點）。
 4. **檢查後繼續補足**（PIVOT 第 12 節）與**資金頁「總資產走勢」**（[ASSET_TREND.md](ASSET_TREND.md)）：2026-11-17 上線（`bde1da1`，sw.js `2026-11-17-3`）。補足從 2027-04 的檢查才開始算；晨報要等下次改提示詞換 engine 釘選才會用到，2027/04 前換好（可以跟 v4.2a 一起）。
 5. **「資產」新頁與「試算」頁整頓**：2026-11-17 上線（`f1ff46d` 合併、`08d91d5` 導覽列，sw.js `2026-11-17-4`），規格與紀錄在 [ASSETS_PAGE.md](ASSETS_PAGE.md)。導覽列照使用者指定：總覽、持倉、資產、K 線、記帳、分析、新聞、報告、試算（記帳在正中間）。
-6. 較小、不急：
+6. **帳本補兩組已賣出的買賣與已實現損益**（[REALIZED_PNL.md](REALIZED_PNL.md)）：2026-11-17 用錢包明細與券商成交紀錄核對，帳本漏了 00679B（4/14～5/13）、00735（7/16～9/09）兩組買賣，淨賺 175。market-data 已開始抓兩檔日線與配息（`7241ea1`）；四列由使用者填進帳本；持倉頁、總覽的已實現損益交給「網站實作」，做完審查、使用者說「部署」再上線。
+7. 較小、不急：
    - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：等 Sonnet 測試有結論、新聞排程穩定再做。
 
 ## 注意事項
@@ -52,6 +53,7 @@
 - [LEDGER_WRITE.md](LEDGER_WRITE.md)、[LEDGER_CONSISTENCY.md](LEDGER_CONSISTENCY.md)：網站記帳。[DATA_SOURCES.md](DATA_SOURCES.md)：資料來源。[BACKTEST.md](BACKTEST.md)：買點規則回測。[ROUTINE_V2.md](ROUTINE_V2.md)：舊晨報 v2（已停用）。
 - [ASSETS_PAGE.md](ASSETS_PAGE.md)：資產新頁與試算頁整頓的規格。
 - [ASSET_TREND.md](ASSET_TREND.md)：資金頁總資產走勢的規格。
+- [REALIZED_PNL.md](REALIZED_PNL.md)：已實現損益的規格與要補進帳本的兩組買賣。
 - [HISTORY.md](HISTORY.md)：2026-10-16～11-10 完整進度紀錄（Phase 0～4 的勾選清單也在裡面）；最後面是 11/11 起的大事記。
 - 私人（不進 git）：`private/routines/`——各版提示詞、`routines.json`、每版一個資料夾（v3、v4、v41、v42）的 README 記排程 ID、測試與上線紀錄；更新與核對的腳本在 `tools/`。
 
