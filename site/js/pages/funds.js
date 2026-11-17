@@ -7,6 +7,7 @@ import { cashTable, nextDeposit } from "../cash.js";
 import {
   monthlyReturns, describeBacktest, rollingWindows, blockSample, SAMPLE_PATHS,
   pathGrowth, requiredMonthly, hitProbability, monthsToTarget, rollingRequired,
+  lifecycleSpan, lifecycleSpend, lifecycleRun,
 } from "../backtest.js";
 import { loadPortfolio } from "../portfolio.js";
 import { loadPerformance } from "../perf.js";
@@ -22,13 +23,14 @@ const LINKS = {
 };
 
 export async function render(root) {
-  root.append(pageHeader("資金", "看得到的進度：最上面是帳本裡現金的來去；「長期試算」以下（撲滿、20 年後、和巴菲特比、財富自由要多少）都是試算，不是預測，也不是投資建議。"));
+  root.append(pageHeader("資金", "看得到的進度：最上面是帳本裡現金的來去；「長期試算」以下（撲滿、20 年後、和巴菲特比、財富自由要多少、一輩子夠不夠花）都是試算，不是預測，也不是投資建議。"));
   slot(root, cashCard);
   root.append(el("h2", { class: "date-head" }, "長期試算"));
   slot(root, piggyCard);
   slot(root, futureCard);
   slot(root, buffettCard);
   slot(root, fireCard);
+  slot(root, lifeCard);
 }
 
 // ── 現金與投入（R18）──
@@ -268,14 +270,16 @@ const ymText = (ym) => ym.replace("-", "/");
 const PCT_ROWS = [["p10", "偏差的情況（第 10 百分位）", "s1"], ["p50", "中間（中位數）", "s2"], ["p90", "偏好的情況（第 90 百分位）", "s3"]];
 
 // 「N 年後」與「財富自由試算」兩張回測卡共用的註腳：回測期間、代表性、不含費用與稅、沒扣通膨、偏樂觀、過去不代表未來。
-// samplingNote 是各卡自己對抽樣方式的說明，extra 是各卡自己的補充（字串陣列）
-function backtestNotes(bt, samplingNote, extra = []) {
+// samplingNote 是各卡自己對抽樣方式的說明，extra 是各卡自己的補充（字串陣列）；
+// realInfl 有值（生命週期試算）時，「沒有扣通膨」那行換成「金額換成今天的購買力」
+function backtestNotes(bt, samplingNote, extra = [], { realInfl = null } = {}) {
   return el("ul", { class: "notes" },
     el("li", { class: "tiny" }, `回測期間 ${ymText(bt.from)}～${ymText(bt.to)}（${bt.months} 個月）：這段期間加權報酬指數年化 ${pct(bt.annualized * 100, 1, false)}、`
       + `最大回落 ${pct(bt.maxDrawdown * 100, 1, false)}${bt.drawdown ? `（${ymText(bt.drawdown.peak)} 高點到 ${ymText(bt.drawdown.trough)}）` : ""}。月報酬取每個月最後一個交易日的收盤。`),
     el("li", { class: "tiny" }, "用加權報酬指數（含股利）代表整個組合：009816、00981A 上市太短沒有足夠的歷史，美股部位也用同一條近似。"),
     el("li", { class: "tiny" }, "指數不含 ETF 的費用與稅（管理費、證交稅、股利所得稅等），實際報酬會比指數低一些。"),
-    el("li", { class: "tiny" }, "沒有扣通膨：金額是名目的，未來的錢購買力比較低。"),
+    el("li", { class: "tiny" }, realInfl == null ? "沒有扣通膨：金額是名目的，未來的錢購買力比較低。"
+      : `金額換成今天的購買力（年通膨假設 ${(realInfl * 100).toFixed(1)}%）：退休後的花費每年跟著通膨調高，每月投入固定不變。`),
     el("li", { class: "tiny" }, `這段期間台股表現很好（指數年化 ${pct(bt.annualized * 100, 1, false)}），用它推算偏樂觀。過去不代表未來。`),
     el("li", { class: "tiny" }, samplingNote),
     extra.map((t) => el("li", { class: "tiny" }, t)));
@@ -332,18 +336,23 @@ async function futureCard() {
   return c;
 }
 
-// 圖：三個百分位逐年的值（rows[i].line 是第 0 年到第 N 年）
-function futureChart(state, rows) {
+// 圖：三個百分位逐年的值（rows[i].line 是第 0 年到第 N 年，v 是右端標的值）。
+// o：years 橫軸總年數、max 縱軸最大值、left／right 橫軸兩端的字、aria、retire（退休在第幾年，畫一條直線標「退休」）、
+// dedupe（右端標籤上下距離不到 10 個單位的不標，生命週期的三條線常常一起落到 0）
+function futureChart(state, rows, o = {}) {
   const NS = "http://www.w3.org/2000/svg";
   const W = 320, H = 150, L = 6, R = 64, T = 8, Bm = 18;
-  const max = Math.max(...rows.map((x) => x.v));
-  const X = (y) => L + (y / state.years) * (W - L - R);
+  const {
+    years = state.years, max = Math.max(...rows.map((x) => x.v)), left = "今天", right = `${state.years} 年`,
+    aria = rows.map((x) => `${x.label} ${wan(x.v)}`).join("、"), retire = null, dedupe = false,
+  } = o;
+  const X = (y) => L + (y / years) * (W - L - R);
   const Y = (v) => T + (1 - v / max) * (H - T - Bm);
   const svg = document.createElementNS(NS, "svg");
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.setAttribute("class", "fchart");
   svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", rows.map((x) => `${x.label} ${wan(x.v)}`).join("、"));
+  svg.setAttribute("aria-label", aria);
   const add = (tag, a, text) => {
     const n = document.createElementNS(NS, tag);
     for (const [k, v] of Object.entries(a)) n.setAttribute(k, v);
@@ -352,14 +361,26 @@ function futureChart(state, rows) {
     return n;
   };
   add("line", { x1: L, x2: W - R, y1: H - Bm, y2: H - Bm, class: "fc-axis" });
+  if (retire != null) {
+    add("line", { x1: X(retire), x2: X(retire), y1: T, y2: H - Bm, class: "fc-axis" });
+    add("text", { x: X(retire) - 3, y: T + 8, class: "fc-label", "text-anchor": "end" }, "退休");
+  }
+  const labelled = new Set(), placed = [];
+  for (const x of dedupe ? [...rows].reverse() : rows) { // 後面的線（偏好的情況）優先標
+    const y = Y(x.v);
+    if (!dedupe || !placed.some((p) => Math.abs(p - y) < 10)) {
+      placed.push(y);
+      labelled.add(x);
+    }
+  }
   for (const x of rows) {
     const pts = x.line.map((v, y) => `${X(y).toFixed(1)},${Y(v).toFixed(1)}`);
     const line = add("polyline", { points: pts.join(" "), class: `fc-line ${x.cls}` });
     line.append(Object.assign(document.createElementNS(NS, "title"), { textContent: `${x.label}：${wan(x.v)}` }));
-    add("text", { x: W - R + 4, y: Y(x.v) + 4, class: "fc-label" }, wan(x.v));
+    if (labelled.has(x)) add("text", { x: W - R + 4, y: Y(x.v) + 4, class: "fc-label" }, wan(x.v));
   }
-  add("text", { x: L, y: H - 4, class: "fc-label" }, "今天");
-  add("text", { x: W - R, y: H - 4, class: "fc-label", "text-anchor": "end" }, `${state.years} 年`);
+  add("text", { x: L, y: H - 4, class: "fc-label" }, left);
+  add("text", { x: W - R, y: H - 4, class: "fc-label", "text-anchor": "end" }, right);
   return svg;
 }
 
@@ -574,4 +595,120 @@ async function fireCard() {
       extLink(LINKS.twseDividend, "證交所 ETF 配息清單"), "（每檔的收益分配標準與歷次配息）、",
       extLink(LINKS.nhi, "健保署補充保險費計算公式"), "（股利、利息所得的門檻、上限與例外）、",
       extLink(LINKS.bengen, "Bengen 原始研究（重刊）"), "。"));
+}
+
+// ── 生命週期試算（docs/FUNDS_BACKTEST.md 第三部分）──
+// 現在到退休每月投入、退休後每月提領到預期壽命。路徑與「N 年後」同一套（固定種子的區塊抽樣），
+// 算法在 backtest.js（lifecycleSpend、lifecycleRun），這裡只負責畫面。金額都是今天的購買力
+const LIFE_AGES = { now: [18, 70, 30], retire: [40, 80, 65], life: [60, 100, 85] }; // 範圍與預設
+const lifeSaved = () => {
+  const saved = store("life.ages"), out = {};
+  for (const [k, [lo, hi, def]] of Object.entries(LIFE_AGES)) out[k] = Number.isInteger(saved?.[k]) ? Math.min(hi, Math.max(lo, saved[k])) : def;
+  return out;
+};
+const SPEND_RANGE = { min: 5000, max: 300000, step: 1000 };
+const clampSpend = (v) => Math.min(SPEND_RANGE.max, Math.max(SPEND_RANGE.min, Math.floor(v / SPEND_RANGE.step) * SPEND_RANGE.step));
+
+async function lifeCard() {
+  const tot = await totalAssets();
+  if (!tot.complete) return card("生命週期試算", partialNotice(tot, "生命週期試算要從完整的總資產開始，所以先不算"));
+  const pv = tot.value;
+  const [dep, series] = await Promise.all([monthlyDeposit(), loadIndex("TAIEX_TR").catch(() => null)]);
+  const rets = series ? monthlyReturns(series) : [];
+  const bt = series && rets.length ? describeBacktest(series) : null;
+  if (!bt) return card("生命週期試算", notice("warn", "加權報酬指數的歷史資料讀不到，這張卡先不算；重新整理再試一次。"));
+  const state = { ages: lifeSaved(), pmt: dep.amount, infl: FIRE_INFL, spend: 0, touched: false };
+  const span = () => lifecycleSpan(state.ages.now, state.ages.retire, state.ages.life);
+  // 每月可花只跟年齡、每月投入、通膨有關：拉「退休後每月花費」滑桿時不重抽
+  let cache = null;
+  const spendFor = (sp) => {
+    const key = `${state.ages.now}|${state.ages.retire}|${state.ages.life}|${state.pmt}|${state.infl}`;
+    if (cache?.key !== key) cache = { key, res: lifecycleSpend(rets, { pv, pmt: state.pmt, infl: state.infl, S: sp.S, D: sp.D }) };
+    return cache.res;
+  };
+  const first = span();
+  state.spend = first ? clampSpend(spendFor(first).spend.p50) : 30000;
+
+  const top = el("div"), bottom = el("div"), notes = el("div");
+  const ageRange = (label, k) => range(label, { min: LIFE_AGES[k][0], max: LIFE_AGES[k][1], step: 1, value: state.ages[k], fmt: (v) => `${v} 歲` },
+    (v) => {
+      state.ages[k] = v;
+      store("life.ages", state.ages);
+      draw();
+    });
+  const spendRange = range("退休後每月花費（今天的錢）", { ...SPEND_RANGE, value: state.spend, fmt: (v) => twd(v) },
+    (v) => {
+      state.spend = v;
+      state.touched = true;
+      draw();
+    });
+  const spendInput = spendRange.querySelector("input"), spendOut = spendRange.querySelector("output");
+  const setSpend = (v) => {
+    state.spend = v;
+    spendInput.value = v;
+    spendOut.textContent = twd(v);
+  };
+
+  const scen = (vals, fmt = wan) => el("div", { class: "scen" }, PCT_ROWS.map(([k, label, cls]) => el("div", { class: `scen-item ${cls}` },
+    el("div", { class: "tiny" }, label), el("div", { class: "scen-v" }, fmt(vals[k])))));
+  const draw = () => {
+    const { now, retire, life } = state.ages;
+    const sp = span();
+    if (!sp) {
+      top.replaceChildren(notice("warn", retire <= now ? "退休年齡要大於現在年齡。" : "預期壽命要大於退休年齡。", "（已經退休的情況這一版不處理。）"));
+      bottom.replaceChildren();
+      notes.replaceChildren();
+      return;
+    }
+    const spend = spendFor(sp);
+    if (!state.touched) setSpend(clampSpend(spend.spend.p50)); // 還沒動過花費滑桿：跟著每月可花的中間值
+    const W = state.spend;
+    const run = lifecycleRun(rets, { pv, pmt: state.pmt, infl: state.infl, S: sp.S, D: sp.D, W });
+    top.replaceChildren(
+      el("h3", {}, `退休時（${retire} 歲）的資產（今天的購買力）`),
+      scen(spend.retire),
+      el("p", { class: "small" }, `中間情況換成 ${retire} 歲當時的錢約 ${wan(spend.retireNominal.p50)}。`),
+      el("h3", {}, `退休後每月可花（花到 ${life} 歲剛好用完，今天的錢）`),
+      scen(spend.spend, (v) => twd(v)));
+    const when = (m) => (m == null ? `撐到 ${life} 歲還有剩` : `約 ${now + Math.floor(m / 12)} 歲用完`);
+    const rows = PCT_ROWS.map(([k, label, cls]) => ({ label, cls, line: run.yearly.map((y) => y[k]), v: run.yearly.at(-1)[k] }));
+    const peak = Math.max(...rows.flatMap((x) => x.line));
+    const atRetire = sp.S / 12;
+    bottom.replaceChildren(
+      el("p", { class: "small" }, `照每月花 ${twd(W)}，錢撐到 ${life} 歲的機率 ${pct(run.survive * 100, 1, false)}（${int(run.paths)} 條路徑裡有 ${int(Math.round(run.survive * run.paths))} 條）。`),
+      el("p", { class: "small" }, `偏差的情況（第 10 百分位）${when(run.depleted.p10)}、中間${when(run.depleted.p50)}。`),
+      futureChart(state, rows, {
+        years: life - now, max: peak, left: `${now} 歲`, right: `${life} 歲`, retire: atRetire, dedupe: true,
+        aria: `${now} 歲到 ${life} 歲的資產（今天的購買力），${retire} 歲退休。`
+          + rows.map((x) => `${x.label}：退休時 ${wan(x.line[atRetire])}、${life} 歲 ${wan(x.v)}`).join("、"),
+      }));
+    notes.replaceChildren(backtestNotes(bt,
+      `「偏差、中間、偏好」是抽樣推估：從這段月報酬隨機接出每條都是從現在（${now} 歲）到預期壽命（${life} 歲）、共 ${sp.N} 個月的路徑（每次連續取 12 個月、超過結尾就接回開頭），共 ${SAMPLE_PATHS.toLocaleString("en-US")} 條，`
+        + "取第 10、50、90 百分位；亂數種子固定，同樣的輸入每次結果相同。「每月可花」是每條路徑剛好花到預期壽命用完的每月花費；偏差的情況（第 10 百分位）是只能花比較少。",
+      ["一輩子的長度遠超過歷史，結果是把約 24 年的歷史重新排列接長，參考價值比「N 年後」更低。",
+        "退休後仍假設全部放在股票（加權報酬指數）；實際上多數人退休後會降低股票比重，波動與結果都會不同。",
+        "剛退休那幾年遇到大跌影響最大（報酬順序風險）：平均報酬一樣，順序不同結果可能差很多，所以「每月可花」偏差和偏好的差距很大。",
+        "預期壽命是假設，活得比預期久時錢可能不夠。",
+        "沒算勞保、勞退等退休金與其他收入；有的話每月能花的更多。",
+        "投入與提領都假設在月底；沒有算提領時的稅與費用。"],
+      { realInfl: state.infl }));
+  };
+  const c = card("生命週期試算",
+    el("p", {}, "用加權報酬指數的歷史回測推算，不是預測。"),
+    ageRange("現在年齡", "now"), ageRange("退休年齡", "retire"), ageRange("預期壽命", "life"),
+    range("每月投入（到退休為止）", { min: 0, max: 30000, step: 500, value: state.pmt, fmt: (v) => twd(v) }, (v) => {
+      state.pmt = v;
+      draw();
+    }),
+    range("年通膨（假設）", { min: 0, max: 5, step: 0.5, value: state.infl * 100, fmt: (v) => `${v.toFixed(1)}%` }, (v) => {
+      state.infl = v / 100;
+      draw();
+    }),
+    el("p", { class: "tiny" }, `年齡只存在這台裝置的瀏覽器，不會送到任何地方。從目前總資產 ${twd(pv)} 開始；每月投入預設是這個月的定投金額${depositNote(dep)}。`),
+    top,
+    spendRange,
+    bottom,
+    notes);
+  draw();
+  return c;
 }
