@@ -130,7 +130,7 @@ function monthsToReach(target, pv, pmt, r) {
 }
 // 年數只寫到整數（R11：不用 18.3 年這種精細數字營造確定感）
 const yearsText = (n) => (n == null ? "100 年以上" : n < 12 ? `${n} 個月` : `${Math.round(n / 12)} 年`);
-const wan = (v) => (v >= 1e4 ? `${(v / 1e4).toFixed(v >= 1e6 ? 0 : 1)} 萬` : twd(v));
+export const wan = (v) => (v >= 1e4 ? `${(v / 1e4).toFixed(v >= 1e6 ? 0 : 1)} 萬` : twd(v));
 
 function store(k, v) {
   try {
@@ -349,7 +349,9 @@ async function futureCard() {
 // 圖：三個百分位逐年的值（rows[i].line 是第 0 年到第 N 年，v 是右端標的值）。
 // o：years 橫軸總年數、max 縱軸最大值、left／right 橫軸兩端的字、aria、retire（退休在第幾年，畫一條直線標「退休」）、
 // dedupe（右端標籤上下距離不到 10 個單位的不標，生命週期的三條線常常一起落到 0）、
-// principal（{ line, v }：投入本金逐年累積的灰色虛線，右端標「本金 X」，跟其他標籤上下距離不到 10 個單位時不標）
+// principal（{ line, v }：投入本金逐年累積的灰色虛線，右端標「本金 X」，跟其他標籤上下距離不到 10 個單位時不標）、
+// clip（線超過 max 的部分用 clipPath 截掉、讓線從圖頂穿出去；期末值超過 max 的線，右端標籤放在圖頂、寫成「↑」加期末值）
+let clipSeq = 0; // clipPath 的 id 要在整頁唯一
 export function futureChart(state, rows, o = {}) {
   const NS = "http://www.w3.org/2000/svg";
   const W = 320, H = 150, L = 6, R = 64, T = 8, Bm = 18;
@@ -357,7 +359,7 @@ export function futureChart(state, rows, o = {}) {
   const {
     years = state.years, max = Math.max(...rows.map((x) => x.v), principal?.v ?? 0), left = "今天", right = `${state.years} 年`,
     aria = rows.map((x) => `${x.label} ${wan(x.v)}`).join("、") + (principal ? `、投入本金 ${wan(principal.v)}` : ""),
-    retire = null, dedupe = false,
+    retire = null, dedupe = false, clip = false,
   } = o;
   const X = (y) => L + (y / years) * (W - L - R);
   const Y = (v) => T + (1 - v / max) * (H - T - Bm);
@@ -378,19 +380,31 @@ export function futureChart(state, rows, o = {}) {
     add("line", { x1: X(retire), x2: X(retire), y1: T, y2: H - Bm, class: "fc-axis" });
     add("text", { x: X(retire) - 3, y: T + 8, class: "fc-label", "text-anchor": "end" }, "退休");
   }
+  const ly = (v) => Math.max(T, Y(v)); // 標籤的高度：超過圖頂的放在圖頂
   const labelled = new Set(), placed = [];
   for (const x of dedupe ? [...rows].reverse() : rows) { // 後面的線（偏好的情況）優先標
-    const y = Y(x.v);
+    const y = ly(x.v);
     if (!dedupe || !placed.some((p) => Math.abs(p - y) < 10)) {
       placed.push(y);
       labelled.add(x);
     }
   }
+  let clipUrl = null;
   for (const x of rows) {
-    const pts = x.line.map((v, y) => `${X(y).toFixed(1)},${Y(v).toFixed(1)}`);
-    const line = add("polyline", { points: pts.join(" "), class: `fc-line ${x.cls}` });
+    const attrs = { points: x.line.map((v, y) => `${X(y).toFixed(1)},${Y(v).toFixed(1)}`).join(" "), class: `fc-line ${x.cls}` };
+    if (clip && Math.max(...x.line) > max) { // 有超過圖頂的部分：用繪圖區的矩形截掉
+      if (!clipUrl) {
+        const id = `fchart-clip-${++clipSeq}`;
+        const rect = document.createElementNS(NS, "rect");
+        for (const [k, v] of Object.entries({ x: 0, y: T, width: W, height: H - Bm - T })) rect.setAttribute(k, v);
+        add("clipPath", { id }).append(rect);
+        clipUrl = `url(#${id})`;
+      }
+      attrs["clip-path"] = clipUrl;
+    }
+    const line = add("polyline", attrs);
     line.append(Object.assign(document.createElementNS(NS, "title"), { textContent: `${x.label}：${wan(x.v)}` }));
-    if (labelled.has(x)) add("text", { x: W - R + 4, y: Y(x.v) + 4, class: "fc-label" }, wan(x.v));
+    if (labelled.has(x)) add("text", { x: W - R + 4, y: ly(x.v) + 4, class: "fc-label" }, (clip && x.v > max ? "↑" : "") + wan(x.v));
   }
   if (principal) {
     const pts = principal.line.map((v, y) => `${X(y).toFixed(1)},${Y(v).toFixed(1)}`);
@@ -627,6 +641,10 @@ const lifeSaved = () => {
   return out;
 };
 const SPEND_RANGE = { min: 5000, max: 300000, step: 1000 };
+// 圖的縱軸最大值：中間情況（p50）逐年最高點的 1.5 倍；三條線都沒超過時就用三條線的最高點（跟沒設上限的畫法一樣）。
+// 偏好的情況常常是中間的好幾倍，不設上限會把偏差和中間兩條線壓扁
+export const LIFE_CHART_HEADROOM = 1.5;
+export const lifeChartMax = (rows) => Math.min(Math.max(...rows.flatMap((x) => x.line)), Math.max(...rows[1].line) * LIFE_CHART_HEADROOM);
 const clampSpend = (v) => Math.min(SPEND_RANGE.max, Math.max(SPEND_RANGE.min, Math.floor(v / SPEND_RANGE.step) * SPEND_RANGE.step));
 
 async function lifeCard() {
@@ -692,16 +710,19 @@ async function lifeCard() {
       scen(spend.spend, (v) => twd(v)));
     const when = (m) => (m == null ? `撐到 ${life} 歲還有剩` : `約 ${now + Math.floor(m / 12)} 歲用完`);
     const rows = PCT_ROWS.map(([k, label, cls]) => ({ label, cls, line: run.yearly.map((y) => y[k]), v: run.yearly.at(-1)[k] }));
-    const peak = Math.max(...rows.flatMap((x) => x.line));
+    const max = lifeChartMax(rows);
+    const high = rows.at(-1); // 偏好的情況
+    const clipped = Math.max(...high.line) > max;
     const atRetire = sp.S / 12;
     bottom.replaceChildren(
       el("p", { class: "small" }, `照每月花 ${twd(W)}，錢撐到 ${life} 歲的機率 ${pct(run.survive * 100, 1, false)}（${int(run.paths)} 條路徑裡有 ${int(Math.round(run.survive * run.paths))} 條）。`),
       el("p", { class: "small" }, `偏差的情況（第 10 百分位）${when(run.depleted.p10)}、中間${when(run.depleted.p50)}。`),
       futureChart(state, rows, {
-        years: life - now, max: peak, left: `${now} 歲`, right: `${life} 歲`, retire: atRetire, dedupe: true,
+        years: life - now, max, clip: true, left: `${now} 歲`, right: `${life} 歲`, retire: atRetire, dedupe: true,
         aria: `${now} 歲到 ${life} 歲的資產（今天的購買力），${retire} 歲退休。`
           + rows.map((x) => `${x.label}：退休時 ${wan(x.line[atRetire])}、${life} 歲 ${wan(x.v)}`).join("、"),
-      }));
+      }),
+      ...(clipped ? [el("p", { class: "tiny" }, `圖的高度配合中間的情況；偏好的情況超出的部分沒畫出來，${life} 歲約 ${wan(high.v)}（今天的錢）。`)] : []));
     notes.replaceChildren(backtestNotes(bt,
       `「偏差、中間、偏好」是抽樣推估：從這段月報酬隨機接出每條都是從現在（${now} 歲）到預期壽命（${life} 歲）、共 ${sp.N} 個月的路徑（每次連續取 12 個月、超過結尾就接回開頭），共 ${SAMPLE_PATHS.toLocaleString("en-US")} 條，`
         + "取第 10、50、90 百分位；亂數種子固定，同樣的輸入每次結果相同。「每月可花」是每條路徑剛好花到預期壽命用完的每月花費；偏差的情況（第 10 百分位）是只能花比較少。",
