@@ -53,3 +53,41 @@ export function periodPnl(days, start) {
     return { date: x.date, pnl: counted ? x.pnl : null, cum, ret: x.ret };
   });
 }
+
+// ── 報酬率對比較標的（ASSETS_PAGE 2.3）──
+
+// 已排序的 rows 裡，每個 dates 的日子取「不晚於那天的最後一筆」；那天之前沒有資料是 null。rows 是 [{ date|time, … }]，pick 取出數值
+export function valuesAt(rows, dates, pick = (r) => r.value) {
+  const out = [];
+  let i = -1;
+  for (const d of dates) {
+    while (i + 1 < rows.length && (rows[i + 1].date ?? rows[i + 1].time) <= d) i++;
+    out.push(i < 0 ? null : pick(rows[i]));
+  }
+  return out;
+}
+
+// 台股 ETF 含現金股利的報酬指數（比較線）：照 perf.js 對持股的算法——每天＝前一天指數 ×（當天收盤 ＋ 當天除息的現金股利）÷ 前一天收盤，
+// 逐日連乘，第一天是 1。收盤取不晚於當天的最後一根（休市、缺日沿用前一天）；除息日落在（前一個日子, 今天］之間就算在今天（稅前）。
+// bars：日線 [{ time, close }]；events：[{ date: 除息日, cash }]（可以是空的或 null＝只用價格）；dates：要算的日子（升冪）。
+// 第一天以前沒有收盤就回傳 null（算不出來，不補）
+export function etfIndex(bars, events, dates) {
+  const close = valuesAt(bars || [], dates, (b) => b.close);
+  if (!dates.length || !(close[0] > 0)) return null;
+  const ev = (events || []).filter((e) => e && /^\d{4}-\d{2}-\d{2}$/.test(e.date) && Number(e.cash) > 0).sort((a, b) => a.date.localeCompare(b.date));
+  const out = [1];
+  let k = 0;
+  while (k < ev.length && ev[k].date <= dates[0]) k++; // 第一天（含）以前的除息，不算在期間內
+  for (let i = 1; i < dates.length; i++) {
+    let div = 0;
+    while (k < ev.length && ev[k].date <= dates[i]) div += Number(ev[k++].cash);
+    out.push(out[i - 1] * ((close[i] + div) / close[i - 1]));
+  }
+  return out;
+}
+
+// 換算成「期間起點（第 i0 個）＝ 0%」的累積報酬（%）；起點或某天沒有值就是 null
+export function rebase(values, i0 = 0) {
+  const base = values?.[i0];
+  return (values || []).map((v) => (v == null || !(base > 0) ? null : (v / base - 1) * 100));
+}

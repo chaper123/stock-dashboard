@@ -433,10 +433,10 @@ details.card.more > summary { padding: 0; }
 .fc-label { fill: var(--ink-2); font-size: 10px; }
 .notes { padding-left: 18px; }
 
-/* 組合對大盤、資產頁的 Lightweight Charts 圖 */
-.perf-box, .lw-box { position: relative; height: 260px; margin-top: 8px; }
+/* 資產頁的 Lightweight Charts 圖 */
+.lw-box { position: relative; height: 260px; margin-top: 8px; }
 .lw-box.tall { height: 380px; }
-@media (min-width: 700px) { .perf-box, .lw-box { height: 320px; } .lw-box.tall { height: 440px; } }
+@media (min-width: 700px) { .lw-box { height: 320px; } .lw-box.tall { height: 440px; } }
 .head-note { margin-left: 10px; font-size: .9rem; font-weight: 400; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .head-note strong { font-weight: 700; }
 

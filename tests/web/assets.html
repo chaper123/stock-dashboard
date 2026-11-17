@@ -6,7 +6,8 @@
 <p>docs/ASSETS_PAGE.md 第 3 節的驗收：六種期間起點；每日損益（含投入、股利的日子）；累計損益從期間起點歸 0、期間內每日損益加總等於累計損益；比較線換算成期間起點 0%、含股利與不含股利；個股表現的三種報酬；日曆的週合計、週與月報酬率連乘、休市留空、跨月的週。</p>
 <script type="module">
 import { test, eq, near, ok, report } from "./harness.js";
-import { PERIODS, periodLabel, periodStart, dailyPnl, daysFrom, periodPnl } from "/site/js/assets.js";
+import { PERIODS, periodLabel, periodStart, dailyPnl, daysFrom, periodPnl, valuesAt, etfIndex, rebase } from "/site/js/assets.js";
+import { computePerf } from "/site/js/perf.js";
 
 // ── 期間 ──
 test("六種期間：一週、一月、一季、年初至今、一年、全部，預設全部在最後", () => {
@@ -96,6 +97,63 @@ test("期間起點不是交易日：從下一個交易日開始；起點在最�
 test("期間內沒有投入也沒有股利：累計損益就是市值的變化", () => {
   const flat = ["2026-05-04", "2026-05-05", "2026-05-06"].map((date, i) => ({ date, value: [1000, 1100, 1050][i], flow: 0, div: 0, invested: 1000, index: [1, 1.1, 1.05][i], hv: {}, px: {} }));
   eq(periodPnl(flat, "2026-05-05").map((r) => r.cum), [0, -50]);
+});
+
+// ── 比較線 ──
+const bar = (time, close) => ({ time, open: close, high: close, low: close, close, volume: 1 });
+test("valuesAt：每個日子取不晚於那天的最後一筆，那天之前沒有資料是 null", () => {
+  const rows = [{ date: "2026-05-04", value: 10 }, { date: "2026-05-06", value: 12 }];
+  eq(valuesAt(rows, ["2026-05-01", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07"]), [null, 10, 10, 12, 12]);
+  eq(valuesAt([bar("2026-05-04", 7)], ["2026-05-04"], (b) => b.close), [7]);
+});
+test("rebase：期間起點換算成 0%，起點或某天沒有值就是 null", () => {
+  near(rebase([2, 2.2, 1.9])[1], 10, 1e-9);
+  near(rebase([2, 2.2, 1.9])[2], -5, 1e-9);
+  eq(rebase([2, 2.2, 1.9], 1).map((x) => Math.round(x * 1000) / 1000), [-9.091, 0, -13.636]);
+  eq(rebase([null, 2, 3]), [null, null, null]);
+  eq(rebase([2, null, 3]), [0, null, 50]);
+  eq(rebase(null), []);
+});
+test("ETF 比較線只用價格（沒有配息資料）：逐日連乘等於收盤價相除", () => {
+  const dates = ["2026-05-04", "2026-05-05", "2026-05-06"];
+  const idx = etfIndex([bar("2026-05-04", 100), bar("2026-05-05", 102), bar("2026-05-06", 101)], [], dates);
+  near(idx[0], 1, 1e-12); near(idx[1], 1.02, 1e-12); near(idx[2], 1.01, 1e-12);
+  eq(etfIndex([bar("2026-05-04", 100), bar("2026-05-05", 102), bar("2026-05-06", 101)], null, dates).length, 3);
+});
+test("ETF 比較線含股利：除息那天股價扣掉股利，指數不憑空損失；不含股利會少算", () => {
+  const dates = ["2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07"];
+  const bars = [bar("2026-05-04", 100), bar("2026-05-05", 100), bar("2026-05-06", 95), bar("2026-05-07", 96)];
+  const withDiv = etfIndex(bars, [{ date: "2026-05-06", cash: 5 }], dates);
+  const price = etfIndex(bars, [], dates);
+  eq(withDiv.map((x) => Math.round(x * 10000) / 10000), [1, 1, 1, 1.0105]);       // 除息日 (95+5)/100 = 1；之後 96/95
+  eq(price.map((x) => Math.round(x * 10000) / 10000), [1, 1, 0.95, 0.96]);
+  ok(withDiv.at(-1) > price.at(-1));
+});
+test("ETF 比較線的除息日：落在兩個日子之間（休市日）算在下一個日子；第一天（含）以前的除息不算", () => {
+  const dates = ["2026-05-04", "2026-05-08", "2026-05-11"];       // 5/9、5/10 是週末，不在日子裡
+  const bars = [bar("2026-05-04", 100), bar("2026-05-08", 100), bar("2026-05-11", 90)];
+  const idx = etfIndex(bars, [{ date: "2026-05-09", cash: 10 }, { date: "2026-05-04", cash: 3 }, { date: "2026-04-20", cash: 3 }], dates);
+  eq(idx.map((x) => Math.round(x * 10000) / 10000), [1, 1, 1]);   // 5/9 的 10 元算在 5/11；5/4 以前的不算
+});
+test("ETF 比較線：缺日沿用前一天收盤；第一天以前沒有日線就回傳 null；配息的 0、負數、壞日期忽略", () => {
+  const dates = ["2026-05-04", "2026-05-05", "2026-05-06"];
+  const idx = etfIndex([bar("2026-05-04", 100), bar("2026-05-06", 110)], [{ date: "x", cash: 5 }, { date: "2026-05-05", cash: 0 }, { date: "2026-05-05", cash: -1 }], dates);
+  eq(idx.map((x) => Math.round(x * 10000) / 10000), [1, 1, 1.1]);
+  eq(etfIndex([bar("2026-05-05", 100)], [], dates), null);
+  eq(etfIndex([], [], dates), null);
+  eq(etfIndex([bar("2026-05-04", 100)], [], []), null);
+});
+test("ETF 比較線跟 perf.js 對同一檔持股的算法一致（含股利）", () => {
+  const dates = ["2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08"];
+  const closes = [50, 51, 49, 49.5, 50.5];
+  const bars = dates.map((d, i) => bar(d, closes[i]));
+  const events = [{ ex_date: "2026-05-06", cash: 1.2 }];
+  const perf = computePerf({ trades: [{ date: "2026-05-04", market: "tw", code: "X", side: "買進", shares: 1000, price: 50, twd: 50000 }], bars: { X: bars }, fxRows: [], divs: { etfs: { X: { events } } } });
+  const mine = etfIndex(bars, events.map((e) => ({ date: e.ex_date, cash: e.cash })), dates);
+  eq(perf.days.map((d) => d.date), dates);
+  perf.days.forEach((d, i) => near(mine[i], d.index, 1e-12, dates[i]));
+  // 換算成期間（5/5 起）0%
+  near(rebase(mine, 1).at(-1), (perf.days.at(-1).index / perf.days[1].index - 1) * 100, 1e-9);
 });
 
 report();

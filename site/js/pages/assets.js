@@ -4,10 +4,10 @@ import { loadSettings, loadTrades, loadDca } from "../data.js";
 import { cashTable, nextDeposit, depositNote } from "../cash.js";
 import { loadPerformance } from "../perf.js";
 import { PERIODS, periodStart, daysFrom } from "../assets.js";
-import { el, twd, int, isNum, taipeiToday, shortDate } from "../fmt.js";
+import { el, twd, int, isNum, taipeiToday } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { NAMES } from "../config.js";
-import { trendCard, pnlCard } from "./assets_charts.js";
+import { trendCard, pnlCard, compareCard } from "./assets_charts.js";
 
 export async function render(root, { alive }) {
   root.append(pageHeader("資產", "帳本裡現金的來去，以及實際的資產變化（走勢、損益）。這一頁是實際紀錄；試算（撲滿、20 年後、財富自由）在「試算」頁。"));
@@ -19,6 +19,7 @@ export async function render(root, { alive }) {
   slot(root, () => periodBar(ctx));
   slot(root, () => trendCard(ctx));
   slot(root, () => pnlCard(ctx));
+  slot(root, () => compareCard(ctx));
 }
 
 // 期間選擇：一週、一月、一季、年初至今、一年、全部（預設全部）。起點比第一筆買進早就從第一筆買進開始
