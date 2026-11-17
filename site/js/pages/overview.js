@@ -114,9 +114,12 @@ function fxPnlRow(w) {
 }
 
 async function disciplineCard() {
-  const [trades, pf, v, dca, S] = await Promise.all([loadTrades(), loadPortfolio(), loadNewsView().catch(() => null), loadDca().catch(() => null), loadStatus()]);
+  const [trades, pf, v, dca, S, ...pairBars] = await Promise.all([loadTrades(), loadPortfolio(), loadNewsView().catch(() => null), loadDca().catch(() => null), loadStatus(),
+    loadDaily("tw", D.core).catch(() => null), loadDaily("tw", D.satellite).catch(() => null)]);
   const today = taipeiToday();
-  const d = discipline({ trades, positions: pf.positions, today, dca });
+  // 檢查後繼續補足要用兩檔的日線算過去的偏離；任一檔讀不到就不判斷
+  const bars = pairBars.every(Boolean) ? { [D.core]: pairBars[0], [D.satellite]: pairBars[1] } : null;
+  const d = discipline({ trades, positions: pf.positions, today, dca, bars });
   const ratio = Math.min(1, d.invested / d.deposit);
   const status = !d.depositArrived && !d.invested
     ? el("span", { class: "muted" }, `本月 ${shortDate(d.depositDate)} 入金後開始`)
@@ -124,7 +127,9 @@ async function disciplineCard() {
       : el("span", { class: "badge b-warn" }, `⚠ 還差 ${twd(d.investedMin - d.invested)} 到 9 成（月底前，剩 ${d.daysLeft} 天）`);
   const w = d.weights;
   const target = (code) => `${Math.round(D.target[code] * 100)}%`;
-  const planText = d.plan.mode === "rebalance"
+  const planText = d.plan.continued
+    ? `繼續補：${Number(d.plan.since.slice(5))} 月檢查時偏離 ${d.plan.devAtCheck >= 0 ? "+" : "−"}${Math.abs(d.plan.devAtCheck).toFixed(2)} 個百分點，之後還沒回到 ±${D.bandPts} 內：本月入金先補 ${d.plan.items[0][0]}（${twd(d.plan.items[0][1])}）`
+    : d.plan.mode === "rebalance"
     ? `檢查月偏離超過 ${D.bandPts} 個百分點：本月入金先補 ${d.plan.items[0][0]}（${twd(d.plan.items[0][1])}）`
     : `本月建議：${d.plan.items.map(([c, a]) => `${c} ${twd(a)}`).join("、")}（照目標比例）`
       + (d.plan.overBand ? `；偏離已超過 ${D.bandPts} 個百分點，但不在檢查月，下次檢查再補` : "");
@@ -132,7 +137,9 @@ async function disciplineCard() {
   // R14：比例用的兩檔價格、定投金額不是正常時標出來
   const pair = pf.positions.filter((p) => p.code === D.core || p.code === D.satellite);
   const dataStatus = statusLine([marketItem(S, pair, "tw", "核心與衛星"),
-    !dca && { kind: "fail", what: "帳本「定投金額」", note: `讀不到，先用計畫的 ${twd(D.deposit)}` }], { closed: false });
+    !dca && { kind: "fail", what: "帳本「定投金額」", note: `讀不到，先用計畫的 ${twd(D.deposit)}` },
+    !bars && { kind: "missing", what: "核心與衛星的日線", note: "讀不到，檢查後繼續補足先不判斷" },
+    ...d.warnings.map((w) => ({ kind: "missing", what: "之前的偏離", note: w }))], { closed: false });
   return card(`本月紀律（${Number(d.month.slice(5))} 月）`,
     dataStatus,
     el("div", { class: "spread" }, el("span", {}, `已投入 ${twd(d.invested)}／本月定投 ${twd(d.deposit)}`), status),
@@ -156,7 +163,7 @@ async function disciplineCard() {
       el("summary", {}, `新聞晨報當時的紀律快照（${taipeiTime(v.disciplineRows.reduce((m, r) => (r.generatedAt > m ? r.generatedAt : m), ""))}）`),
       v.disciplineRows.map((r) => el("div", { class: "small" }, r.fact)),
       el("p", { class: "tiny" }, "這是晨報產生當時的價格算的，比例和偏離會跟上面不同；現在的狀態以上面為準。")),
-    el("p", { class: "tiny" }, `當月台股買進合計（含手續費）達 ${int(d.investedMin)} 元（定投金額 9 成）算已投入，超過定投金額的部分算自主加碼，不影響下個月的定投；檢查月（${D.checkMonths.join("、")} 月）偏離超過 ${D.bandPts} 個百分點時，當月入金整筆補偏低的一檔，其他月份照目標比例，不賣出。美股不算進比例。`));
+    el("p", { class: "tiny" }, `當月台股買進合計（含手續費）達 ${int(d.investedMin)} 元（定投金額 9 成）算已投入，超過定投金額的部分算自主加碼，不影響下個月的定投；檢查月（${D.checkMonths.join("、")} 月）偏離超過 ${D.bandPts} 個百分點時，當月入金整筆補偏低的一檔；之後每個月月底偏離還超過 ${D.bandPts} 個百分點而且偏低的還是同一檔，就繼續整筆補，回到 ±${D.bandPts} 內就停、等下次檢查月；其他情況照目標比例，不賣出。美股不算進比例。`));
 }
 
 // 台股盤中：有富果金鑰而且有今天的報價就用富果（使用者自己的瀏覽器查）；沒有就退回 market-data 前一交易日收盤

@@ -17,7 +17,11 @@
   - 只算台股；核心 009816 80%、衛星 00981A 20%；每月 6 日入金（定投金額，預設 3,000）
   - 當月台股「買進」台幣金額合計 ≥ 定投金額的 9 成（3,000 → 2,700）算已投入；超過定投金額的部分是自主加碼
     （2026-11-05 使用者決定，和網站 site/js/discipline.js 相同）
-  - 檢查月 4 月與 10 月（各月 6 日）：偏離超過 5 個百分點時，當月入金全部補偏低的一檔；其他月份照 80／20
+  - 檢查月 4 月與 10 月（各月 6 日）：偏離超過 5 個百分點時，當月入金全部補偏低的一檔
+  - 檢查月觸發後繼續補（docs/PIVOT.md 第 12 節，2026-11-17）：非檢查月 M，找最近一個在 M 之前的檢查月 C；C 的計畫日前一天
+    收盤的偏離超過 5、C 到 M 前一個月每個月月底的偏離都超過 5 而且偏低的是同一檔、現在的偏離也超過 5 且偏低的還是那一檔，
+    入金全部補那一檔（plan.continued＝true、plan.since＝C）；中途哪個月月底回到 ±5 內或換成另一檔偏低就停，等下次檢查月。
+    其他情況照 80／20。第一個算數的檢查月是 CONFIG 的 first_check（2027-04）：比它早的檢查月一律當成沒觸發。過去某天的股數＝現在的股數減掉那天之後的買進、加回賣出；缺收盤或股數就不猜，照 80／20 並警告
   - 偏離＝核心市值比例 − 80（百分點；正數表示核心偏高、衛星偏低）
 輸出 JSON：見 compute() 的回傳；--brief 印給模型與人看的精簡文字。
 """
@@ -40,6 +44,7 @@ CONFIG = {
     "deposit_day": 6,
     "monthly": 3000,
     "check_months": [4, 10],
+    "first_check": "2027-04",   # 第一個算數的檢查月（轉型 2026-10-30 才決定，2026-10-06 那次不算）；比它早的檢查月一律當成沒觸發
     "threshold_pp": 5,
     "invested_min": 2700,
 }
@@ -149,6 +154,30 @@ def read_json(path):
         return None
 
 
+def closes(data, code):
+    """日線收盤 [(日期, 收盤)]（舊到新）：tw_<代號>_norm.csv（或 <代號>_norm.csv），讀不到回傳空 list。"""
+    for name in (f"tw_{code}_norm.csv", f"{code}_norm.csv"):
+        p = pathlib.Path(data) / name
+        try:
+            rows = [r for r in csv.reader(p.read_text(encoding="utf-8").splitlines()) if r]
+        except OSError:
+            continue
+        out = []
+        for r in rows:
+            try:
+                out.append((r[0], float(r[5])))
+            except (IndexError, ValueError):
+                continue
+        if out:
+            return sorted(out)
+    return []
+
+
+def history(data):
+    """兩檔的日線收盤歷史 {代號: [(日期, 收盤)]}，給「檢查後繼續補足」算過去的偏離。"""
+    return {code: closes(data, code) for code in CODES}
+
+
 def prices(data, today):
     """各檔價格：今天的盤中快照優先，否則日線最後收盤。回傳 {代號: (價格, 來源說明)}，取不到的不列。"""
     out = {}
@@ -158,15 +187,9 @@ def prices(data, today):
         if q.get("is_today") and q.get("data_date") == today.isoformat() and q.get("price"):
             out[code] = (float(q["price"]), f"盤中 {str(q.get('time') or '')[11:16]}（{q.get('price_field')}）")
             continue
-        for name in (f"tw_{code}_norm.csv", f"{code}_norm.csv"):
-            p = pathlib.Path(data) / name
-            try:
-                rows = [r for r in csv.reader(p.read_text(encoding="utf-8").splitlines()) if r]
-            except OSError:
-                continue
-            if rows:
-                out[code] = (float(rows[-1][5]), f"收盤 {rows[-1][0]}")
-                break
+        rows = closes(data, code)
+        if rows:
+            out[code] = (rows[-1][1], f"收盤 {rows[-1][0]}")
     return out
 
 
@@ -200,6 +223,79 @@ def prev_month(ym):
     return f"{y - 1}-12" if m == 1 else f"{y}-{m - 1:02d}"
 
 
+def shares_on(code, d, hold, tr):
+    """d 當天收盤後的股數：現在的股數減掉 d 之後的買進、加回 d 之後的賣出（只看台股交易紀錄）。讀不到股數回傳 None。"""
+    n = hold.get(code, 0) or 0
+    for t in tr:
+        if t["market"] != CONFIG["market"] or t["code"] != code or t["date"] <= d.isoformat():
+            continue
+        if t["side"] not in ("買進", "賣出"):
+            continue
+        if t["shares"] is None:
+            return None
+        n += -t["shares"] if t["side"] == "買進" else t["shares"]
+    return n
+
+
+def close_on(rows, d):
+    """不晚於 d 的最後一個收盤（休市日用之前最近的收盤）；沒有回傳 None。"""
+    last = None
+    for day, close in rows:
+        if day > d.isoformat():
+            break
+        last = close
+    return last
+
+
+def deviation_on(d, hold, tr, hist):
+    """d 當天收盤的偏離（百分點，沒四捨五入）：核心市值 ÷（核心＋衛星）− 80。缺收盤、缺股數、股數為負、市值為 0 回傳 None。"""
+    vals = []
+    for code in CODES:
+        n, c = shares_on(code, d, hold, tr), close_on(hist.get(code) or [], d)
+        if n is None or n < 0 or c is None:
+            return None
+        vals.append(n * c)
+    total = sum(vals)
+    return None if total <= 0 else vals[0] / total * 100 - CONFIG["target_pct"][CODES[0]]
+
+
+def underweight_of(dev):
+    return CODES[1] if dev > 0 else CODES[0]
+
+
+def last_check_before(ym):
+    """最近一個在 ym 之前的檢查月（YYYY-MM）。"""
+    y, m = int(ym[:4]), int(ym[5:])
+    cy, cm = max((yy, mm) for yy in (y - 1, y) for mm in CONFIG["check_months"] if (yy, mm) < (y, m))
+    return f"{cy}-{cm:02d}"
+
+
+def continued_since(ym, under, hold, tr, hist, closed, warnings):
+    """非檢查月 ym 要不要繼續補（docs/PIVOT.md 第 12 節）。回傳 (C 的 YYYY-MM, C 檢查時的偏離) 或 None。
+    現在的偏離已經超過門檻、偏低的是 under 才會呼叫。缺資料時加警告、回傳 None。"""
+    c = last_check_before(ym)
+    if c < CONFIG["first_check"]:    # 轉型前的檢查月不算觸發，不用算也不警告
+        return None
+    cy, cm = int(c[:4]), int(c[5:])
+    dev_c = deviation_on(plan_day(cy, cm) - dt.timedelta(days=1), hold, tr, hist)   # 當月入金之前
+    if dev_c is None:
+        warnings.append("算不出之前的偏離，照 80／20")
+        return None
+    if abs(dev_c) <= CONFIG["threshold_pp"] or underweight_of(dev_c) != under:
+        return None
+    m = c
+    while m != ym:
+        y, mo = int(m[:4]), int(m[5:])
+        dev = deviation_on(last_trading_day(y, mo, closed), hold, tr, hist)
+        if dev is None:
+            warnings.append("算不出之前的偏離，照 80／20")
+            return None
+        if abs(dev) <= CONFIG["threshold_pp"] or underweight_of(dev) != under:
+            return None
+        m = f"{y + 1}-01" if mo == 12 else f"{y}-{mo + 1:02d}"
+    return c, dev_c
+
+
 def streak(tr, today, invested_now, month_over, dca=None):
     """連續投入月數：本月已投入就從本月往前數；還沒投入但月份還沒結束，從上個月往前數；本月已結束沒投入就是 0。
     每個月用那個月的定投金額算門檻。"""
@@ -215,7 +311,8 @@ def streak(tr, today, invested_now, month_over, dca=None):
     return len(months), months
 
 
-def compute(holdings_obj, trades_obj, today, px, closed, dca_obj=None):
+def compute(holdings_obj, trades_obj, today, px, closed, dca_obj=None, hist=None):
+    """hist：{代號: [(日期, 收盤)]}（history() 的回傳）。不給就不判斷「檢查後繼續補足」，非檢查月一律照 80／20。"""
     ym = today.strftime("%Y-%m")
     tr = trades(trades_obj)
     dca = dca_list(dca_obj)
@@ -242,14 +339,21 @@ def compute(holdings_obj, trades_obj, today, px, closed, dca_obj=None):
     under = (sat if dev > 0 else core) if dev else None
     check_month = today.month in CONFIG["check_months"]
     normal = {core: round(monthly * CONFIG["target_pct"][core] / 100), sat: round(monthly * CONFIG["target_pct"][sat] / 100)}
+    cont = continued_since(ym, under, hold, tr, hist, closed, warnings) if hist is not None and needs and not check_month else None
     if needs and check_month:
         plan = {"mode": "rebalance", "amounts": {c: (monthly if c == under else 0) for c in CODES},
+                "continued": False, "since": None,
                 "note": f"檢查月：偏離 {dev:+.2f} 個百分點超過 {CONFIG['threshold_pp']}，入金全部補 {under}"}
+    elif cont:
+        plan = {"mode": "rebalance", "amounts": {c: (monthly if c == under else 0) for c in CODES},
+                "continued": True, "since": cont[0],
+                "note": f"繼續補：{cont[0]} 檢查時偏離 {cont[1]:+.2f} 個百分點，之後還沒回到 ±{CONFIG['threshold_pp']} 內，"
+                        f"入金全部補 {under}"}
     else:
         note = "照 80／20"
         if needs:
             note += f"；偏離 {dev:+.2f} 個百分點已超過 {CONFIG['threshold_pp']}，但不在檢查月（下次 {next_check(today)} 再補）"
-        plan = {"mode": "normal", "amounts": normal, "note": note}
+        plan = {"mode": "normal", "amounts": normal, "continued": False, "since": None, "note": note}
     bought = {c: round(sum(t["twd"] for t in buys if t["code"] == c)) for c in CODES}
     remaining = {c: max(0, plan["amounts"][c] - bought[c]) for c in CODES}
     last_td = last_trading_day(today.year, today.month, closed)
@@ -332,7 +436,8 @@ def main(argv=None):
     today = dt.date.fromisoformat(a.today) if a.today else dt.datetime.now(TPE).date()
     # --dca 給了但檔案讀不到（帳本讀取失敗）時當成空表：用預設金額並在 warnings 註明
     dca_obj = (read_json(a.dca) or {}) if a.dca else None
-    o = compute(read_json(a.holdings), read_json(a.trades), today, prices(a.data, today), closed_days(a.data), dca_obj)
+    o = compute(read_json(a.holdings), read_json(a.trades), today, prices(a.data, today), closed_days(a.data), dca_obj,
+                history(a.data))
     sys.stdout.reconfigure(encoding="utf-8")
     text = json.dumps(o, ensure_ascii=False)
     if a.out:

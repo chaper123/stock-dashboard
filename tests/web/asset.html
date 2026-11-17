@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>總資產走勢</title></head>
+<body>
+<h1>資金頁「總資產走勢」（site/js/cash.js 的 assetTrend）</h1>
+<p>docs/ASSET_TREND.md 的驗收：往回推的股數；入金排在每月 6 日、金額跟著 dcaFor；計入資金池的買賣改變可用資金、不計入的不改；美股換匯；最後一天的可用資金等於 cashTable 的期末；入金合計跟「累計入金」不相等時只畫持倉市值；基準日前沒資料時不畫。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { assetTrend, cashTable } from "/site/js/cash.js";
+
+// 2026-10-06 到 2026-12-10 的每個平日（Date 用 UTC 避免時區）
+const weekdays = [];
+for (let t = Date.UTC(2026, 9, 6); t <= Date.UTC(2026, 11, 10); t += 86400000) {
+  const dow = new Date(t).getUTCDay();
+  if (dow !== 0 && dow !== 6) weekdays.push(new Date(t).toISOString().slice(0, 10));
+}
+const flat = (days, close) => days.map((time) => ({ time, open: close, high: close, low: close, close }));
+const bars = { A: flat(weekdays, 10), B: flat(weekdays, 20), U: [{ time: "2026-10-01", close: 100 }, { time: "2026-11-18", close: 110 }] };
+const fxRows = [{ date: "2026-10-01", value: 30 }, { date: "2026-11-16", value: 31 }];
+const dca = [{ ym: "2026-11", amount: 3000 }, { ym: "2026-12", amount: 5000 }];
+const settings = { basis: "2026-10-06", basisFund: 1000, pocket: 50, depositMonths: 2, depositTotal: 8000, pool: 8605 };
+// 現在 A 100 股、B 10 股、美股 U 2 股；A：基準日 55 → 10/13 買 30（85）→ 11/10 買 20（105）→ 11/20 賣 5（100）。B 10/20 買 10 股但不計入資金池
+const holdings = [{ market: "tw", code: "A", shares: 100 }, { market: "tw", code: "B", shares: 10 }, { market: "us", code: "U", shares: 2 }];
+const tr = (date, code, side, shares, twd, inPool = true, market = "tw") => ({ date, market, code, side, shares, price: 10, twd, settle: null, inPool });
+const trades = [tr("2026-10-13", "A", "買進", 30, 300), tr("2026-10-20", "B", "買進", 10, 200, false), tr("2026-11-10", "A", "買進", 20, 200), tr("2026-11-20", "A", "賣出", 5, 55)];
+const run = (over = {}) => assetTrend({ settings, trades, holdings, bars, fxRows, dca, ...over });
+const day = (a, d) => a.days.find((x) => x.date === d);
+
+test("基準日到最新台股交易日，格子是台股有日線的日子；基準日的股數、市值、可用資金", () => {
+  const a = run();
+  ok(a.ok && a.hasCash);
+  eq([a.first.date, a.last.date, a.days.length], ["2026-10-06", "2026-12-10", weekdays.length]);
+  // 基準日：A 55 股（現在 100 往回推）、B 0 股、U 2 股 × 100 × 30
+  near(a.first.hold, 55 * 10 + 6000, 1e-9);
+  eq(a.first.cash, 1050);
+  near(a.first.total, 7600, 1e-9);
+  eq(a.first.line, a.first.total);
+});
+test("往回推的股數：買進當天收盤就算，賣出當天收盤就扣；非資金池的買進只改持倉不改可用資金", () => {
+  const a = run();
+  eq([day(a, "2026-10-12").hold - 6000, day(a, "2026-10-13").hold - 6000], [550, 850]);          // A 55 → 85
+  eq([day(a, "2026-10-19").hold - 6000, day(a, "2026-10-20").hold - 6000], [850, 850 + 200]);   // B 0 → 10 股 × 20
+  eq([day(a, "2026-10-12").cash, day(a, "2026-10-13").cash, day(a, "2026-10-20").cash], [1050, 750, 750]);   // B 不計入資金池
+  eq([day(a, "2026-11-09").hold - 6000, day(a, "2026-11-10").hold - 6000], [850 + 200, 1050 + 200]);        // A 85 → 105
+  eq([day(a, "2026-11-19").hold - 6820, day(a, "2026-11-20").hold - 6820], [1050 + 200, 1000 + 200]);       // A 105 → 100（美股 11/18 起 2 × 110 × 31）
+});
+test("入金排在基準日之後每個月的 6 日，金額跟著定投金額；週末的 12/06 算在下一個交易日", () => {
+  const a = run();
+  eq(a.deposits, [{ date: "2026-11-06", amount: 3000 }, { date: "2026-12-06", amount: 5000 }]);
+  eq([day(a, "2026-11-05").cash, day(a, "2026-11-06").cash], [750, 3750]);
+  eq([day(a, "2026-12-04").cash, day(a, "2026-12-07").cash], [3605, 8605]);
+  eq([day(a, "2026-11-05").line, day(a, "2026-11-06").line, day(a, "2026-12-04").line, day(a, "2026-12-07").line], [7600, 10600, 10600, 15600]);
+});
+test("6 日前先買的月份：入金改算在那個月第一筆計入資金池的買進日，可用資金不會變負；最後一天的可用資金不變", () => {
+  // 11/04 先買 A 10 股（3,500，計入資金池）：照 6 日入金，11/04 的可用資金會是 750 − 3,500 ＜ 0
+  const early = [...trades, tr("2026-11-04", "A", "買進", 10, 3500)];
+  const a = run({ trades: early });
+  eq(a.deposits[0], { date: "2026-11-04", amount: 3000 });
+  eq([day(a, "2026-11-03").cash, day(a, "2026-11-04").cash], [750, 250]);
+  ok(a.days.every((d) => d.cash >= 0), "不該有負的可用資金");
+  eq([day(a, "2026-11-03").line, day(a, "2026-11-04").line], [7500, 10500]);   // 基準日 A 少 10 股（往回推），對照線 11/04 加 3,000
+  const closing = cashTable({ settings: { ...settings }, trades: early }).closing;
+  eq([a.last.cash, closing], [5105, 5105]);                        // 期初 1,050 ＋ 入金 8,000 − 買進 4,000 ＋ 賣出 55
+  // 6 日之後才買、或前面的買進不計入資金池：入金還是 6 日
+  eq(run().deposits[0].date, "2026-11-06");
+  const notPool = run({ trades: [...trades, tr("2026-11-03", "B", "買進", 1, 20, false)], holdings: holdings.map((h) => (h.code === "B" ? { ...h, shares: 11 } : h)) });
+  eq(notPool.deposits[0].date, "2026-11-06");
+  // 最後一天的可用資金跟「同樣的買進晚到 11/06」一樣
+  eq(a.last.cash, run({ trades: [...trades, tr("2026-11-06", "A", "買進", 10, 3500)] }).last.cash);
+});
+test("計入資金池的買進賣出才動可用資金：把 B 改成計入，可用資金少 200", () => {
+  const b = run({ trades: trades.map((t) => (t.code === "B" ? { ...t, inPool: true } : t)), settings: { ...settings } });
+  eq([day(b, "2026-10-19").cash, day(b, "2026-10-20").cash, b.last.cash], [750, 550, 8405]);
+});
+test("美股：收盤 × 當天（或之前最近）的美元兌台幣；匯率與收盤變動算進市值", () => {
+  const a = run();
+  // 11/13：A 105 股 × 10 ＋ B 10 股 × 20 ＝ 1,250；U 2 股 × 收盤 100（10/01 的）× 匯率 30（匯率 11/16 才變 31）
+  near(day(a, "2026-11-13").hold, 1250 + 2 * 100 * 30, 1e-9, "11/13");
+  near(day(a, "2026-11-16").hold, 1250 + 2 * 100 * 31, 1e-9, "11/16 匯率變了");
+  near(day(a, "2026-11-18").hold, 1250 + 2 * 110 * 31, 1e-9, "11/18 收盤變了");
+});
+test("最後一天的可用資金等於 cashTable 的期末（期初 ＋ 入金 − 買進 ＋ 賣出）；持倉就是現在的股數", () => {
+  const a = run();
+  const c = cashTable({ settings: { ...settings }, trades });
+  eq(c.closing, 8605);
+  eq([a.last.cash, a.closing], [8605, 8605]);
+  near(a.last.hold, 100 * 10 + 10 * 20 + 2 * 110 * 31, 1e-9);
+  near(a.last.total, 1000 + 200 + 6820 + 8605, 1e-9);
+  eq([a.depositsAfter, a.pnl], [8000, a.last.total - (7600 + 8000)]);   // 對照線 ＝ 基準日總資產 ＋ 之後入金
+});
+test("入金排出來的合計跟帳本的累計入金不相等：只畫持倉市值，寫明原因", () => {
+  const a = run({ settings: { ...settings, depositTotal: 6000 } });
+  ok(a.ok && !a.hasCash);
+  ok(a.cashReason.includes("累計入金"), a.cashReason);
+  eq([a.first.cash, a.last.line, a.pnl, a.depositsAfter], [null, null, null, null]);
+  near(a.last.total, a.last.hold, 1e-9);
+});
+test("買賣讀不到金額、缺期初或已入金月數：可用資金不畫，不用 0 補", () => {
+  const unread = trades.map((t, i) => (i === 0 ? { ...t, twd: null, settle: null } : t));
+  const a = run({ trades: unread });
+  ok(a.ok && !a.hasCash && a.cashReason.includes("讀不到金額"), a.cashReason);
+  const b = run({ settings: { ...settings, pocket: null } });
+  ok(!b.hasCash && b.cashReason.includes("記帳前錢包零頭"), b.cashReason);
+  const c = run({ settings: { ...settings, depositMonths: null } });
+  ok(!c.hasCash && c.cashReason.includes("已入金月數"), c.cashReason);
+});
+test("缺資料不畫：持股那天之前沒有收盤、美股缺匯率、日線讀不到，都回傳 ok:false 和缺什麼", () => {
+  const late = run({ bars: { ...bars, U: [{ time: "2026-11-01", close: 100 }] } });
+  eq(late.ok, false);
+  ok(late.missing.some((m) => m.startsWith("U 的收盤價")), late.missing.join("|"));
+  const noFx = run({ fxRows: [{ date: "2026-11-01", value: 30 }] });
+  eq(noFx.ok, false);
+  ok(noFx.missing.some((m) => m.startsWith("美元兌台幣匯率")), noFx.missing.join("|"));
+  const none = run({ fxRows: null });
+  eq(none.ok, false);
+  const noBars = run({ bars: {} });
+  eq(noBars.ok, false);
+  ok(noBars.missing[0].includes("台股日線"), noBars.missing[0]);
+  eq(run({ settings: { ...settings, basis: null } }).ok, false);
+});
+test("交易紀錄跟持倉對不起來（往回推出負股數）：不畫", () => {
+  const a = run({ holdings: holdings.map((h) => (h.code === "A" ? { ...h, shares: 10 } : h)) });
+  eq(a.ok, false);
+  ok(a.missing[0].includes("A"), a.missing[0]);
+});
+test("資料落後（交易日期比最後一個交易日還晚）：當成最後一天發生，最後一天還是等於帳本現在的持倉與可用資金", () => {
+  const short = { A: bars.A.filter((b) => b.time <= "2026-11-17"), B: bars.B.filter((b) => b.time <= "2026-11-17"), U: bars.U };
+  const a = run({ bars: short });
+  eq(a.last.date, "2026-11-17");
+  eq(a.last.cash, 8605);                                  // 11/20 的賣出與 12/06 的入金都算在最後一天
+  near(a.last.hold, 100 * 10 + 10 * 20 + 2 * 100 * 31, 1e-9);   // A 現在的 100 股
+});
+test("只有台股、沒有入金：對照線等於基準日總資產；沒有美股不需要匯率", () => {
+  const a = assetTrend({ settings: { ...settings, depositMonths: 0, depositTotal: 0 }, trades: trades.filter((t) => t.market === "tw"),
+    holdings: holdings.filter((h) => h.market === "tw"), bars, fxRows: null, dca });
+  ok(a.ok && a.hasCash);
+  eq([...new Set(a.days.map((d) => d.line))], [a.first.total]);
+  eq(a.depositsAfter, 0);
+});
+
+report();
+</script>
+</body>
+</html>

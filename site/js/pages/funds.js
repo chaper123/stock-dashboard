@@ -1,9 +1,9 @@
 // 資金（docs/PIVOT.md 第 6 節）：最上面是「現金與投入」（錢從哪來、花到哪、還剩多少，docs/R15_R18.md），
 // 下面「長期試算」是小豬撲滿、20 年後、和巴菲特的差距、財富自由計算機。
 // 都在瀏覽器計算，長期試算只是試算，不是投資建議。
-import { loadSettings, loadTrades, loadDividends, loadDaily, loadIndex, loadDca } from "../data.js";
+import { loadSettings, loadTrades, loadHoldings, loadDividends, loadDaily, loadIndex, loadDca, loadFx } from "../data.js";
 import { dcaFor } from "../discipline.js";
-import { cashTable, nextDeposit } from "../cash.js";
+import { cashTable, nextDeposit, assetTrend } from "../cash.js";
 import {
   monthlyReturns, describeBacktest, rollingWindows, blockSample, SAMPLE_PATHS, principalLine,
   pathGrowth, requiredMonthly, hitProbability, monthsToTarget, rollingRequired,
@@ -11,7 +11,7 @@ import {
 } from "../backtest.js";
 import { loadPortfolio } from "../portfolio.js";
 import { loadPerformance } from "../perf.js";
-import { el, twd, pct, int, isNum, taipeiToday, extLink, shortDate } from "../fmt.js";
+import { el, twd, pct, int, isNum, signed, taipeiToday, extLink, shortDate } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { FUNDS as F, NAMES } from "../config.js";
 
@@ -23,8 +23,9 @@ const LINKS = {
 };
 
 export async function render(root) {
-  root.append(pageHeader("資金", "看得到的進度：最上面是帳本裡現金的來去；「長期試算」以下（撲滿、20 年後、和巴菲特比、財富自由要多少、一輩子夠不夠花）都是試算，不是預測，也不是投資建議。"));
+  root.append(pageHeader("資金", "看得到的進度：最上面是帳本裡現金的來去與總資產走勢；「長期試算」以下（撲滿、20 年後、和巴菲特比、財富自由要多少、一輩子夠不夠花）都是試算，不是預測，也不是投資建議。"));
   slot(root, cashCard);
+  slot(root, assetCard);
   root.append(el("h2", { class: "date-head" }, "長期試算"));
   slot(root, piggyCard);
   slot(root, futureCard);
@@ -110,6 +111,40 @@ async function cashCard() {
       el("li", { class: "tiny" }, "入金是照「定投金額」分頁逐月推算，不是逐筆確認錢真的入帳。"),
       el("li", { class: "tiny" }, "股利與費用帳本沒有流水；手續費已含在交割金額裡。"),
       el("li", { class: "tiny" }, "券商帳戶的實際餘額不在帳本裡；帳本的可用資金是理論值，不等於券商的交割餘額。")));
+}
+
+// ── 總資產走勢（docs/ASSET_TREND.md）──
+// 帳本與收盤價算出來的實際紀錄，不是試算。算法在 cash.js 的 assetTrend，這裡讀資料、畫圖
+async function assetCard() {
+  const [settings, trades, holdings, dca] = await Promise.all([loadSettings(), loadTrades(), loadHoldings(), loadDca().catch(() => null)]);
+  const kinds = new Map();
+  for (const h of holdings) kinds.set(`${h.market}:${h.code}`, h);
+  for (const t of trades) if (t.side === "買進" || t.side === "賣出") kinds.set(`${t.market}:${t.code}`, t);
+  const need = [...kinds.values()];
+  const loaded = await Promise.all(need.map((x) => loadDaily(x.market, x.code).catch(() => null)));
+  const bars = Object.fromEntries(need.map((x, i) => [x.code, loaded[i]]).filter(([, b]) => b));
+  const fxRows = need.some((x) => x.market === "us") ? await loadFx().catch(() => null) : null;
+  const unread = need.filter((x, i) => !loaded[i]).map((x) => `${x.code} 的日線`);
+  const a = assetTrend({ settings, trades, holdings, bars, fxRows, dca });
+  if (!a.ok) {
+    return card("總資產走勢", notice("warn", el("strong", {}, "先不畫"),
+      `：缺 ${[...unread, ...a.missing].join("、")}。缺的資料不補 0，補上後會自動畫出來。`));
+  }
+  const md = (d) => shortDate(d);
+  const { first, last } = a;
+  const totals = a.days.map((x) => x.total), lines = a.days.map((x) => x.line);
+  const rows = [{ label: a.hasCash ? "總資產" : "持倉市值", cls: "s1", line: totals, v: last.total }];
+  const principal = a.hasCash ? { line: lines, v: last.line, name: "對照線（基準日總資產加之後入金）", label: "" } : null;
+  const sum = a.hasCash
+    ? `${md(last.date)} 收盤：總資產 ${twd(last.total)}（持倉 ${twd(last.hold)}＋可用資金 ${twd(last.cash)}）；基準日 ${md(first.date)} 總資產 ${twd(first.total)}，之後入金 ${twd(a.depositsAfter)}；基準日以來投資損益 ${signed(a.pnl, twd)}（含匯率變動，不含已領股利）。`
+    : `${md(last.date)} 收盤：持倉市值 ${twd(last.hold)}；基準日 ${md(first.date)} 持倉市值 ${twd(first.hold)}。`;
+  return card("總資產走勢",
+    unread.length > 0 && notice("info", `有 ${unread.length} 檔的日線讀不到：${unread.join("、")}（沒有持股的日子不影響）。`),
+    !a.hasCash && notice("info", el("strong", {}, "可用資金先不畫"), `：${a.cashReason}。這張圖只有持倉市值，沒有對照線。`),
+    a.days.length < 2 ? el("p", {}, "基準日之後還沒有第二個交易日，等有資料再畫圖。")
+      : futureChart({}, rows, { years: a.days.length - 1, max: Math.max(...totals, ...lines.filter(isNum)), left: md(first.date), right: md(last.date), dedupe: true, principal }),
+    el("p", { class: "small" }, sum),
+    el("p", { class: "tiny" }, a.hasCash ? "實線是總資產，灰色虛線是對照線（基準日的總資產加上之後已入帳的入金），兩條線的差就是投資損益。" : "", "最後一天用收盤價算，跟其他卡用的即時價可能有一點差。"));
 }
 
 // ── 試算工具（年報酬換成等值月報酬，每月月底投入）──
@@ -349,7 +384,8 @@ async function futureCard() {
 // 圖：三個百分位逐年的值（rows[i].line 是第 0 年到第 N 年，v 是右端標的值）。
 // o：years 橫軸總年數、max 縱軸最大值、left／right 橫軸兩端的字、aria、retire（退休在第幾年，畫一條直線標「退休」）、
 // dedupe（右端標籤上下距離不到 10 個單位的不標，生命週期的三條線常常一起落到 0）、
-// principal（{ line, v }：投入本金逐年累積的灰色虛線，右端標「本金 X」，跟其他標籤上下距離不到 10 個單位時不標）、
+// principal（{ line, v }：投入本金逐年累積的灰色虛線，右端標「本金 X」，跟其他標籤上下距離不到 10 個單位時不標；
+// 可再給 name＝線的名稱（預設「投入本金」，進 aria-label 與提示）、label＝右端標籤的字（預設「本金」，給空字串就只標數字））、
 // clip（線超過 max 的部分用 clipPath 截掉、讓線從圖頂穿出去；期末值超過 max 的線，右端標籤放在圖頂、寫成「↑」加期末值）
 let clipSeq = 0; // clipPath 的 id 要在整頁唯一
 export function futureChart(state, rows, o = {}) {
@@ -358,7 +394,7 @@ export function futureChart(state, rows, o = {}) {
   const { principal = null } = o;
   const {
     years = state.years, max = Math.max(...rows.map((x) => x.v), principal?.v ?? 0), left = "今天", right = `${state.years} 年`,
-    aria = rows.map((x) => `${x.label} ${wan(x.v)}`).join("、") + (principal ? `、投入本金 ${wan(principal.v)}` : ""),
+    aria = rows.map((x) => `${x.label} ${wan(x.v)}`).join("、") + (principal ? `、${principal.name ?? "投入本金"} ${wan(principal.v)}` : ""),
     retire = null, dedupe = false, clip = false,
   } = o;
   const X = (y) => L + (y / years) * (W - L - R);
@@ -409,9 +445,9 @@ export function futureChart(state, rows, o = {}) {
   if (principal) {
     const pts = principal.line.map((v, y) => `${X(y).toFixed(1)},${Y(v).toFixed(1)}`);
     const line = add("polyline", { points: pts.join(" "), class: "fc-line s0" });
-    line.append(Object.assign(document.createElementNS(NS, "title"), { textContent: `投入本金：${wan(principal.v)}` }));
+    line.append(Object.assign(document.createElementNS(NS, "title"), { textContent: `${principal.name ?? "投入本金"}：${wan(principal.v)}` }));
     const y = Y(principal.v);
-    if (!placed.some((p) => Math.abs(p - y) < 10)) add("text", { x: W - R + 4, y: y + 4, class: "fc-label" }, `本金 ${wan(principal.v)}`);
+    if (!placed.some((p) => Math.abs(p - y) < 10)) add("text", { x: W - R + 4, y: y + 4, class: "fc-label" }, [principal.label ?? "本金", wan(principal.v)].filter(Boolean).join(" "));
   }
   add("text", { x: L, y: H - 4, class: "fc-label" }, left);
   add("text", { x: W - R, y: H - 4, class: "fc-label", "text-anchor": "end" }, right);

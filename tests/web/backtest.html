@@ -481,6 +481,18 @@ test("圖：本金標籤跟其他標籤上下距離不到 10 個單位時不標�
   ok(![...near.querySelectorAll("text")].some((t) => t.textContent.startsWith("本金")), "太近還是標了");
 });
 
+test("圖：本金線可以改名（name）、改右端標籤的字（label，空字串就只標數字）；沒給時跟以前一樣", () => {
+  const rows = [{ label: "總資產", cls: "s1", v: 600, line: [100, 600] }];
+  const named = futureChart({ years: 1 }, rows, { principal: { line: [100, 300], v: 300, name: "對照線", label: "" } });
+  const texts = [...named.querySelectorAll("text")].map((t) => t.textContent);
+  ok(texts.includes(wan(300)) && !texts.some((t) => t.includes("本金")), texts.join("|"));
+  eq(named.getAttribute("aria-label"), `總資產 ${wan(600)}、對照線 ${wan(300)}`);
+  eq(named.querySelectorAll("polyline")[1].querySelector("title").textContent, `對照線：${wan(300)}`);
+  const def = futureChart({ years: 1 }, rows, { principal: { line: [100, 300], v: 300 } });
+  ok([...def.querySelectorAll("text")].some((t) => t.textContent === `本金 ${wan(300)}`));
+  ok(def.getAttribute("aria-label").endsWith(`、投入本金 ${wan(300)}`));
+});
+
 // ── 生命週期圖的縱軸上限與截掉（偏好的情況常常是中間的好幾倍）──
 const mkRows = (p10, p50, p90) => [["偏差", "s1", p10], ["中間", "s2", p50], ["偏好", "s3", p90]].map(([label, cls, line]) => ({ label, cls, line, v: line.at(-1) }));
 test("縱軸最大值：中間情況最高點 × 1.5（具名常數）；三條線都沒超過時用三條線的最高點", () => {
