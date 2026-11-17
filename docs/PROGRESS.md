@@ -15,7 +15,7 @@
 - 舊的美股、台股兩個買點晨報 2026-11-03 停用（轉型，見 [PIVOT.md](PIVOT.md)）。
 - **market-data**（公開）：GitHub Actions 抓行情、新聞標題、總經、法人、行事曆，cron-job.org 觸發（fetch 06:15、news 08:20、11:10 等），狀態看 `data/meta.json`。台股不再程式抓證交所／櫃買網站（改 FinMind＋OpenAPI）；盤中價由網站在使用者瀏覽器用富果查（金鑰只在使用者裝置）。
 - **market-data-private**（私人，本機 `C:\market-data-private`）：00981A、009816 每日持股。投信網站不得轉載，所以不放公開 repo；公開的「新聞」分頁不能寫股數、權重、排名、檔數。
-- **網站**（GitHub Pages，純靜態，九頁：總覽、持倉、資產、K 線、記帳、分析、新聞、報告、試算）：記帳透過帳本綁定的 Apps Script 寫入（[LEDGER_WRITE.md](LEDGER_WRITE.md)、[LEDGER_CONSISTENCY.md](LEDGER_CONSISTENCY.md)）。第三方改進報告第 A、B、C 批與 R02 已上線（[IMPROVE.md](IMPROVE.md)）。線上 sw.js 2026-11-17-5（資產新頁、試算頁、導覽列新順序、國安基金卡寫明進場日期）。
+- **網站**（GitHub Pages，純靜態，九頁：總覽、持倉、資產、K 線、記帳、分析、新聞、報告、試算）：記帳透過帳本綁定的 Apps Script 寫入（[LEDGER_WRITE.md](LEDGER_WRITE.md)、[LEDGER_CONSISTENCY.md](LEDGER_CONSISTENCY.md)）。第三方改進報告第 A、B、C 批與 R02 已上線（[IMPROVE.md](IMPROVE.md)）。線上 sw.js 2026-11-18-1（持倉頁與總覽加已實現損益）。
 - **試算表**：「儀表板資料」（排程寫入；正式「新聞」gid 5、「測試_新聞」gid 4）；共用帳本（Claude 只讀，網站記帳寫入）。ID 在提示詞裡。
 - **使用者的投資規則**：每月 6 日照帳本「定投金額」投入台股 009816 80%、00981A 20%；4、10 月檢查，偏離超過 5 個百分點才整筆補偏低的一檔；美股 VOO、GOOGL 保留、不加碼。所有輸出都是依規則的訊號，不是投資建議。
 
@@ -30,12 +30,12 @@
    - 重啟時照使用者的意見改：六個範本都要實際開來看（上次 Ledgely、Zapline、Fundora 沒開），互動當成重點（上次沒有跳數字、沒有背景動畫，使用者覺得只比現在好一點）。
 4. **檢查後繼續補足**（PIVOT 第 12 節）與**資金頁「總資產走勢」**（[ASSET_TREND.md](ASSET_TREND.md)）：2026-11-17 上線（`bde1da1`，sw.js `2026-11-17-3`）。補足從 2027-04 的檢查才開始算；晨報要等下次改提示詞換 engine 釘選才會用到，2027/04 前換好（可以跟 v4.2a 一起）。
 5. **「資產」新頁與「試算」頁整頓**：2026-11-17 上線（`f1ff46d` 合併、`08d91d5` 導覽列，sw.js `2026-11-17-4`），規格與紀錄在 [ASSETS_PAGE.md](ASSETS_PAGE.md)。導覽列照使用者指定：總覽、持倉、資產、K 線、記帳、分析、新聞、報告、試算（記帳在正中間）。
-6. **帳本補兩組已賣出的買賣與已實現損益**（[REALIZED_PNL.md](REALIZED_PNL.md)）：2026-11-17 用錢包明細與券商成交紀錄核對，帳本漏了 00679B（4/14～5/13）、00735（7/16～9/09）兩組買賣，淨賺 175。market-data 已開始抓兩檔日線與配息（`7241ea1`）；四列由使用者填進帳本；持倉頁、總覽的已實現損益交給「網站實作」，做完審查、使用者說「部署」再上線。
+6. **帳本補兩組已賣出的買賣與已實現損益**（[REALIZED_PNL.md](REALIZED_PNL.md)）：2026-11-18 上線（sw.js `2026-11-18-1`）。帳本補了 00679B、00735 兩組買賣與 VOO、GOOGL、009816 的實際金額；持倉頁與總覽顯示已實現損益 +175。
 7. 較小、不急：
    - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：等 Sonnet 測試有結論、新聞排程穩定再做。
 
 ## 注意事項
-- 分工（使用者 2026-11-12、11-13 訂）：主 session 的高階模型只做規劃、規格、審查與較難的製作；部署、例行檢查、照規格實作交給常駐的便宜模型 session（部署與例行檢查、網站實作、market-data 維護、排程維護；教學要用時開新的；id 在記憶 `delegate-routine-work`）。模型（使用者 2026-11-16 訂）：交辦預設 Sonnet，看新聞、讀執行紀錄這類簡單檢查用 Haiku，只有 Sonnet 做不到才用 Opus；主 session 以前開的 Opus session 已全部封存。同類工作用同一個 session，不要每件事開新的；主對話只講結論與要使用者決定的事。會對外生效的動作（push、部署、改排程）要使用者本人在執行的那個 session 裡同意。
+- 分工（使用者 2026-11-12、11-13 訂）：主 session 的高階模型只做規劃、規格、審查與較難的製作；部署、例行檢查、照規格實作交給常駐的便宜模型 session（部署與例行檢查、網站實作、market-data 維護、排程維護；教學要用時開新的；id 在記憶 `delegate-routine-work`）。模型（使用者 2026-11-16 訂）：交辦預設 Sonnet，看新聞、讀執行紀錄這類簡單檢查用 Haiku，只有 Sonnet 做不到才用 Opus；主 session 以前開的 Opus session 已全部封存。同類工作用同一個 session，不要每件事開新的；主對話只講結論與要使用者決定的事。會對外生效的動作（push、部署、改排程）要使用者本人在執行的那個 session 裡同意。使用者 2026-11-18 再次強調：主 session 當管理者，部署（合併、改版本號、測試、push、線上確認）與例行檢查一律交給分支 session 做，做完呈交給主 session 核對批改，主 session 不自己動手部署。
 - 改 claude.ai 排程前先取得同意、先用一次性測試 run 比對。RemoteTrigger update 要送完整 job_config（含 environment_id、events 的 uuid），不給 mcp_connections 就不會動到連接器；改完讀回，用程式比對提示詞（回應很大，存成檔案時直接讀檔，沒存成檔案就從 session 的對話紀錄 jsonl 取出）。
 - 排程裡 WebFetch 只開這次 WebSearch 結果裡的網址，直接開檔案或清單裡的網址可能要使用者核准、5 分鐘後被收回；allowed_domains 不放 reuters.com、apnews.com（整次搜尋會被拒）。
 - 排程被使用者的每週額度擋下時會中途停止，不是程式問題。
