@@ -12,9 +12,8 @@ const DASH_PUB = "2PACX-1vRhvnwZeDHTngUJNE92xxFi2cBvrZrBsiCAtrefaDzMfaR268oMF5wm
 // 切換當天正式分頁還空著也不會空白；正式版穩定後把測試那一項拿掉
 const NEWS_TABS = [[5, "新聞"], [4, "測試_新聞"]];
 
-// 帳本新分頁「其他入帳」（配息與手續費折抵，docs/OTHER_INCOME.md）的 gid。null＝還沒接上（網站當成沒有其他入帳，不報錯）；
-// 使用者建好分頁、發布後，把它的 sheetId 填在這裡
-const INCOME_GID = null;
+// 帳本新分頁「其他入帳」（配息與手續費折抵，docs/OTHER_INCOME.md）的 gid（2026-11-18 建立）。改成 null＝當成還沒接上，網站當成沒有其他入帳、不報錯
+const INCOME_GID = 11;
 
 // 本機開發：localhost 加 ?dev 時改讀 site/dev-data/（不進 git）。只在本機有效，線上網址不能被參數換掉
 const DEV = ["localhost", "127.0.0.1"].includes(location.hostname) && new URLSearchParams(location.search).has("dev");

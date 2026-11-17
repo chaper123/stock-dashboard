@@ -135,7 +135,8 @@ export const loadDca = () => once("dca", async () => {
 // 回傳 { configured, rows }：configured 是 false＝分頁還沒接上（config.js 的 INCOME_GID 是 null），rows 是空的，呼叫端當成沒有其他入帳；
 // 讀不到（連不上、分頁沒發布）丟 DataError，由呼叫端決定怎麼顯示（不能當成 0）。
 // rows 每列：{ row 試算表列號, date 入帳日, market "us"｜"tw"｜""（手續費折抵常寫「台股＋美股」，不是單一市場就是空字串）, code, kind 配息｜手續費折抵,
-//   amount 原幣金額, currency, twd 實際進錢包的台幣（網站只用這欄算錢）, inPool 計入資金池, source, note }
+//   amount 原幣金額, currency, twd 實際進錢包的台幣（網站只用這欄算錢）, inPool 計入資金池, source, note,
+//   exDate 配息的除息日（K 欄，可以空白＝""；日期格式不對也當空白） }
 const INCOME_KINDS = new Set(["配息", "手續費折抵"]);
 export function parseIncome(text) {
   return parseTable(text, "__row").map((r) => {
@@ -152,6 +153,7 @@ export function parseIncome(text) {
       inPool: col(r, "計入資金池") === "是",
       source: col(r, "來源"),
       note: col(r, "備註"),
+      exDate: /^\d{4}-\d{2}-\d{2}$/.test(col(r, "除息日")) ? col(r, "除息日") : "",
     };
   }).filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.date) && INCOME_KINDS.has(x.kind));
 }
