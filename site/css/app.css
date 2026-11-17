@@ -439,6 +439,9 @@ details.card.more > summary { padding: 0; }
 @media (min-width: 700px) { .lw-box { height: 320px; } .lw-box.tall { height: 440px; } }
 .head-note { margin-left: 10px; font-size: .9rem; font-weight: 400; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .head-note strong { font-weight: 700; }
+.stock-perf .idx-row td { font-style: italic; color: var(--muted); }
+.stock-perf td:first-child { white-space: normal; }
+.stock-perf th, .stock-perf td { padding-left: 4px; padding-right: 4px; }
 
 /* 富果金鑰設定 */
 .fugle-set { margin-top: 10px; font-size: .88rem; }

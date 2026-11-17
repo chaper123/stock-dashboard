@@ -91,3 +91,53 @@ export function rebase(values, i0 = 0) {
   const base = values?.[i0];
   return (values || []).map((v) => (v == null || !(base > 0) ? null : (v / base - 1) * 100));
 }
+
+// ── 個股表現（ASSETS_PAGE 2.4）──
+
+// 「YYYY-MM-DD」往前（後）推 n 天
+export function shiftDays(d, n) {
+  const [y, m, day] = d.split("-").map(Number);
+  return iso(y, m - 1, day + n);
+}
+
+// bars（升冪）裡最後一根 ≤ d 的位置，沒有是 -1
+function barIdx(bars, d) {
+  let lo = 0, hi = bars.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (bars[mid].time <= d) {
+      ans = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return ans;
+}
+
+// 收盤價對收盤價的價格報酬（%，不含股利、美股是美元價格不含匯率）。最後一根取不晚於 last 的收盤；
+// day＝跟前一根比（近 1 日）、week＝跟 last 往前 7 天（含）以前最近的一根比（近一週）、period＝跟 start（期間起點）以前最近的一根比。
+// 資料不夠早（沒有那根）是 null。bars：[{ time, close }]
+export function priceReturns(bars, last, start) {
+  const i = barIdx(bars || [], last);
+  if (i < 0) return { endDate: null, close: null, day: null, week: null, period: null };
+  const end = bars[i].close;
+  const ret = (j) => (j >= 0 && bars[j].close > 0 ? (end / bars[j].close - 1) * 100 : null);
+  return { endDate: bars[i].time, close: end, day: ret(i - 1), week: ret(barIdx(bars, shiftDays(last, -7))), period: ret(barIdx(bars, start)) };
+}
+
+// 個股表現的列：台股持股（期間報酬由高到低，讀不到的排最後）後面接一列加權指數、美股持股後面接一列 S&P 500，作為對照。
+// holdings：[{ market, code }]（現在還持有的）；bars：{ 代號: [{ time, close }] }；indices：{ tw?: { code, name, bars }, us?: {…} }
+// 回傳 [{ kind: "stock"|"index", market, code, name?, day, week, period, missing }]
+export function performanceRows({ holdings, bars, indices = {}, last, start }) {
+  const out = [];
+  const byPeriod = (a, b) => (a.period == null) - (b.period == null) || (b.period ?? 0) - (a.period ?? 0);
+  for (const market of ["tw", "us"]) {
+    const rows = holdings.filter((h) => h.market === market).map((h) => ({
+      kind: "stock", market, code: h.code, missing: !bars[h.code]?.length, ...priceReturns(bars[h.code], last, start),
+    })).sort(byPeriod);
+    if (!rows.length) continue;
+    out.push(...rows);
+    const ix = indices[market];
+    if (ix) out.push({ kind: "index", market, code: ix.code, name: ix.name, missing: !ix.bars?.length, ...priceReturns(ix.bars, last, start) });
+  }
+  return out;
+}

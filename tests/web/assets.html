@@ -6,7 +6,7 @@
 <p>docs/ASSETS_PAGE.md 第 3 節的驗收：六種期間起點；每日損益（含投入、股利的日子）；累計損益從期間起點歸 0、期間內每日損益加總等於累計損益；比較線換算成期間起點 0%、含股利與不含股利；個股表現的三種報酬；日曆的週合計、週與月報酬率連乘、休市留空、跨月的週。</p>
 <script type="module">
 import { test, eq, near, ok, report } from "./harness.js";
-import { PERIODS, periodLabel, periodStart, dailyPnl, daysFrom, periodPnl, valuesAt, etfIndex, rebase } from "/site/js/assets.js";
+import { PERIODS, periodLabel, periodStart, dailyPnl, daysFrom, periodPnl, valuesAt, etfIndex, rebase, shiftDays, priceReturns, performanceRows } from "/site/js/assets.js";
 import { computePerf } from "/site/js/perf.js";
 
 // ── 期間 ──
@@ -154,6 +154,55 @@ test("ETF 比較線跟 perf.js 對同一檔持股的算法一致（含股利）"
   perf.days.forEach((d, i) => near(mine[i], d.index, 1e-12, dates[i]));
   // 換算成期間（5/5 起）0%
   near(rebase(mine, 1).at(-1), (perf.days.at(-1).index / perf.days[1].index - 1) * 100, 1e-9);
+});
+
+// ── 個股表現 ──
+const cl = (pairs) => pairs.map(([time, close]) => bar(time, close));
+test("shiftDays：往前、往後推幾天，跨月跨年", () => {
+  eq([shiftDays("2026-11-16", -7), shiftDays("2026-01-03", -7), shiftDays("2026-02-27", 3), shiftDays("2028-02-28", 1)], ["2026-11-09", "2025-12-27", "2026-03-02", "2028-02-29"]);
+});
+test("priceReturns：收盤對收盤的價格報酬，近 1 日跟前一根比、近一週跟 7 天前（含）以前最近的一根比、期間跟起點（含）以前最近的一根比", () => {
+  const bars = cl([["2026-11-02", 100], ["2026-11-03", 110], ["2026-11-04", 121], ["2026-11-05", 121], ["2026-11-06", 90.75], ["2026-11-09", 99], ["2026-11-10", 108.9]]);
+  const r = priceReturns(bars, "2026-11-10", "2026-11-03");
+  near(r.day, 10, 1e-9);                       // 108.9 / 99
+  near(r.week, (108.9 / 110 - 1) * 100, 1e-9); // 7 天前是 11/03（110）
+  near(r.period, (108.9 / 110 - 1) * 100, 1e-9);
+  eq([r.endDate, r.close], ["2026-11-10", 108.9]);
+  // 起點不是交易日：用它以前最近的一根（週末的起點用週五收盤）
+  near(priceReturns(bars, "2026-11-10", "2026-11-07").period, (108.9 / 90.75 - 1) * 100, 1e-9);
+  // last 不是這檔的交易日（例如美股休市）：用不晚於 last 的最後一根
+  eq(priceReturns(bars, "2026-11-12", "2026-11-03").endDate, "2026-11-10");
+});
+test("priceReturns：資料不夠早是 null；只有一根；完全沒有資料", () => {
+  const bars = cl([["2026-11-09", 99], ["2026-11-10", 108.9]]);
+  const r = priceReturns(bars, "2026-11-10", "2026-11-03");
+  near(r.day, 10, 1e-9);
+  eq([r.week, r.period], [null, null]);        // 7 天前、起點都在第一根之前
+  eq(priceReturns(cl([["2026-11-10", 5]]), "2026-11-10", "2026-11-10").day, null);
+  eq(priceReturns(cl([["2026-11-10", 5]]), "2026-11-10", "2026-11-10").period, 0);
+  eq(priceReturns([], "2026-11-10", "2026-11-03").close, null);
+  eq(priceReturns(null, "2026-11-10", "2026-11-03").day, null);
+});
+test("個股表現的列：台股依期間報酬由高到低、後面接加權指數；美股後面接 S&P 500；讀不到的排最後", () => {
+  const up = (a, b) => cl([["2026-11-03", a], ["2026-11-09", a], ["2026-11-10", b]]);
+  const rows = performanceRows({
+    holdings: [{ market: "tw", code: "A" }, { market: "us", code: "U1" }, { market: "tw", code: "B" }, { market: "us", code: "U2" }, { market: "tw", code: "C" }],
+    bars: { A: up(100, 105), B: up(100, 130), U1: up(10, 9), U2: up(10, 12) },       // C 沒有日線
+    indices: { tw: { code: "TAIEX", name: "加權指數", bars: up(1000, 1100) }, us: { code: "SPX", name: "S&P 500", bars: up(5000, 5050) } },
+    last: "2026-11-10", start: "2026-11-03",
+  });
+  eq(rows.map((r) => r.code), ["B", "A", "C", "TAIEX", "U2", "U1", "SPX"]);
+  eq(rows.map((r) => r.kind), ["stock", "stock", "stock", "index", "stock", "stock", "index"]);
+  eq(rows.map((r) => r.missing), [false, false, true, false, false, false, false]);
+  near(rows[0].period, 30, 1e-9);
+  near(rows[3].period, 10, 1e-9);                 // 加權指數
+  near(rows[6].period, 1, 1e-9);                  // S&P 500
+  eq([rows[2].period, rows[2].day], [null, null]);
+});
+test("個股表現的列：沒有持有的市場不列對照指數；加權指數資料讀不到時那一列標 missing", () => {
+  const bars = { A: cl([["2026-11-03", 100], ["2026-11-10", 120]]) };
+  const rows = performanceRows({ holdings: [{ market: "tw", code: "A" }], bars, indices: { tw: { code: "TAIEX", name: "加權指數", bars: [] }, us: { code: "SPX", name: "S&P 500", bars: bars.A } }, last: "2026-11-10", start: "2026-11-03" });
+  eq(rows.map((r) => [r.code, r.missing]), [["A", false], ["TAIEX", true]]);
 });
 
 report();
