@@ -1,6 +1,6 @@
 // 資產（docs/ASSETS_PAGE.md）：現金與投入（原資金頁最上面那張卡）、資產變化（資產走勢、累計與每日損益、報酬率對比較標的、
 // 個股表現、報酬日曆）。實際紀錄，不是試算；試算在「試算」頁。數字都在瀏覽器用帳本與 market-data 算。
-import { loadSettings, loadTrades, loadDca } from "../data.js";
+import { loadSettings, loadTrades, loadDca, loadIncome } from "../data.js";
 import { cashTable, nextDeposit, depositNote } from "../cash.js";
 import { loadPerformance } from "../perf.js";
 import { PERIODS, periodStart, daysFrom } from "../assets.js";
@@ -48,7 +48,7 @@ async function periodBar(ctx) {
 }
 
 // ── 現金與投入（R18）──
-// 期初＋入金−買進＋賣出＝期末，再跟帳本的可用資金對一次。數字都來自帳本「設定」與「交易紀錄」，算法在 cash.js
+// 期初＋入金−買進＋賣出＋其他入帳（配息、手續費折抵）＝期末，再跟帳本的可用資金對一次。數字都來自帳本「設定」「交易紀錄」「其他入帳」，算法在 cash.js
 const NOT_IN_LEDGER = "帳本沒有這一列";
 const slashDate = (d) => d.replaceAll("-", "/");
 const cashVal = (v, none = NOT_IN_LEDGER) => (isNum(v) ? twd(v) : el("span", { class: "muted" }, none));
@@ -57,9 +57,9 @@ const cashText = (v, none = NOT_IN_LEDGER) => (isNum(v) ? twd(v) : none);
 // 差額不到 1 元時多寫小數，免得「差 NT$0」其實不是 0
 const diffText = (v) => (Math.abs(v) >= 1 ? twd(Math.abs(v)) : `NT$${Math.abs(v).toFixed(2)}`);
 
-// 逐筆明細（買進或賣出）：日期、標的、金額；讀不到金額的列照實寫
-function legTable(rows, total) {
-  const code = (r) => `${r.code} ${NAMES[r.code] || ""}`.trim();
+// 逐筆明細（買進、賣出、其他入帳）：日期、標的、金額；讀不到金額的列照實寫。其他入帳的「標的」寫類型（配息 VOO、手續費折抵）
+function legTable(rows, total, label = null) {
+  const code = label || ((r) => `${r.code} ${NAMES[r.code] || ""}`.trim());
   const keep = { style: { whiteSpace: "nowrap" } }; // 日期與金額不換行；標的名稱可以換行，手機上才看得到金額
   return el("div", { class: "table-wrap" }, el("table", {},
     el("thead", {}, el("tr", {}, el("th", {}, "日期"), el("th", {}, "標的"), el("th", { class: "r" }, "金額"))),
@@ -69,8 +69,9 @@ function legTable(rows, total) {
 }
 
 async function cashCard() {
-  const [settings, trades, dca] = await Promise.all([loadSettings(), loadTrades(), loadDca().catch(() => null)]);
-  const c = cashTable({ settings, trades });
+  // 其他入帳讀不到傳 null（期末就先不算，不補 0）；分頁還沒接上時 loadIncome 回傳 { configured: false }，當成 0
+  const [settings, trades, dca, income] = await Promise.all([loadSettings(), loadTrades(), loadDca().catch(() => null), loadIncome().catch(() => null)]);
+  const c = cashTable({ settings, trades, income });
   const next = nextDeposit(taipeiToday(), dca);
 
   // 入金的說明：累計剛好等於「月數 × 每月入金」才寫成乘法，定投金額中途改過就不硬湊
@@ -78,9 +79,23 @@ async function cashCard() {
     : c.depositsByMonths ? `已入金 ${int(c.depositMonths)} 個月 × 每月 ${twd(c.monthly)}`
       : `已入金 ${int(c.depositMonths)} 個月，各月金額照「定投金額」分頁加總`;
 
-  const leg = (label, rows, total, hint) => rows.length > 0 && [
+  const leg = (label, rows, total, hint, rowLabel) => rows.length > 0 && [
     kv(`${label}（${rows.length} 筆）`, cashVal(total, UNREADABLE)),
-    el("details", { class: "more" }, el("summary", {}, `看逐筆（${rows.length} 筆）`), legTable(rows, total), hint)];
+    el("details", { class: "more" }, el("summary", {}, `看逐筆（${rows.length} 筆）`), legTable(rows, total, rowLabel), hint)];
+  const incomeLabel = (r) => `${r.kind}${r.code ? ` ${r.code}` : ""}`;
+  // 其他入帳：讀不到、有幾筆讀不到金額、沒有計入資金池的列，各自寫清楚；還沒接上就只在下面寫一行小字
+  const incomeTitle = "＋其他入帳（配息、手續費折抵）";
+  const incomeRow = income === null ? kv(incomeTitle, el("span", { class: "muted" }, "讀不到帳本的「其他入帳」分頁"))
+    : c.incomeRows.length > 0 ? leg(incomeTitle, c.incomeRows, c.income,
+      el("p", { class: "tiny" }, "只列「計入資金池」的列；金額是實際進錢包的台幣（美股配息已扣預扣稅）。"), incomeLabel)
+      : c.incomeConfigured ? kv(incomeTitle, twd(0)) : null;
+  // 其他入帳也對一次帳本「基準日後其他入帳」；兩邊都沒有（沒有列、帳本沒有這一列或是 0）時不多顯示任何東西
+  const incomeCheck = !c.incomeConfigured || income === null || (c.incomeRows.length === 0 && !c.ledgerIncome) ? null
+    : c.incomeDiff == null
+      ? notice("info", c.income == null ? "其他入帳合計算不出來，所以沒辦法跟帳本的「基準日後其他入帳」對。" : `「基準日後其他入帳」：${NOT_IN_LEDGER}，沒辦法對。`)
+      : c.incomeDiff === 0 ? [kv("其他入帳對帳", "對得起來"), el("div", { class: "tiny" }, `對的是帳本「基準日後其他入帳」${twd(c.ledgerIncome)}`)]
+        : notice("warn", el("strong", {}, `其他入帳對不上，差 ${diffText(c.incomeDiff)}`),
+          `：「其他入帳」分頁加起來 ${twd(c.income)}，帳本「基準日後其他入帳」是 ${twd(c.ledgerIncome)}。`);
 
   // 對帳：差額不是 0 就標出來；其中一邊讀不到就說沒辦法對，不當成對得起來
   const dir = (d) => (d > 0 ? "多" : "少");
@@ -111,18 +126,21 @@ async function cashCard() {
     leg("買進", c.buyRows, c.buys, el("p", { class: "tiny" }, "只列「計入資金池」的買進；網站沖銷的一對（原列與沖銷列）已拿掉。金額含手續費。")),
     c.buyRows.length === 0 && kv("買進", cashVal(c.buys, UNREADABLE)),
     leg("賣出", c.sellRows, c.sells),
+    incomeRow,
+    !c.incomeConfigured && el("div", { class: "tiny" }, "帳本的「其他入帳」分頁還沒接上（配息與手續費折抵先當成 0）。"),
     kv("算出來的期末", cashVal(c.closing, "先不算")),
-    el("div", { class: "tiny" }, `期初 ${cashText(c.opening, "算不出來")} ＋ 入金 ${cashText(c.deposits)} − 買進 ${cashText(c.buys, UNREADABLE)} ＋ 賣出 ${cashText(c.sells, UNREADABLE)}`),
+    el("div", { class: "tiny" }, `期初 ${cashText(c.opening, "算不出來")} ＋ 入金 ${cashText(c.deposits)} − 買進 ${cashText(c.buys, UNREADABLE)} ＋ 賣出 ${cashText(c.sells, UNREADABLE)} ＋ 其他入帳 ${cashText(c.income, "讀不到")}`),
     c.closing == null && notice("warn", el("strong", {}, "期末先不算"),
       `：缺 ${c.missing.join("、")}。讀不到的項目不補 0，帳本補上後會自動算出來。`),
     kv("帳本的可用資金", cashVal(c.ledgerPool)),
     poolCheck,
     buysCheck,
     sellsCheck,
+    incomeCheck,
     kv("下一次入金", `${slashDate(next.date)}・${twd(next.amount)}${depositNote(next)}`),
     el("ul", { class: "notes" },
       el("li", { class: "tiny" }, "入金是照「定投金額」分頁逐月推算，不是逐筆確認錢真的入帳。"),
-      el("li", { class: "tiny" }, "股利與費用帳本沒有流水；手續費已含在交割金額裡。"),
+      el("li", { class: "tiny" }, "台股 ETF 的股利，網站用 market-data 的除息資料算進報酬，不用記；美股配息與手續費折抵記在帳本「其他入帳」分頁，算進可用資金與報酬。手續費已含在交割金額裡。"),
       el("li", { class: "tiny" }, "券商帳戶的實際餘額不在帳本裡；帳本的可用資金是理論值，不等於券商的交割餘額。")));
 }
 

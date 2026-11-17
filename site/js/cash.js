@@ -1,5 +1,6 @@
 // 資產頁「現金與投入」的計算（docs/R15_R18.md「R18 先講現金」；2026-11-17 資金頁改名，這張卡搬到資產頁）。
-// 純函式：不讀網路、不碰 DOM。輸入是 loadSettings() 的結果與 loadTrades() 的結果（loadTrades 已經拿掉網站沖銷的一對）。
+// 純函式：不讀網路、不碰 DOM。輸入是 loadSettings()、loadTrades() 的結果（loadTrades 已經拿掉網站沖銷的一對），
+// 與 loadIncome() 的結果（帳本「其他入帳」：配息與手續費折抵，docs/OTHER_INCOME.md）。
 // 讀不到的項目不補 0：那一項回傳 null、列在 missing，期末也不算。
 import { isNum, int } from "./fmt.js";
 import { dcaFor, nextDepositDate, addMonth } from "./discipline.js";
@@ -27,9 +28,25 @@ function legs(trades, side) {
   return { rows, unreadable, total: unreadable ? null : round2(rows.reduce((s, r) => s + r.amount, 0)) };
 }
 
-// settings：loadSettings()；trades：loadTrades()（沖銷的一對已拿掉）
-// 期末＝期初＋入金−買進＋賣出，期初＝基準日未投入資金＋記帳前錢包零頭
-export function cashTable({ settings, trades }) {
+// 「計入資金池＝是」的其他入帳（配息、手續費折抵）：逐筆明細（日期由舊到新）與合計，金額用台幣金額欄（實際進錢包的）。
+// income 的三種狀況要分清楚：
+// - 沒給或 { configured: false }：分頁還沒接上，當成 0（known:true、configured:false）
+// - null：分頁接上了但讀不到，合計是 null、不補 0（known:false）
+// - { configured: true, rows }：正常；任何一列台幣金額讀不到，合計也是 null
+function incomeLegs(income) {
+  if (income === null) return { configured: true, known: false, rows: [], unreadable: 0, total: null };
+  if (!income || income.configured === false) return { configured: false, known: true, rows: [], unreadable: 0, total: 0 };
+  const rows = (income.rows || [])
+    .filter((x) => x.inPool)
+    .map((x) => ({ date: x.date, market: x.market, code: x.code, kind: x.kind, note: x.note, amount: isNum(x.twd) ? x.twd : null }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const unreadable = rows.filter((r) => !isNum(r.amount)).length;
+  return { configured: true, known: true, rows, unreadable, total: unreadable ? null : round2(rows.reduce((s, r) => s + r.amount, 0)) };
+}
+
+// settings：loadSettings()；trades：loadTrades()（沖銷的一對已拿掉）；income：loadIncome()（讀不到傳 null；沒有就當還沒設定）
+// 期末＝期初＋入金−買進＋賣出＋其他入帳，期初＝基準日未投入資金＋記帳前錢包零頭
+export function cashTable({ settings, trades, income }) {
   const s = settings || {};
   const missing = [];
   const num = (v, label) => {
@@ -48,8 +65,12 @@ export function cashTable({ settings, trades }) {
   if (buy.unreadable) missing.push(`買進（${buy.unreadable} 筆讀不到金額）`);
   if (sell.unreadable) missing.push(`賣出（${sell.unreadable} 筆讀不到金額）`);
 
-  const closing = [opening, deposits, buy.total, sell.total].every(isNum)
-    ? round2(opening + deposits - buy.total + sell.total) : null;
+  const inc = incomeLegs(income);
+  if (!inc.known) missing.push("其他入帳");
+  else if (inc.unreadable) missing.push(`其他入帳（${inc.unreadable} 筆讀不到金額）`);
+
+  const closing = [opening, deposits, buy.total, sell.total, inc.total].every(isNum)
+    ? round2(opening + deposits - buy.total + sell.total + inc.total) : null;
   const ledgerPool = isNum(s.pool) ? s.pool : null;
   const ledgerBuys = isNum(s.buysSince) ? s.buysSince : null;
   const ledgerSells = isNum(s.sellsSince) ? s.sellsSince : null;
@@ -57,6 +78,8 @@ export function cashTable({ settings, trades }) {
   const poolDiff = closing != null && ledgerPool != null ? round2(closing - ledgerPool) : null;
   const buysDiff = buy.total != null && ledgerBuys != null ? round2(buy.total - ledgerBuys) : null;
   const sellsDiff = sell.total != null && ledgerSells != null ? round2(sell.total - ledgerSells) : null;
+  const ledgerIncome = isNum(s.incomeSince) ? s.incomeSince : null;
+  const incomeDiff = inc.configured && inc.total != null && ledgerIncome != null ? round2(inc.total - ledgerIncome) : null;
   // 累計入金是不是等於「已入金月數 × 每月入金」（定投金額中途改過就不會相等，畫面不能硬寫成乘法）
   const byMonths = isNum(s.depositMonths) && isNum(s.monthly) ? round2(s.depositMonths * s.monthly) : null;
 
@@ -69,6 +92,7 @@ export function cashTable({ settings, trades }) {
     depositsByMonths: byMonths != null && deposits != null ? byMonths === deposits : null,
     buys: buy.total, buyRows: buy.rows,
     sells: sell.total, sellRows: sell.rows,
+    income: inc.total, incomeRows: inc.rows, incomeConfigured: inc.configured, ledgerIncome, incomeDiff,
     closing, ledgerPool, poolDiff, ledgerBuys, buysDiff, ledgerSells, sellsDiff,
     missing,
   };
@@ -88,7 +112,7 @@ export function nextDeposit(today, dca) {
 // 沒有收盤的日子用之前最近的一筆。任何一檔缺價或匯率，整張圖不畫（回傳 ok:false 與缺什麼），不用 0 補；
 // 可用資金排不出來（入金合計跟帳本不同、買賣讀不到金額、缺期初）時只畫持倉市值，hasCash:false 並寫明原因。
 // 資料落後時（交易、入金的日期比最後一個交易日還晚）當成發生在最後一個交易日，最後一天才等於帳本現在的持倉與可用資金。
-// 手續費與匯率變動都在裡面；不含已領股利。
+// 手續費與匯率變動都在裡面；可用資金含「其他入帳」分頁計入資金池的配息與手續費折抵。
 function lastAtOrBefore(dates, d) {
   let lo = 0, hi = dates.length - 1, ans = -1;
   while (lo <= hi) {
@@ -106,8 +130,9 @@ const priceAt = (rows, dateOf, valueOf, d) => {
 };
 
 // settings：loadSettings()；trades：loadTrades()；holdings：loadHoldings()；bars：{ 代號: loadDaily 的日線 }；
-// fxRows：loadFx()（沒有美股可以不給）；dca：loadDca()（null＝讀不到，用 config 的計畫金額）
-export function assetTrend({ settings, trades, holdings, bars = {}, fxRows = null, dca = null }) {
+// fxRows：loadFx()（沒有美股可以不給）；dca：loadDca()（null＝讀不到，用 config 的計畫金額）；
+// income：loadIncome()（null＝讀不到，可用資金排不出來；沒給＝還沒設定，當 0）。其他入帳在入帳日加進可用資金，入帳日不是交易日就算在下一個交易日
+export function assetTrend({ settings, trades, holdings, bars = {}, fxRows = null, dca = null, income }) {
   const s = settings || {};
   const fail = (missing) => ({ ok: false, missing });
   if (!s.basis) return fail(["基準日（帳本「設定」沒有這一列）"]);
@@ -143,11 +168,12 @@ export function assetTrend({ settings, trades, holdings, bars = {}, fxRows = nul
     return [k, out];
   }));
 
-  // 可用資金：期初 ＋ 入金 − 買進 ＋ 賣出（只算「計入資金池」的列）
-  const cash = cashTable({ settings: s, trades });
+  // 可用資金：期初 ＋ 入金 − 買進 ＋ 賣出 ＋ 其他入帳（只算「計入資金池」的列）
+  const cash = cashTable({ settings: s, trades, income });
   const reasons = [];
   if (cash.opening == null) reasons.push(`缺${[cash.basisFund == null && "基準日未投入資金", cash.pocket == null && "記帳前錢包零頭"].filter(Boolean).join("、")}`);
   if (cash.buys == null || cash.sells == null) reasons.push("有買進或賣出讀不到金額");
+  if (cash.income == null) reasons.push("其他入帳讀不到或有讀不到金額的列");
   const deposits = [];
   if (!isNum(s.depositMonths)) reasons.push("缺已入金月數");
   else {
@@ -166,6 +192,7 @@ export function assetTrend({ settings, trades, holdings, bars = {}, fxRows = nul
   if (hasCash) {
     for (const r of cash.buyRows) flow[idxOf(r.date)] -= r.amount;
     for (const r of cash.sellRows) flow[idxOf(r.date)] += r.amount;
+    for (const r of cash.incomeRows) flow[idxOf(r.date)] += r.amount;
     for (const d of deposits) {
       flow[idxOf(d.date)] += d.amount;
       depFlow[idxOf(d.date)] += d.amount;
@@ -211,7 +238,7 @@ export function assetTrend({ settings, trades, holdings, bars = {}, fxRows = nul
     ok: true, hasCash, cashReason: hasCash ? null : reasons.join("；"),
     days, first, last, deposits,
     depositsAfter: hasCash ? round2(last.line - first.total) : null, // 基準日之後入帳的入金合計
-    pnl: hasCash ? last.total - last.line : null,                    // 基準日以來的投資損益（含匯率變動，不含股利）
+    pnl: hasCash ? last.total - last.line : null,                    // 基準日以來的投資損益（含匯率變動與其他入帳的配息、折抵）
     closing: cash.closing,
   };
 }

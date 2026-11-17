@@ -1,6 +1,6 @@
 // 資產頁的時間序列圖（Lightweight Charts，可縮放平移）：資產走勢、累計損益與每日損益、投資報酬率對比較標的。
 // 一整塊共用 ctx 的期間選擇（pages/assets.js）：換期間時各卡 ctx.onChange 的函式會被呼叫，重新設定資料與可見範圍。
-import { loadSettings, loadTrades, loadHoldings, loadDaily, loadDca, loadFx, loadIndex, loadDividends } from "../data.js";
+import { loadSettings, loadTrades, loadHoldings, loadDaily, loadDca, loadFx, loadIndex, loadDividends, loadIncome } from "../data.js";
 import { assetTrend } from "../cash.js";
 import { loadPerformance, attribution } from "../perf.js";
 import { periodStart, periodPnl, daysFrom, periodLabel, valuesAt, etfIndex, rebase } from "../assets.js";
@@ -38,7 +38,9 @@ function followCrosshair(chart, last, show) {
 // ── 總資產走勢要的資料（算法在 cash.js 的 assetTrend）：交易過、現在還持有的每一檔日線，有美股才讀匯率 ──
 async function loadAssetTrend() {
   try {
-    const [settings, trades, holdings, dca] = await Promise.all([loadSettings(), loadTrades(), loadHoldings(), loadDca().catch(() => null)]);
+    // 其他入帳讀不到＝null：可用資金排不出來，只畫持倉市值（assetTrend 會寫原因）；還沒接上時 loadIncome 回傳 { configured: false }，當 0
+    const [settings, trades, holdings, dca, income] = await Promise.all([loadSettings(), loadTrades(), loadHoldings(), loadDca().catch(() => null),
+      loadIncome().catch(() => null)]);
     const kinds = new Map();
     for (const h of holdings) kinds.set(`${h.market}:${h.code}`, h);
     for (const t of trades) if (t.side === "買進" || t.side === "賣出") kinds.set(`${t.market}:${t.code}`, t);
@@ -47,7 +49,7 @@ async function loadAssetTrend() {
     const bars = Object.fromEntries(need.map((x, i) => [x.code, loaded[i]]).filter(([, b]) => b));
     const fxRows = need.some((x) => x.market === "us") ? await loadFx().catch(() => null) : null;
     const unread = need.filter((x, i) => !loaded[i]).map((x) => `${x.code} 的日線`);
-    return { a: assetTrend({ settings, trades, holdings, bars, fxRows, dca }), unread };
+    return { a: assetTrend({ settings, trades, holdings, bars, fxRows, dca, income }), unread };
   } catch (e) {
     return { a: null, unread: [], error: e.message || String(e) };
   }
