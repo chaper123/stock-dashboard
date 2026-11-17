@@ -3,7 +3,7 @@
 import {
   loadSettings, loadTrades, loadDca, loadMeta, loadFearGreed, loadNavHistory, loadIndex, loadDaily, loadCalendar, loadFx, loadHoldings, loadDividends,
 } from "../data.js";
-import { loadPortfolio, FX_KIND_LABEL } from "../portfolio.js";
+import { loadPortfolio, loadRealized, FX_KIND_LABEL } from "../portfolio.js";
 import { marketCard } from "../market.js";
 import { riskCard } from "../checkup.js";
 import { loadFugle, getKey, fugleSettings, fugleUsable, quoteTime, FUGLE_NOTE } from "../fugle.js";
@@ -66,7 +66,7 @@ async function greetingCard() {
 // 我的資產（R07、R09、R14）：缺匯率、價格或可用資金時標「部分資產」，不把缺的當 0；
 // 損益是證券損益折台幣（成本與市值用同一匯率，不含匯差）；資料時間標在卡片上
 async function assetsCard() {
-  const [pf, st, S] = await Promise.all([loadPortfolio(), loadSettings().catch((e) => e), loadStatus()]);
+  const [pf, st, S, rz] = await Promise.all([loadPortfolio(), loadSettings().catch((e) => e), loadStatus(), loadRealized().catch((e) => e)]);
   const pool = st instanceof Error ? null : st.pool;
   const t = pf.totals;
   const total = t.mvTwd + (pool || 0);
@@ -93,6 +93,7 @@ async function assetsCard() {
       el("span", { class: tone(t.dayChgTwd) }, signed(t.dayChgTwd, twd))),
     kv(el("span", {}, "未實現損益", el("div", { class: "tiny" }, "證券損益折台幣，不含匯差")),
       el("span", { class: tone(t.pnlTwd) }, `${signed(t.pnlTwd, twd)}（${pct(t.pnlPct)}）`)),
+    realizedRow(rz),
     // R09：含匯差＝現在的台幣市值 − 歷史台幣成本；美股成本沒有實際台幣金額就標參考匯率
     hasUs && fxPnlRow(t.withFx),
     kv("持倉市值", `${twd(t.mvTwd)}（台股 ${twd(t.tw.mvTwd)}・美股 ${twd(t.us.mvTwd)}）`),
@@ -100,6 +101,15 @@ async function assetsCard() {
     kv("下次入金", st instanceof Error || !st.nextDeposit ? "—" : `${shortDate(st.nextDeposit)}（${daysBetween(today, st.nextDeposit)} 天後）`),
     el("p", { class: "tiny" }, `資料時間：${when || "—"}。`,
       "未實現損益的美股成本與市值用同一個匯率換算，所以不含匯差；含匯差的算法見持倉頁。持股與可用資金來自帳本（Google 試算表發布版，約 5 分鐘延遲）。"));
+}
+
+// 已實現損益（docs/REALIZED_PNL.md）：至少一筆賣出或有錯誤才顯示；交易紀錄讀不到寫「讀不到」，不讓整張卡失敗
+function realizedRow(rz) {
+  const label = el("span", {}, "已實現損益", el("div", { class: "tiny" }, "已賣出的部分，明細在持倉頁"));
+  if (rz instanceof Error) return kv(label, el("span", { class: "muted" }, "讀不到"));
+  if (rz.errors.length) return kv(label, el("span", { class: "muted" }, "算不出來（原因見持倉頁）"));
+  if (!rz.rows.length) return null;
+  return kv(label, el("span", { class: tone(rz.total) }, `${signed(rz.total, twd)}（${pct(rz.pct)}）`));
 }
 
 function fxPnlRow(w) {
