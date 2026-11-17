@@ -9,10 +9,12 @@ import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { NAMES } from "../config.js";
 import { trendCard, pnlCard, compareCard } from "./assets_charts.js";
 import { stocksCard, calendarCard } from "./assets_tables.js";
+import { dividendCard } from "./assets_dividends.js";
 
 export async function render(root, { alive }) {
   root.append(pageHeader("資產", "帳本裡現金的來去，以及實際的資產變化（走勢、損益）。這一頁是實際紀錄；試算（撲滿、20 年後、財富自由）在「試算」頁。"));
   slot(root, cashCard);
+  slot(root, dividendCard);
   root.append(el("h2", { class: "date-head" }, "資產變化"));
   // 一整塊資產變化共用一排期間選擇：換期間時，各卡登記的函式會被呼叫（重新設定資料與可見範圍）
   const subs = [];

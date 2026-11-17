@@ -12,8 +12,8 @@ const NET_TIMEOUT_MS = 8000;
 const SHELL_FILES = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/app.js", "js/backtest.js", "js/cash.js", "js/config.js", "js/csv.js", "js/data.js", "js/discipline.js", "js/fmt.js", "js/fugle.js", "js/gauge.js", "js/headlines.js", "js/inside.js", "js/ledger_write.js", "js/macro.js", "js/news.js", "js/outlook.js",
-  "js/assets.js", "js/lw.js", "js/perf.js", "js/portfolio.js", "js/realized.js", "js/private.js", "js/status.js", "js/ui.js", "js/ta.js", "js/market.js", "js/checkup.js", "js/opportunity.js",
-  "js/pages/overview.js", "js/pages/holdings.js", "js/pages/record.js", "js/pages/assets.js", "js/pages/assets_charts.js", "js/pages/assets_tables.js", "js/pages/calc.js", "js/pages/news.js", "js/pages/reports.js",
+  "js/assets.js", "js/dividends.js", "js/lw.js", "js/perf.js", "js/portfolio.js", "js/realized.js", "js/private.js", "js/status.js", "js/ui.js", "js/ta.js", "js/market.js", "js/checkup.js", "js/opportunity.js",
+  "js/pages/overview.js", "js/pages/holdings.js", "js/pages/record.js", "js/pages/assets.js", "js/pages/assets_charts.js", "js/pages/assets_tables.js", "js/pages/assets_dividends.js", "js/pages/calc.js", "js/pages/news.js", "js/pages/reports.js",
   "js/pages/charts.js", "js/pages/analysis.js", "js/pages/opportunity.js",
   "icons/icon.svg", "icons/icon-192.png",
 ];

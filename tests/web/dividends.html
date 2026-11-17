@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>配息卡</title></head>
+<body>
+<h1>資產頁「配息」卡的純函式（docs/AUTO_DIVIDENDS.md 第 3 節）</h1>
+<p>預估金額（台股、美股）、60 天內篩選、已除息待發放、最近入帳排序、Apps Script 自動記帳狀態的文字。不連網。</p>
+<script type="module">
+import { test, eq, ok, report } from "./harness.js";
+import { sharesBefore, usEstimate, upcomingDividends, recentDividends, autoStatusLine } from "/site/js/dividends.js";
+
+const TODAY = "2026-11-18";
+const hold = (market, code, shares) => ({ market, code, shares });
+const ev = (ex, pay, cash) => ({ ex_date: ex, pay_date: pay, cash });
+const etf = (next, last) => ({ events: [], next, last, ttm_cash: 0, ttm_count: 0 });
+const TW = (o) => ({ etfs: o });
+const US = (o) => ({ symbols: Object.fromEntries(Object.entries(o).map(([c, events]) => [c, { events }])) });
+const FX = [{ date: "2026-11-16", value: 32.8764 }, { date: "2026-11-17", value: 32.923 }];
+const trade = (date, market, code, side, shares) => ({ date, market, code, side, shares });
+const up = (o) => upcomingDividends({ today: TODAY, ...o });
+
+test("sharesBefore：除息日當天買的不算、賣出扣掉、別的代號與別的市場不算", () => {
+  const t = [trade("2026-11-05", "tw", "00981A", "買進", 141), trade("2026-12-16", "tw", "00981A", "買進", 10),
+    trade("2026-12-10", "tw", "00981A", "賣出", 41), trade("2026-11-05", "tw", "009816", "買進", 173), trade("2026-11-05", "us", "00981A", "買進", 9)];
+  eq(sharesBefore(t, "tw", "00981A", "2026-12-16"), 100);
+  eq(sharesBefore(t, "tw", "00981A", "2026-12-17"), 110, "除息日隔天，當天買的算");
+  eq(sharesBefore(t, "tw", "0050", "2026-12-16"), 0);
+  eq(sharesBefore(null, "tw", "00981A", "2026-12-16"), 0);
+  eq(sharesBefore([trade("2026-04-17", "us", "VOO", "買進", 0.1262)], "us", "voo", "2026-09-29"), 0.1262, "小數股、代號不分大小寫");
+});
+
+test("usEstimate：0.1262 股 × 每股 1.77 × 0.7 × 32.923 ≈ 5 元；缺任何一項是 null", () => {
+  eq(usEstimate(0.1262, 1.77, 32.923), 5);
+  eq(usEstimate(10, 1.8, 32.9), Math.round(10 * 1.8 * 0.7 * 32.9));
+  eq([usEstimate(null, 1.8, 32.9), usEstimate(1, null, 32.9), usEstimate(1, 1.8, null)], [null, null, null]);
+});
+
+test("台股 next：00981A 141 股 × 每單位 0.63＝89，標明除息日與發放日", () => {
+  const r = up({ holdings: [hold("tw", "00981A", 141)], tw: TW({ "00981A": etf(ev("2026-12-16", "2027-01-08", 0.63), null) }), us: null });
+  eq(r.items, [{ status: "next", market: "tw", code: "00981A", exDate: "2026-12-16", payDate: "2027-01-08", perUnit: 0.63, shares: 141, estimate: 89 }]);
+  eq([r.twMissing, r.usMissing], [false, false]);
+});
+
+test("60 天內篩選：今天與第 60 天算，第 61 天、已經過去、沒有 next 都寫「最近沒有除息」", () => {
+  const at = (d) => up({ holdings: [hold("tw", "0056", 100)], tw: TW({ "0056": etf(ev(d, "2027-03-01", 1), null) }), us: null }).items[0].status;
+  eq(at("2026-11-18"), "next", "今天除息");
+  eq(at("2027-01-17"), "next", "第 60 天");
+  eq(at("2027-01-18"), "none", "第 61 天");
+  eq(at("2026-11-17"), "none", "昨天除息（next 過期了）");
+  eq(up({ holdings: [hold("tw", "009816", 1241)], tw: TW({ "009816": etf(null, null) }), us: null }).items, [{ status: "none", market: "tw", code: "009816" }]);
+  eq(up({ holdings: [hold("tw", "0050", 5)], tw: TW({}), us: null }).items, [{ status: "none", market: "tw", code: "0050" }], "檔案裡沒有這檔");
+});
+
+test("台股金額還沒公布：estimate 是 null；發放日沒有就是空字串", () => {
+  const r = up({ holdings: [hold("tw", "0056", 100)], tw: TW({ "0056": etf({ ex_date: "2026-12-20", pay_date: null, cash: null }, null) }), us: null });
+  eq([r.items[0].status, r.items[0].perUnit, r.items[0].estimate, r.items[0].payDate], ["next", null, null, ""]);
+});
+
+test("已除息、還沒發放：用除息前的持股（不含除息日當天買的）估；發放日過了、已記進帳本的不列", () => {
+  const trades = [trade("2026-11-05", "tw", "00981A", "買進", 141), trade("2026-12-16", "tw", "00981A", "買進", 10)];
+  const last = ev("2026-12-16", "2027-01-08", 0.63);
+  const base = { holdings: [hold("tw", "00981A", 151)], tw: TW({ "00981A": etf(null, last) }), us: null, trades };
+  const r = upcomingDividends({ ...base, today: "2026-12-20" });
+  eq(r.items, [{ status: "paying", market: "tw", code: "00981A", exDate: "2026-12-16", payDate: "2027-01-08", perUnit: 0.63, shares: 141, estimate: 89 }]);
+  eq(upcomingDividends({ ...base, today: "2027-01-08" }).items[0].status, "paying", "發放日當天還列著（腳本早上才記）");
+  eq(upcomingDividends({ ...base, today: "2027-01-09" }).items[0].status, "none", "發放日過了");
+  eq(upcomingDividends({ ...base, today: "2026-12-20", income: [{ kind: "配息", code: "00981A", exDate: "2026-12-16" }] }).items[0].status, "none", "已經記進其他入帳");
+  eq(upcomingDividends({ ...base, today: "2026-12-20", income: [{ kind: "手續費折抵", code: "", exDate: "" }] }).items[0].status, "paying", "別的類型不算");
+  // 沒給交易紀錄：用現在的股數
+  eq(upcomingDividends({ ...base, trades: undefined, today: "2026-12-20" }).items[0].shares, 151);
+  // 除息前一股都沒有：不列
+  eq(upcomingDividends({ ...base, trades: [trade("2026-12-16", "tw", "00981A", "買進", 10)], today: "2026-12-20" }).items[0].status, "none");
+});
+
+test("已除息但發放日沒公布：45 天內算待發放，之後不列", () => {
+  const base = { holdings: [hold("tw", "0056", 100)], tw: TW({ "0056": etf(null, ev("2026-12-16", null, 1.2)) }), us: null };
+  eq(upcomingDividends({ ...base, today: "2027-01-30" }).items[0].status, "paying", "45 天");
+  eq(upcomingDividends({ ...base, today: "2027-01-31" }).items[0].status, "none", "46 天");
+  eq(upcomingDividends({ ...base, today: "2027-01-30" }).items[0].payDate, "");
+});
+
+test("美股：沒有未來的除息日，列上次除息；估算＝股數 × 每股 × 0.7 × 最新匯率；超過 400 天沒配息當成沒有", () => {
+  const r = up({ holdings: [hold("us", "VOO", 0.1262), hold("us", "GOOGL", 2), hold("us", "NVDA", 1)],
+    tw: null, fxRows: FX, us: US({ VOO: [{ ex_date: "2026-06-30", cash: 1.8 }, { ex_date: "2026-09-29", cash: 1.77 }], GOOGL: [], NVDA: [{ ex_date: "2025-03-01", cash: 0.01 }] }) });
+  eq(r.items.map((x) => [x.code, x.status]), [["VOO", "usLast"], ["GOOGL", "none"], ["NVDA", "none"]]);
+  eq(r.items[0], { status: "usLast", market: "us", code: "VOO", exDate: "2026-09-29", perShare: 1.77, shares: 0.1262, rate: 32.923, estimate: 5 });
+  eq([r.twMissing, r.usMissing], [false, false], "台股沒有持股時 tw 讀不到不算缺");
+});
+
+test("讀不到：台股配息、美股配息、匯率各自處理，不影響其他", () => {
+  const holdings = [hold("tw", "00981A", 141), hold("us", "VOO", 1)];
+  const r1 = up({ holdings, tw: null, us: US({ VOO: [{ ex_date: "2026-09-29", cash: 1.77 }] }), fxRows: FX });
+  eq(r1.items.map((x) => x.code), ["VOO"]);
+  eq([r1.twMissing, r1.usMissing], [true, false]);
+  const r2 = up({ holdings, tw: TW({ "00981A": etf(ev("2026-12-16", "2027-01-08", 0.63), null) }), us: null, fxRows: FX });
+  eq(r2.items.map((x) => x.code), ["00981A"]);
+  eq([r2.twMissing, r2.usMissing], [false, true], "us.json 還沒產出：只列台股");
+  const r3 = up({ holdings, tw: TW({ "00981A": etf(null, null) }), us: US({ VOO: [{ ex_date: "2026-09-29", cash: 1.77 }] }), fxRows: null });
+  const voo = r3.items.find((x) => x.code === "VOO");
+  eq([voo.rate, voo.estimate], [null, null], "匯率讀不到：不估");
+  eq(up({ holdings: null || [], tw: null, us: null }).items, []);
+});
+
+test("排序：待發放、60 天內要除息（依除息日）、美股上次除息、最近沒有除息", () => {
+  const r = up({ holdings: [hold("tw", "009816", 1), hold("tw", "00878", 10), hold("tw", "0056", 10), hold("tw", "00919", 10), hold("us", "VOO", 1)],
+    tw: TW({ "009816": etf(null, null), "00878": etf(ev("2026-12-30", "2027-01-20", 1), null), "0056": etf(ev("2026-12-02", "2027-01-05", 1), null),
+      "00919": etf(null, ev("2026-11-10", "2026-12-05", 1)) }),
+    us: US({ VOO: [{ ex_date: "2026-09-29", cash: 1.77 }] }), fxRows: FX, trades: [trade("2026-01-05", "tw", "00919", "買進", 10)] });
+  eq(r.items.map((x) => `${x.code}:${x.status}`), ["00919:paying", "0056:next", "00878:next", "VOO:usLast", "009816:none"]);
+});
+
+const row = (date, code, twd, source, n, kind = "配息") => ({ row: n, date, market: "us", code, kind, twd, source, exDate: "", inPool: true });
+test("recentDividends：只取配息、入帳日新到舊、同一天列號大的在前、最多 5 列；自動估算標 estimated", () => {
+  const rows = [row("2026-07-06", "VOO", 5, "錢包", 2), row("2026-10-05", "VOO", 5, "錢包", 3), row("2026-10-12", "", 3, "錢包", 4, "手續費折抵"),
+    row("2027-01-08", "00981A", 89, "自動估算", 5), row("2027-01-08", "0056", 100, "自動估算", 6), row("2026-12-30", "VOO", 5, "自動估算", 7),
+    row("2026-04-08", "0056", 10, "錢包", 8), row("2026-03-01", "0056", 9, "錢包", 9)];
+  const r = recentDividends(rows);
+  eq(r.map((x) => `${x.date} ${x.code}`), ["2027-01-08 0056", "2027-01-08 00981A", "2026-12-30 VOO", "2026-10-05 VOO", "2026-07-06 VOO"]);
+  eq(r.map((x) => x.estimated), [true, true, true, false, false]);
+  eq(r[0], { date: "2027-01-08", code: "0056", market: "us", twd: 100, source: "自動估算", exDate: "", inPool: true, estimated: true });
+  eq(recentDividends(rows, 2).length, 2);
+  eq(recentDividends([]), []);
+  eq(recentDividends(null), []);
+  eq(recentDividends([row("2026-10-12", "", 3, "錢包", 4, "手續費折抵")]), [], "只有手續費折抵就是空的");
+});
+
+test("autoStatusLine：上次檢查的月/日 時:分、新增幾筆、錯誤；舊版或沒設定不顯示；沒跑過另外寫", () => {
+  eq(autoStatusLine(undefined), null);
+  eq(autoStatusLine({ lastRun: "2026-11-18 09:12:03", added: 0, error: "" }), { kind: "ok", text: "上次自動檢查：11/18 09:12，沒有新增", error: "" });
+  eq(autoStatusLine({ lastRun: "2027-01-08 09:30:00", added: 2, error: "" }).text, "上次自動檢查：01/08 09:30，新增 2 筆");
+  const e = autoStatusLine({ lastRun: "2026-11-18 09:12:03", added: 0, error: "抓不到 market-data 的 dividends/us.json（HTTP 404）" });
+  eq([e.kind, e.text, e.error], ["error", "上次自動檢查：11/18 09:12", "抓不到 market-data 的 dividends/us.json（HTTP 404）"]);
+  eq(autoStatusLine(null).kind, "never");
+  eq(autoStatusLine({ lastRun: "", added: 0, error: "" }).text, "上次自動檢查：時間不明，沒有新增");
+});
+
+report();
+</script>
+</body>
+</html>

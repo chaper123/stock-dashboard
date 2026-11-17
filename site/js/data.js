@@ -331,6 +331,9 @@ export const loadDaily = (market, code) => once(`daily:${market}:${code}`, async
 // 證交所 MIS 盤中快照、盤中淨值、台指 VIX 已停用（2026-11，條款不允許程式下載後公開）；盤中價改用 js/fugle.js
 export const loadCalendar = () => once("calendar", () => fetchJson(md("calendar/calendar.json"), "行事曆"));
 export const loadDividends = () => once("dividends", () => fetchJson(md("dividends/tw_etf.json"), "ETF 配息"));
+// 美股配息：{ symbols: { VOO: { events: [{ ex_date, cash 每股美元稅前 }], last, ttm_cash, ttm_count } } }（Yahoo 沒有發放日與未來的除息日）。
+// 檔案不存在（market-data 還沒產出）或讀不到會丟 DataError，呼叫端當成沒有美股配息資料
+export const loadUsDividends = () => once("usDividends", () => fetchJson(md("dividends/us.json"), "美股配息"));
 export const loadTopics = () => once("topics", () => fetchJson(md("news/topics.json"), "新聞話題統計"));
 export const loadFearGreed = () => once("fg", () => fetchJson(md("sentiment/cnn_fear_greed.json"), "CNN 恐懼貪婪"));
 // 新聞標題（第一層，最近 72 小時，約 2 MB；GitHub 傳輸時會壓縮）。格式見 market-data README「新聞標題格式」
