@@ -4,6 +4,7 @@
 import { loadHoldings, loadDaily, loadFx, loadTrades } from "./data.js";
 import { fugleQuote, fugleUsable, quoteTime, FUGLE_NOTE } from "./fugle.js";
 import { taipeiToday, shortDate } from "./fmt.js";
+import { realizedPnl } from "./realized.js";
 
 async function twQuote(code) {
   const [qR, barsR] = await Promise.allSettled([fugleQuote(code), loadDaily("tw", code)]);
@@ -146,6 +147,14 @@ export async function loadPortfolio() {
     ...positions.filter((p) => p.error).map((p) => `${p.code} 價格`),
   ];
   return { positions, fx, totals, warnings, missing, complete: missing.length === 0, today: taipeiToday() };
+}
+
+// 已實現損益（docs/REALIZED_PNL.md）：讀交易紀錄（讀不到就丟例外，由呼叫端決定怎麼顯示）；美股沒有台幣金額時才用到匯率，
+// 匯率讀不到就當查不到（那一檔進 errors，其他檔照算）。持倉頁與總覽共用
+export async function loadRealized() {
+  const trades = await loadTrades();
+  const fxRows = trades.some((t) => t.market === "us") ? await loadFx().catch(() => []) : [];
+  return realizedPnl(trades, { refFx: (d) => fxOn(fxRows, d) });
 }
 
 // 含匯差的口徑說明（總覽與持倉共用）
