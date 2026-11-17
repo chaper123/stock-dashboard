@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>檢查後繼續補足</title></head>
+<body>
+<h1>本月紀律：檢查後繼續補足（site/js/discipline.js）</h1>
+<p>docs/PIVOT.md 第 12 節。和 tests/test_discipline.py 讀同一份資料（tests/fixtures/discipline_continue.json），所以網站與 engine/discipline.py 的結果要一樣：檢查月觸發後一直補、某月月底回到 ±5 內就停、停了之後到下次檢查月前不補、補過頭換另一檔偏低就停、檢查月沒觸發不補、缺收盤或股數照 80／20 並警告、現有的檢查月行為不變。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { discipline, planDay, lastCheckBefore, sharesOn, closeOn } from "/site/js/discipline.js";
+
+const { cases } = await (await fetch("/tests/fixtures/discipline_continue.json")).json();
+
+const run = (c) => {
+  const bars = c.bars && Object.fromEntries(Object.entries(c.bars).map(([code, rows]) => [code, rows.map(([time, close]) => ({ time, close }))]));
+  const trades = c.trades.map((t) => ({ date: t.date, market: "tw", code: t.code, side: t.side, shares: t.shares, price: 10, twd: t.shares == null || t.side !== "買進" ? null : t.shares * 10 }));
+  const positions = Object.entries(c.hold).map(([code, shares]) => {
+    const price = c.bars ? closeOn(bars[code], c.today) : c.price[code];
+    return { market: "tw", code, shares, price, mvTwd: shares * price };
+  });
+  return discipline({ trades, positions, today: c.today, bars });
+};
+
+cases.forEach((c, i) => test(`案例 ${i}：${c.name}`, () => {
+  const d = run(c), want = c.expect;
+  eq(d.plan.mode, want.mode === "rebalance" ? "rebalance" : "target");
+  eq([d.plan.continued, d.plan.since], [want.continued, want.since]);
+  eq(d.warnings, want.warnings);
+  if (want.mode === "rebalance") eq(d.plan.items, [[want.under, 3000]]);
+  else eq(d.plan.items, [["009816", 2400], ["00981A", 600]]);
+  if (want.continued) near(d.plan.devAtCheck, want.devCheck, 0.005);
+  if (want.noteHas) ok(d.plan.overBand, "不在檢查月但已超過門檻，要記下 overBand");
+}));
+
+test("計畫日：6 日、遇週末順延到下一個平日；最近一個在這個月之前的檢查月", () => {
+  eq([planDay("2026-12"), planDay("2026-11"), planDay("2029-10"), planDay("2027-02")], ["2026-12-07", "2026-11-06", "2029-10-08", "2027-02-08"]);
+  eq(["2026-11", "2027-01", "2027-03", "2027-05", "2027-09", "2027-10", "2027-04"].map(lastCheckBefore),
+    ["2026-10", "2026-10", "2026-10", "2027-04", "2027-04", "2027-04", "2026-10"]);
+});
+test("過去的股數：現在的股數減掉那天之後的買進、加回賣出；當天的買進算在當天；只看台股；讀不到股數回傳 null", () => {
+  const trades = [
+    { date: "2026-11-10", market: "tw", code: "A", side: "買進", shares: 30 },
+    { date: "2026-11-12", market: "tw", code: "A", side: "賣出", shares: 5 },
+    { date: "2026-11-12", market: "us", code: "A", side: "買進", shares: 99 },
+  ];
+  eq([sharesOn("A", "2026-11-09", 100, trades), sharesOn("A", "2026-11-10", 100, trades), sharesOn("A", "2026-11-12", 100, trades)], [75, 105, 100]);
+  eq(sharesOn("A", "2026-11-09", 100, [...trades, { date: "2026-11-11", market: "tw", code: "A", side: "買進", shares: null }]), null);
+  eq([closeOn([{ time: "2026-11-02", close: 10 }, { time: "2026-11-06", close: 11 }], "2026-11-05"), closeOn([{ time: "2026-11-02", close: 10 }], "2026-11-01")], [10, null]);
+});
+test("現有的行為不變：沒給日線、檢查月、一般月份、連續月數、已投入判定", () => {
+  const positions = [{ market: "tw", code: "009816", shares: 1000, mvTwd: 10000 }, { market: "tw", code: "00981A", shares: 100, mvTwd: 1000 }];
+  const buy = (date, code, twd) => ({ date, market: "tw", code, side: "買進", shares: 1, price: twd, twd });
+  const d = discipline({ trades: [buy("2026-11-06", "009816", 2800), buy("2026-12-07", "009816", 4600)], positions, today: "2026-12-10", dca: [{ ym: "2026-11", amount: 3000 }, { ym: "2026-12", amount: 5000 }] });
+  eq([d.deposit, d.investedMin, d.invested, d.done, d.streak], [5000, 4500, 4600, true, 2]);
+  eq([d.plan.mode, d.plan.overBand, d.plan.continued, d.warnings], ["target", true, false, []]);   // 沒給日線：不判斷補足、沒有警告
+  const c = discipline({ trades: [], positions, today: "2027-04-07" });
+  eq([c.plan.mode, c.plan.items, c.plan.continued], ["rebalance", [["00981A", 3000]], false]);   // 檢查月：照原本的規則
+  const ok1 = discipline({ trades: [], positions: [{ ...positions[0], mvTwd: 8000 }, { ...positions[1], mvTwd: 2000 }], today: "2026-11-10" });
+  eq([ok1.plan.mode, ok1.plan.overBand, ok1.weights.devPts], ["target", false, 0]);
+});
+
+report();
+</script>
+</body>
+</html>

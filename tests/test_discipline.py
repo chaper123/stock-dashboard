@@ -71,7 +71,8 @@ def test_ledger_october(data):
     assert o["holdings"]["00981A"]["value"] == round(101 * 27.87)
     assert o["ratio_pct"] == {"009816": 84.78, "00981A": 15.22} and o["deviation_pp"] == 4.78
     assert not o["needs_rebalance"] and o["underweight"] == "00981A" and o["is_check_month"]
-    assert o["plan"] == {"mode": "normal", "amounts": {"009816": 2400, "00981A": 600}, "note": "照 80／20"}
+    assert o["plan"] == {"mode": "normal", "amounts": {"009816": 2400, "00981A": 600}, "continued": False, "since": None,
+                         "note": "照 80／20"}
     assert o["bought_by_code"] == {"009816": 1269, "00981A": 2986}
     assert o["remaining_plan"] == {"009816": 1131, "00981A": 0}
     assert o["next_check"] == "2027-04-06" and o["streak_months"] == 1 and o["streak_list"] == ["2026-10"]
@@ -300,3 +301,69 @@ def test_reversal_with_blank_rows_keeps_row_numbers():
             trade("2026-11-06", "00981A", -5, 23.0, twd="-116") + ["", "0", "w-2", "沖銷第 4 列"]]    # 第 5 列
     tr = dp.trades({"values": [head] + rows})
     assert [t["twd"] for t in tr] == [949.0]
+
+
+# ── 檢查後繼續補足（docs/PIVOT.md 第 12 節）：和網站 tests/web/discipline.html 讀同一份資料 ──
+CONTINUE = json.loads((ENGINE.parent / "tests" / "fixtures" / "discipline_continue.json").read_text(encoding="utf-8"))["cases"]
+
+
+def continue_inputs(case):
+    holdings = hold(*case["hold"].items())
+    rows = [[t["date"], "台股", t["code"], t["side"], "" if t["shares"] is None else str(t["shares"]), "10", "TWD", "", "", "",
+             "" if t["shares"] is None else str(t["shares"] * 10), "是", "", ""] for t in case["trades"]]
+    d = dt.date.fromisoformat(case["today"])
+    hist = None if case["bars"] is None else {c: [tuple(r) for r in case["bars"][c]] for c in dp.CODES}
+    px = ({c: (float(v), "x") for c, v in case["price"].items()} if case["bars"] is None
+          else {c: (dp.close_on(hist[c], d), "x") for c in dp.CODES})
+    return holdings, {"values": [TRADE_HEAD] + rows}, d, px, hist
+
+
+@pytest.mark.parametrize("case", CONTINUE, ids=[f"{i}" for i in range(len(CONTINUE))])
+def test_continue_rebalance_cases(case):
+    holdings, trades_obj, d, px, hist = continue_inputs(case)
+    o = dp.compute(holdings, trades_obj, d, px, set(), None, hist)
+    want = case["expect"]
+    assert o["plan"]["mode"] == want["mode"], case["name"]
+    assert (o["plan"]["continued"], o["plan"]["since"]) == (want["continued"], want["since"]), case["name"]
+    assert o["warnings"] == want["warnings"], case["name"]
+    if want["mode"] == "rebalance":
+        assert o["plan"]["amounts"] == {c: (3000 if c == want["under"] else 0) for c in dp.CODES}
+    else:
+        assert o["plan"]["amounts"] == {"009816": 2400, "00981A": 600}
+    if want["continued"]:
+        assert f"繼續補：{want['since']} 檢查時偏離 {want['devCheck']:+.2f} 個百分點，之後還沒回到 ±5 內" in o["plan"]["note"]
+    if "noteHas" in want:
+        assert want["noteHas"] in o["plan"]["note"]
+
+
+def test_continue_helpers():
+    assert [dp.last_check_before(m) for m in ("2026-11", "2027-01", "2027-03", "2027-05", "2027-09", "2027-10", "2027-04")] \
+        == ["2026-10", "2026-10", "2026-10", "2027-04", "2027-04", "2027-04", "2026-10"]
+    hold_ = {"009816": 100.0, "00981A": 10.0}
+    tr = dp.trades({"values": [TRADE_HEAD, trade("2026-11-10", "009816", 30, 10, twd="300"),
+                               trade("2026-11-12", "009816", 5, 10, side="賣出", twd="50"),
+                               trade("2026-11-12", "VOO", 1, 10, market="美股", settle="10")]})
+    d = dt.date
+    assert dp.shares_on("009816", d(2026, 11, 9), hold_, tr) == 75          # 現在 100 − 買 30 ＋ 賣 5
+    assert dp.shares_on("009816", d(2026, 11, 10), hold_, tr) == 105        # 當天的買進算在當天收盤後
+    assert dp.shares_on("009816", d(2026, 11, 12), hold_, tr) == 100
+    assert dp.close_on([("2026-11-02", 10.0), ("2026-11-06", 11.0)], d(2026, 11, 5)) == 10.0
+    assert dp.close_on([("2026-11-02", 10.0)], d(2026, 11, 1)) is None
+
+
+def test_continue_cli_uses_history(tmp_path):
+    """--data 目錄的日線收盤歷史會餵給 compute()：命令列的結果跟直接呼叫一樣。"""
+    case = next(c for c in CONTINUE if c["name"].startswith("檢查月觸發後一直補"))
+    holdings, trades_obj, d, px, hist = continue_inputs(case)
+    for code in dp.CODES:
+        (tmp_path / f"tw_{code}_norm.csv").write_text("\n".join(f"{day},1,{c},{c},{c},{c}" for day, c in hist[code]) + "\n",
+                                                      encoding="utf-8")
+    (tmp_path / "calendar.json").write_text(json.dumps({"tw_market": {"closed": []}}), encoding="utf-8")
+    hf, tf = tmp_path / "h.json", tmp_path / "t.json"
+    hf.write_text(json.dumps(holdings, ensure_ascii=False), encoding="utf-8")
+    tf.write_text(json.dumps(trades_obj, ensure_ascii=False), encoding="utf-8")
+    p = subprocess.run([sys.executable, str(ENGINE / "discipline.py"), "--holdings", str(hf), "--trades", str(tf), "--data",
+                        str(tmp_path), "--today", case["today"], "--brief"], capture_output=True)
+    assert p.returncode == 0, p.stderr.decode("utf-8", "replace")
+    text = p.stdout.decode("utf-8")
+    assert "繼續補：2026-10 檢查時偏離 +13.75 個百分點，之後還沒回到 ±5 內，入金全部補 00981A" in text
