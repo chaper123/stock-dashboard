@@ -27,8 +27,8 @@
 3. **設計改版擱置**（使用者 2026-11-11 決定先功能、後美化；使用者沒提就不要主動提）：IMPROVE 的 D01～D08、R16、R17 跟著擱置。
    - 首頁示意在本機分支 `claude/fervent-merkle-1607ac`（工作目錄 `.claude/worktrees/fervent-merkle-1607ac`，cacbefe）與備份分支 `archive/design-preview-2026-11-10`，沒有 push、沒有合併。要看：在 `.claude/launch.json` 暫時加 `py -3.14 -m http.server 8766 --directory .claude/worktrees/fervent-merkle-1607ac/site`，開 `/preview-home.html`。
    - 重啟時照使用者的意見改：六個範本都要實際開來看（上次 Ledgely、Zapline、Fundora 沒開），互動當成重點（上次沒有跳數字、沒有背景動畫，使用者覺得只比現在好一點）。
-4. **檢查後繼續補足**（使用者 2026-11-17 決定照 PIVOT 原文：檢查月觸發後一直補，回到 ±5 內就停）：規格在 [PIVOT.md](PIVOT.md) 第 12 節，交給「網站實作」做（網站與 `engine/discipline.py`）；晨報要等下次改提示詞換 engine 釘選才會用到，2027/04 前換好。
-5. **資金頁「總資產走勢」**（使用者 2026-11-17：PLAN 的 Phase 3、5、6 結案，只加做這張）：規格在 [ASSET_TREND.md](ASSET_TREND.md)，交給「網站實作」做。
+4. **檢查後繼續補足**（使用者 2026-11-17 決定照 PIVOT 原文：檢查月觸發後一直補，回到 ±5 內就停）：規格在 [PIVOT.md](PIVOT.md) 第 12 節，「網站實作」做完並經主 session 審查（分支 `claude/funds-fire-30y-122524`，eb83027、0876bf0，還沒合併）；晨報要等下次改提示詞換 engine 釘選才會用到，2027/04 前換好。
+5. **資金頁「總資產走勢」**（使用者 2026-11-17：PLAN 的 Phase 3、5、6 結案，只加做這張）：規格在 [ASSET_TREND.md](ASSET_TREND.md)，「網站實作」做完並經主 session 審查（同一分支 e17ac11、83385db，還沒合併）；等使用者說「部署」跟第 4 項一起上線。
 6. 較小、不急：
    - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：等 Sonnet 測試有結論、新聞排程穩定再做。
 

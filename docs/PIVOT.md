@@ -171,3 +171,8 @@
 - `tests/test_discipline.py` 補測試，網站另外加 `tests/web/discipline.html`，兩邊用同一組自己做的資料（股數、交易、收盤）：檢查月觸發後下個月繼續補；某月月底回到 ±5 內之後照 80／20；停了之後又偏出去，到下次檢查月前都不補；補過頭換另一檔偏低就停；檢查月沒觸發、之後偏出去不補；缺收盤時照 80／20 並有警告；現有的檢查月行為不變。
 - 既有測試全過（`py -3.14 -m pytest`、`tests/web/*.html`）；golden 只在新增欄位時更新，並說明改了什麼。
 - 本機預覽總覽頁「本月紀律」卡：現在不在補足中，畫面跟改之前一樣，console 沒有錯誤。
+
+### 進度（第 12 節）
+
+- 2026-11-17「網站實作」做完（分支 `claude/funds-fire-30y-122524`：eb83027、0876bf0，還沒合併）：Python 與網站用同一份 `tests/fixtures/discipline_continue.json`（16 個案例），`tests/web/discipline.html`；pytest 301 項全過（主 session 在分支上重跑確認）。現在偏離 +4.91，本月紀律跟改之前一樣。晨報要等 engine 釘選換新才會用到。
+
