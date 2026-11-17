@@ -1,7 +1,7 @@
 // K 線：日 K、均線（美股 MA50／MA200、台股 MA20／MA60）、交易紀錄的成交標記；副圖一次一種（成交量、MACD、DMI、乖離率、RSI，
 // 預設收起），圖下有技術面白話描述。KDJ 2026-11-07 拿掉（使用者：太敏感）。
 // 一次顯示一檔，上方切換；Lightweight Charts 只在這頁才載入。2026-10-30 轉型後拿掉買區色帶（PIVOT 第 7 節）。
-import { loadDaily, loadTrades, loadIndex, DataError } from "../data.js";
+import { loadDaily, loadTrades, loadIndex } from "../data.js";
 import { fugleQuote, fugleUsable, fugleClosed, fugleBar, quoteTime, FUGLE_NOTE } from "../fugle.js";
 import { loadPerformance, attribution } from "../perf.js";
 import { el, price, shares, pct, twd, tone, shortDate } from "../fmt.js";
@@ -9,29 +9,9 @@ import { sma, rsi14, macd, dmi, bias, volAvg, fmtVol, describe } from "../ta.js"
 import { slot, card, pageHeader, notice } from "../ui.js";
 import { MA, NAMES, MARKET_LABEL, TRACK } from "../config.js";
 import { loadStatus, statusLine } from "../status.js";
+import { loadLW } from "../lw.js";
 
-const LW_URL = "https://cdn.jsdelivr.net/npm/lightweight-charts@5.2.1/dist/lightweight-charts.standalone.production.js";
-const LW_SRI = "sha384-KkYqTZlM13Zya6fVUF3IGCBOQ1ehFeJVVgxaVvD/0MebineF9EI8Jkd3NnWNChqN";
 const VISIBLE_BARS = 130; // 預設顯示約半年，均線用全部資料算
-
-let lwPromise = null;
-function loadLW() {
-  if (window.LightweightCharts) return Promise.resolve(window.LightweightCharts);
-  lwPromise ??= new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = LW_URL;
-    s.integrity = LW_SRI;
-    s.crossOrigin = "anonymous";
-    s.onload = () => resolve(window.LightweightCharts);
-    s.onerror = () => {
-      lwPromise = null;
-      s.remove();
-      reject(new DataError("K 線圖函式庫", "載入失敗（可能離線或 CDN 被擋）"));
-    };
-    document.head.append(s);
-  });
-  return lwPromise;
-}
 
 export async function render(root, { arg, alive }) {
   root.append(pageHeader("K 線", "組合對大盤，以及各標的日 K＋均線（箭頭是交易紀錄的成交；副圖可以選成交量、MACD、DMI、乖離率、RSI）。"));

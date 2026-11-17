@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>資產頁的計算</title></head>
+<body>
+<h1>資產頁的計算（site/js/assets.js）</h1>
+<p>docs/ASSETS_PAGE.md 第 3 節的驗收：六種期間起點；每日損益（含投入、股利的日子）；累計損益從期間起點歸 0、期間內每日損益加總等於累計損益；比較線換算成期間起點 0%、含股利與不含股利；個股表現的三種報酬；日曆的週合計、週與月報酬率連乘、休市留空、跨月的週。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { PERIODS, periodLabel, periodStart, dailyPnl, daysFrom, periodPnl } from "/site/js/assets.js";
+
+// ── 期間 ──
+test("六種期間：一週、一月、一季、年初至今、一年、全部，預設全部在最後", () => {
+  eq(PERIODS.map(([k]) => k), ["1w", "1m", "3m", "ytd", "1y", "all"]);
+  eq(PERIODS.map(([, t]) => t), ["一週", "一月", "一季", "年初至今", "一年", "全部"]);
+  eq(periodLabel("ytd"), "年初至今");
+});
+test("期間起點：從最後一個交易日往前推；比第一筆買進早就從第一筆買進開始", () => {
+  const first = "2026-04-08", last = "2026-11-16";
+  eq(periodStart("1w", first, last), "2026-11-09");
+  eq(periodStart("1m", first, last), "2026-10-16");
+  eq(periodStart("3m", first, last), "2026-08-16");
+  eq(periodStart("ytd", first, last), first);        // 2026-01-01 比第一筆買進早
+  eq(periodStart("1y", first, last), first);         // 2025-11-16 比第一筆買進早
+  eq(periodStart("all", first, last), first);
+  // 資料夠長的時候：年初至今是當年 1/1、一年是去年同一天
+  eq(periodStart("ytd", "2020-01-01", last), "2026-01-01");
+  eq(periodStart("1y", "2020-01-01", last), "2025-11-16");
+  eq(periodStart("3m", "2020-01-01", last), "2026-08-16");
+});
+test("期間起點：月底不夠的月份取當月最後一天；跨年；閏年", () => {
+  eq(periodStart("1m", "2020-01-01", "2026-03-31"), "2026-02-28");
+  eq(periodStart("1m", "2020-01-01", "2028-03-31"), "2028-02-29");
+  eq(periodStart("3m", "2020-01-01", "2026-05-31"), "2026-02-28");
+  eq(periodStart("1m", "2020-01-01", "2026-01-15"), "2025-12-15");
+  eq(periodStart("1w", "2020-01-01", "2026-01-03"), "2025-12-27");
+  eq(periodStart("1y", "2020-01-01", "2028-02-29"), "2027-02-28");
+});
+
+// ── 每日損益、累計損益 ──
+// 第 0 天買進 996（成交價到收盤價差 +3），第 2 天再買 500，第 3 天除息 10，第 4 天賣出 200；index 照 perf.js 的口徑逐日連乘
+const raw = [["2026-04-08", 999, 996, 0], ["2026-04-09", 1010, 0, 0], ["2026-04-10", 1500, 500, 0], ["2026-04-13", 1490, 0, 10], ["2026-04-14", 1300, -200, 0], ["2026-04-15", 1330, 0, 0]];
+let idx = 1, prevV = null;
+const days = raw.map(([date, value, flow, div]) => {
+  if (prevV != null) idx *= (value - flow + div) / prevV;
+  prevV = value;
+  return { date, value, flow, div, invested: 0, index: idx, hv: {}, px: {} };
+});
+const sum = (xs) => xs.reduce((a, x) => a + x, 0);
+
+test("每日損益：市值變化 − 當天投入（賣出算負的）＋ 當天股利；第一天是市值 − 投入", () => {
+  const p = dailyPnl(days);
+  eq(p.map((x) => x.pnl), [3, 11, -10, 0, 10, 30]);
+  eq(p.map((x) => x.date), raw.map((r) => r[0]));
+  // 買進的那天（第 2 天）：市值多了 490，其中 500 是自己投入的，所以損益是 −10；除息那天股利算進損益
+  eq([p[2].pnl, p[3].pnl], [-10, 0]);
+});
+test("每日報酬率＝時間加權指數的單日變化（index(d) ÷ index(d−1) − 1），第一天沒有", () => {
+  const p = dailyPnl(days);
+  eq(p[0].ret, null);
+  near(p[1].ret, 1010 / 999 - 1, 1e-12);
+  near(p[2].ret, 1000 / 1010 - 1, 1e-12);       // 當天買進的 500 不算報酬
+  near(p[3].ret, 1500 / 1500 - 1, 1e-12);       // 股利補回市值的下跌
+  near(p[4].ret, 1500 / 1490 - 1, 1e-12);       // 賣出的 200 不算虧損
+  near(p[5].ret, 1330 / 1300 - 1, 1e-12);
+  near(days.at(-1).index, p.reduce((x, r) => x * (1 + (r.ret ?? 0)), 1), 1e-12);
+});
+test("累計損益：選全部時從第一天的損益開始累加，最後一天＝最新市值 − 累計投入 ＋ 已領股利", () => {
+  const rows = periodPnl(days, "2026-04-08");
+  eq(rows.map((r) => r.cum), [3, 14, 4, 4, 14, 44]);
+  eq(rows.map((r) => r.pnl), [3, 11, -10, 0, 10, 30]);
+  eq(rows[0].ret, null);
+  const invested = sum(days.map((d) => d.flow)), divs = sum(days.map((d) => d.div));
+  eq(rows.at(-1).cum, days.at(-1).value - invested + divs);
+  eq(rows.at(-1).cum, sum(rows.map((r) => r.pnl)));
+});
+test("累計損益：其他期間的第一天歸 0，期間內每日損益加總＝累計損益＝期間末市值 − 期間初市值 − 之後的投入 ＋ 之後的股利", () => {
+  const rows = periodPnl(days, "2026-04-10");
+  eq(rows.map((r) => r.date), ["2026-04-10", "2026-04-13", "2026-04-14", "2026-04-15"]);
+  eq(rows.map((r) => r.cum), [0, 0, 10, 40]);
+  eq(rows.map((r) => r.pnl), [null, 0, 10, 30]);        // 第一天自己的損益（−10）算在期間之前
+  eq(rows.at(-1).cum, sum(rows.map((r) => r.pnl ?? 0)));
+  const after = days.filter((d) => d.date > "2026-04-10");
+  eq(rows.at(-1).cum, 1330 - 1500 - sum(after.map((d) => d.flow)) + sum(after.map((d) => d.div)));
+  // 只有一天的期間：累計 0
+  const one = periodPnl(days, "2026-04-15");
+  eq(one.map((r) => [r.date, r.pnl, r.cum]), [["2026-04-15", null, 0]]);
+});
+test("期間起點不是交易日：從下一個交易日開始；起點在最後一天之後沒有資料", () => {
+  const rows = periodPnl(days, "2026-04-11");          // 週六
+  eq(rows[0].date, "2026-04-13");
+  eq(rows.map((r) => r.cum), [0, 10, 40]);
+  eq(periodPnl(days, "2026-04-16"), []);
+  eq(daysFrom(days, "2026-04-13").length, 3);
+  eq(daysFrom(days, "2026-04-16"), []);
+});
+test("期間內沒有投入也沒有股利：累計損益就是市值的變化", () => {
+  const flat = ["2026-05-04", "2026-05-05", "2026-05-06"].map((date, i) => ({ date, value: [1000, 1100, 1050][i], flow: 0, div: 0, invested: 1000, index: [1, 1.1, 1.05][i], hv: {}, px: {} }));
+  eq(periodPnl(flat, "2026-05-05").map((r) => r.cum), [0, -50]);
+});
+
+report();
+</script>
+</body>
+</html>

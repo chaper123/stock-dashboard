@@ -2,13 +2,45 @@
 // 個股表現、報酬日曆）。實際紀錄，不是試算；試算在「試算」頁。數字都在瀏覽器用帳本與 market-data 算。
 import { loadSettings, loadTrades, loadDca } from "../data.js";
 import { cashTable, nextDeposit, depositNote } from "../cash.js";
-import { el, twd, int, isNum, taipeiToday } from "../fmt.js";
+import { loadPerformance } from "../perf.js";
+import { PERIODS, periodStart, daysFrom } from "../assets.js";
+import { el, twd, int, isNum, taipeiToday, shortDate } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
 import { NAMES } from "../config.js";
+import { trendCard, pnlCard } from "./assets_charts.js";
 
-export async function render(root) {
-  root.append(pageHeader("資產", "帳本裡現金的來去，以及實際的資產變化。這一頁是實際紀錄；試算（撲滿、20 年後、財富自由）在「試算」頁。"));
+export async function render(root, { alive }) {
+  root.append(pageHeader("資產", "帳本裡現金的來去，以及實際的資產變化（走勢、損益）。這一頁是實際紀錄；試算（撲滿、20 年後、財富自由）在「試算」頁。"));
   slot(root, cashCard);
+  root.append(el("h2", { class: "date-head" }, "資產變化"));
+  // 一整塊資產變化共用一排期間選擇：換期間時，各卡登記的函式會被呼叫（重新設定資料與可見範圍）
+  const subs = [];
+  const ctx = { period: "all", alive, onChange: (fn) => subs.push(fn), set(k) { ctx.period = k; for (const f of subs) f(); } };
+  slot(root, () => periodBar(ctx));
+  slot(root, () => trendCard(ctx));
+  slot(root, () => pnlCard(ctx));
+}
+
+// 期間選擇：一週、一月、一季、年初至今、一年、全部（預設全部）。起點比第一筆買進早就從第一筆買進開始
+async function periodBar(ctx) {
+  const perf = await loadPerformance();
+  const text = el("span", { class: "tiny" });
+  const range = () => {
+    const base = daysFrom(perf.days, periodStart(ctx.period, perf.first, perf.last))[0]?.date;
+    text.textContent = base ? `期間：${base.replaceAll("-", "/")}～${perf.last.replaceAll("-", "/")}（從期間第一個交易日的收盤算起）` : "";
+  };
+  const chips = el("div", { class: "chips", role: "group", "aria-label": "資產變化的期間", style: { margin: "0 0 4px" } });
+  for (const [k, label] of PERIODS) {
+    const b = el("button", { class: "chip", type: "button", "aria-pressed": String(k === ctx.period) }, label);
+    b.addEventListener("click", () => {
+      for (const x of chips.children) x.setAttribute("aria-pressed", String(x === b));
+      ctx.set(k);
+      range();
+    });
+    chips.append(b);
+  }
+  range();
+  return el("section", { class: "card" }, chips, text);
 }
 
 // ── 現金與投入（R18）──
