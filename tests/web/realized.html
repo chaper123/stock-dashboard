@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>已實現損益</title></head>
+<body>
+<h1>已實現損益（site/js/realized.js）</h1>
+<p>docs/REALIZED_PNL.md 第 6 節的驗收：帳本要補的四列（00679B −15、00735 +190、合計 +175）；部分賣出與賣光；賣光後再買重新開始一段持有；台股缺金額用股數×成交價估算；超賣只讓那一檔進錯誤；美股實際匯率、參考匯率、查不到匯率；同一天先買後賣；剩餘部位的成本等於 twdCostBasis；沒有賣出。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { realizedPnl } from "/site/js/realized.js";
+import { twdCostBasis } from "/site/js/portfolio.js";
+
+// 一筆台股交易；只填有的欄位，其餘照 loadTrades 的樣子是 null
+let seq = 0;
+const T = (date, code, side, shares, price, o = {}) => ({
+  row: ++seq, date, market: "tw", code, side, shares, price, twd: null, settle: null, fx: null, fee: 0, tax: 0, ...o,
+});
+const U = (date, code, side, shares, price, o = {}) => T(date, code, side, shares, price, { market: "us", ...o });
+
+// ── 1. 帳本要補的四列 ──
+const FOUR = () => [
+  T("2026-04-14", "00679B", "買進", 22, 27.21, { fee: 1, settle: 599, twd: 599 }),
+  T("2026-05-13", "00679B", "賣出", 22, 26.62, { fee: 1, settle: 584, twd: 584 }),
+  T("2026-07-16", "00735", "買進", 30, 100.8, { fee: 1, settle: 3025, twd: 3025 }),
+  T("2026-09-09", "00735", "賣出", 30, 107.3, { fee: 1, tax: 3, settle: 3215, twd: 3215 }),
+];
+test("1. 帳本補上的四列：00679B −15（−2.50%、29 天）、00735 +190（+6.28%、55 天）", () => {
+  const r = realizedPnl(FOUR());
+  eq(r.errors, []);
+  eq(r.rows.length, 2);
+  const [b, a] = r.rows; // 新到舊：00735（9/09）在前
+  eq([b.code, a.code], ["00735", "00679B"]);
+  eq([b.since, b.days, b.proceeds, b.cost, b.pnl], ["2026-07-16", 55, 3215, 3025, 190]);
+  near(b.pct, 6.28, 0.005);
+  eq([a.since, a.days, a.proceeds, a.cost, a.pnl], ["2026-04-14", 29, 584, 599, -15]);
+  near(a.pct, -2.50, 0.005);
+  eq([a.closed, b.closed, a.est, b.est, a.ref, b.ref], [true, true, false, false, false, false]);
+});
+test("1. 四列合計：損益 +175、成本 3,624、拿回 3,799、+4.83%；兩檔都賣光所以沒有剩餘部位", () => {
+  const r = realizedPnl(FOUR());
+  eq([r.total, r.cost, r.proceeds], [175, 3624, 3799]);
+  near(r.pct, 4.83, 0.005);
+  eq([r.est, r.ref], [false, false]);
+  eq(r.open, {});
+});
+
+// ── 2. 部分賣出 ──
+test("2. 部分賣出：賣出成本照平均成本，剩下的沿用；再賣完損益與 closed", () => {
+  const r = realizedPnl([
+    T("2026-01-02", "X", "買進", 100, 10, { twd: 1001 }),
+    T("2026-01-03", "X", "買進", 100, 12, { twd: 1201 }),
+    T("2026-01-10", "X", "賣出", 50, 13, { twd: 648 }),
+  ]);
+  eq(r.rows.length, 1);
+  near(r.rows[0].cost, 550.5, 1e-9);
+  near(r.rows[0].pnl, 97.5, 1e-9);
+  eq([r.rows[0].closed, r.rows[0].shares, r.rows[0].since], [false, 50, "2026-01-02"]);
+  near(r.open["tw:X"].cost, 1651.5, 1e-9);
+  eq(r.open["tw:X"].shares, 150);
+  const r2 = realizedPnl([
+    T("2026-01-02", "X", "買進", 100, 10, { twd: 1001 }),
+    T("2026-01-03", "X", "買進", 100, 12, { twd: 1201 }),
+    T("2026-01-10", "X", "賣出", 50, 13, { twd: 648 }),
+    T("2026-01-20", "X", "賣出", 150, 9, { twd: 1348 }),
+  ]);
+  eq(r2.rows.length, 2);
+  const [last, first] = r2.rows;
+  near(last.cost, 1651.5, 1e-9);
+  near(last.pnl, -303.5, 1e-9);
+  eq([last.closed, first.closed, last.since], [true, false, "2026-01-02"]);
+  near(r2.total, 97.5 - 303.5, 1e-9);
+  eq(r2.open, {});
+});
+
+// ── 3. 賣完後再買 ──
+test("3. 賣完後再買：since 換成新的買進日、est 重新算", () => {
+  const r = realizedPnl([
+    T("2026-02-02", "Y", "買進", 10, 10), // 估算（twd、settle 都空白）：10×10 = 100
+    T("2026-02-10", "Y", "賣出", 10, 12, { twd: 118 }),
+    T("2026-03-02", "Y", "買進", 20, 10, { twd: 205 }),
+    T("2026-03-09", "Y", "賣出", 5, 11, { twd: 55 }),
+  ]);
+  eq(r.errors, []);
+  const [second, first] = r.rows;
+  eq([first.since, first.est, first.pnl, first.closed], ["2026-02-02", true, 18, true]);
+  eq([second.since, second.est, second.closed, second.days], ["2026-03-02", false, false, 7]);
+  near(second.cost, 51.25, 1e-9); // 205 × 5 ÷ 20
+  near(second.pnl, 3.75, 1e-9);
+  eq(r.est, true);
+});
+
+// ── 4. 台股缺金額：估算 ──
+test("4. 台股 twd、settle 都空白：買進＝股數×成交價＋手續費、賣出＝股數×成交價－手續費－交易稅，est 為 true", () => {
+  const r = realizedPnl([
+    T("2026-04-01", "Z", "買進", 100, 20, { fee: 5 }),
+    T("2026-04-20", "Z", "賣出", 100, 22, { fee: 6, tax: 7 }),
+  ]);
+  eq(r.rows.length, 1);
+  eq([r.rows[0].cost, r.rows[0].proceeds, r.rows[0].pnl, r.rows[0].est], [2005, 2187, 182, true]);
+  eq(r.est, true);
+});
+test("4. 買進有金額、只有賣出缺：est 也要標（賣出本身用了估算）", () => {
+  const r = realizedPnl([
+    T("2026-04-01", "Z", "買進", 100, 20, { settle: 2005 }),
+    T("2026-04-20", "Z", "賣出", 100, 22, { fee: 6, tax: 7 }),
+  ]);
+  eq(r.rows[0].est, true);
+  const r2 = realizedPnl([
+    T("2026-04-01", "Z", "買進", 100, 20, { settle: 2005 }),
+    T("2026-04-20", "Z", "賣出", 100, 22, { settle: 2187 }),
+  ]);
+  eq(r2.rows[0].est, false);
+});
+test("4. twd 優先於 settle", () => {
+  const r = realizedPnl([
+    T("2026-04-01", "Z", "買進", 1, 100, { twd: 100, settle: 999 }),
+    T("2026-04-02", "Z", "賣出", 1, 110, { twd: 108, settle: 999 }),
+  ]);
+  eq([r.rows[0].cost, r.rows[0].proceeds], [100, 108]);
+});
+
+// ── 5. 超賣 ──
+test("5. 超賣：只有那一檔進 errors（不算進合計），其他檔照算，不丟例外", () => {
+  const r = realizedPnl([
+    T("2026-05-01", "A", "買進", 10, 10, { twd: 100 }),
+    T("2026-05-02", "A", "賣出", 20, 11, { twd: 220 }), // 超賣
+    T("2026-05-01", "B", "買進", 10, 10, { twd: 100 }),
+    T("2026-05-05", "B", "賣出", 10, 12, { twd: 120 }),
+  ]);
+  eq(r.errors.length, 1);
+  eq(r.errors[0].code, "A");
+  eq(r.errors[0].message, "05/02 賣出 20 股超過當時持有的 10 股");
+  eq(r.rows.map((x) => x.code), ["B"]);
+  eq([r.total, r.cost], [20, 100]);
+  ok(!("tw:A" in r.open), "出錯的那一檔不列在 open");
+});
+test("5. 一開始就賣（還沒買過）也是超賣", () => {
+  const r = realizedPnl([T("2026-05-02", "A", "賣出", 1, 11, { twd: 11 })]);
+  eq(r.errors.map((e) => e.message), ["05/02 賣出 1 股超過當時持有的 0 股"]);
+  eq(r.rows, []);
+});
+
+// ── 6. 美股 ──
+const FX = (d) => (d >= "2026-06-01" ? 31 : 30);
+test("6. 美股：有 twd 用 twd；有成交匯率用 settle × fx；都是實際（ref 不標）", () => {
+  const r = realizedPnl([
+    U("2026-06-02", "V", "買進", 10, 100, { settle: 1000, twd: 31200 }),
+    U("2026-06-03", "V", "買進", 10, 100, { settle: 1000, fx: 31.5 }),     // 31,500
+    U("2026-06-10", "V", "賣出", 10, 110, { settle: 1100, fx: 32 }),       // 35,200；成本 (31200+31500)/2
+  ], { refFx: FX });
+  eq(r.errors, []);
+  eq([r.rows[0].proceeds, r.rows[0].ref], [35200, false]);
+  near(r.rows[0].cost, 31350, 1e-9);
+  near(r.rows[0].pnl, 3850, 1e-9);
+});
+test("6. 美股只有 refFx：用買進、賣出當天的參考匯率，標 ref", () => {
+  const r = realizedPnl([
+    U("2026-05-20", "V", "買進", 10, 100, { settle: 1000 }),   // 30 × 1000
+    U("2026-06-10", "V", "賣出", 10, 110, { settle: 1100 }),   // 31 × 1100
+  ], { refFx: FX });
+  eq(r.errors, []);
+  eq([r.rows[0].cost, r.rows[0].proceeds, r.rows[0].ref], [30000, 34100, true]);
+  eq(r.ref, true);
+});
+test("6. 美股連 refFx 都沒有：這一檔進 errors，台股那一檔照算", () => {
+  const r = realizedPnl([
+    U("2026-05-20", "V", "買進", 10, 100, { settle: 1000 }),
+    U("2026-06-10", "V", "賣出", 10, 110, { settle: 1100 }),
+    T("2026-05-20", "A", "買進", 1, 10, { twd: 10 }),
+    T("2026-06-10", "A", "賣出", 1, 12, { twd: 12 }),
+  ], { refFx: () => null });
+  eq(r.errors.length, 1);
+  eq(r.errors[0].code, "V");
+  eq(r.errors[0].message, "05/20 的買進沒有台幣金額，也查不到當天匯率");
+  eq(r.rows.map((x) => x.code), ["A"]);
+  const r2 = realizedPnl([U("2026-05-20", "V", "買進", 1, 100, { settle: 100 }), U("2026-06-10", "V", "賣出", 1, 110, { settle: 110 })]); // 沒給 refFx
+  eq(r2.errors.length, 1);
+});
+
+// ── 7. 同一天先買後賣 ──
+test("7. 同一天先買後賣：依帳本列號，不依陣列順序", () => {
+  const sell = T("2026-07-01", "S", "賣出", 10, 12, { twd: 120, row: 21 });
+  const buy = T("2026-07-01", "S", "買進", 10, 10, { twd: 100, row: 20 });
+  const r = realizedPnl([sell, buy]); // 賣在前面
+  eq(r.errors, []);
+  eq([r.rows[0].pnl, r.rows[0].days, r.rows[0].closed], [20, 0, true]);
+  // 列號反過來（先賣後買）才是超賣
+  const r2 = realizedPnl([T("2026-07-01", "S", "買進", 10, 10, { twd: 100, row: 31 }), T("2026-07-01", "S", "賣出", 10, 12, { twd: 120, row: 30 })]);
+  eq(r2.errors.length, 1);
+});
+
+// ── 8. 剩餘部位的成本等於 twdCostBasis ──
+test("8. 美股部分賣出後，open 的成本等於 twdCostBasis(...).cost（含參考匯率與實際混合）", () => {
+  const us = [
+    U("2026-05-20", "V", "買進", 10, 100, { settle: 1000 }),                       // 參考：30,000
+    U("2026-06-02", "V", "買進", 6, 100, { settle: 600, twd: 18600 }),             // 實際
+    U("2026-06-03", "V", "買進", 4, 100, { settle: 400, fx: 31.5 }),               // 12,600
+    U("2026-06-10", "V", "賣出", 7, 110, { settle: 770, fx: 32 }),
+    U("2026-06-15", "V", "賣出", 3, 111, { settle: 333, twd: 10500 }),
+  ];
+  const r = realizedPnl(us, { refFx: FX });
+  const b = twdCostBasis(us, FX);
+  eq(r.errors, []);
+  near(r.open["us:V"].cost, b.cost, 1e-6);
+  eq(r.open["us:V"].shares, b.shares);
+  eq(r.open["us:V"].shares, 10);
+});
+test("8. 全部賣光後再買：open 只有新那一段，也等於 twdCostBasis", () => {
+  const us = [
+    U("2026-05-20", "V", "買進", 5, 100, { settle: 500, twd: 15000 }),
+    U("2026-05-25", "V", "賣出", 5, 100, { settle: 500, twd: 15200 }),
+    U("2026-06-02", "V", "買進", 2, 100, { settle: 200, twd: 6100 }),
+  ];
+  const r = realizedPnl(us, { refFx: FX });
+  const b = twdCostBasis(us, FX);
+  near(r.open["us:V"].cost, b.cost, 1e-6);
+  eq(r.open["us:V"].cost, 6100);
+});
+
+// ── 9. 沒有任何賣出 ──
+test("9. 沒有任何賣出：rows 空、total 0、pct null；沒有交易也一樣", () => {
+  const r = realizedPnl([T("2026-08-01", "N", "買進", 10, 10, { twd: 100 })]);
+  eq([r.rows, r.total, r.cost, r.pct, r.errors], [[], 0, 0, null, []]);
+  eq(r.open["tw:N"], { shares: 10, cost: 100 });
+  const e = realizedPnl([]);
+  eq([e.rows, e.total, e.pct], [[], 0, null]);
+  const n = realizedPnl(null);
+  eq(n.rows, []);
+});
+test("9. 股數是 0 或不是買賣的列不算（例如配息、調整）", () => {
+  const r = realizedPnl([
+    T("2026-08-01", "N", "買進", 10, 10, { twd: 100 }),
+    T("2026-08-02", "N", "賣出", 0, 10, { twd: 0 }),
+    T("2026-08-03", "N", "調整", 5, 10),
+  ]);
+  eq([r.rows, r.errors], [[], []]);
+});
+
+report();
+</script>
+</body>
+</html>
