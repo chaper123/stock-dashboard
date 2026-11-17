@@ -6,7 +6,9 @@
 //   - reverse：沖銷一筆記錯的台股成交（加一列數字相反的沖銷列，原列只標記），持倉照規則回推
 //   - status：用請求編號查寫入結果（不寫交易；會順便恢復中斷的請求）
 //   - reconcile：對帳（只讀），規則見 docs/LEDGER_CONSISTENCY.md 2.6
-//   - ping：測試連線，不寫入
+//   - ping：測試連線，不寫入（回應帶 autoDividends：上次自動記配息的時間、新增列數、錯誤）
+//   - autoDividends()：不是網頁動作，是每天由時間觸發器跑的函式（installDividendTrigger() 建立）：
+//     用 market-data 的配息資料 × 除息前的持股，在「其他入帳」分頁自動加一列估算的配息（只新增，絕不改或刪既有的列）
 // 寫入密鑰只放在這個專案的指令碼屬性 WRITE_KEY：不放試算表（帳本是公開發布的），也不進 git。
 // 日期一律用台北時間；寫進儲存格時用試算表序號，不受指令碼時區影響。
 //
@@ -27,10 +29,20 @@ const HOLD_COLS = ["市場", "代號", "名稱", "股數", "總成本", "幣別"
 const DCA_COLS = ["生效月份", "每月定投", "設定日期", "備註"];
 const LOG_COLS = ["請求編號", "動作", "內容雜湊", "狀態", "收到時間", "完成時間", "交易紀錄列", "代號",
   "持倉改前", "持倉改後", "請求內容", "回應", "說明"];
+const SHEET_INCOME = "其他入帳";
+const INCOME_COLS = ["入帳日", "市場", "代號", "類型", "原幣金額", "幣別", "台幣金額", "計入資金池", "來源", "備註", "除息日"];
+// 每天自動記配息（docs/AUTO_DIVIDENDS.md）
+const AUTO_DIV_START = "2026-11-18";   // 除息日在這天（含）以後的才自動記；以前的由使用者手動記
+const MARKET_DATA = "https://raw.githubusercontent.com/chaper123/market-data/main/data/";
+const US_PAY_DELAY_DAYS = 7;           // Yahoo 沒有發放日：入帳日＝除息日＋7 天
+const US_KEEP = 0.7;                   // 美股配息扣 30% 預扣稅
+const AUTO_SOURCE = "自動估算";
+const AUTO_STATUS_PROP = "AUTO_DIV_STATUS";
+const AUTO_HANDLER = "autoDividends";
 const ACTIONS = { addTrade: "新增交易", setMonthly: "改定投", reverse: "沖銷" };
 const ST = { RUN: "處理中", DONE: "完成", NONE: "未寫入", CHECK: "需要對帳", MANUAL: "已人工處理" };
 const NO_ROW = "（沒有這列）";
-const VERSION = "2026-11-B"; // 測試連線會回報；網站用它判斷 Apps Script 有沒有查詢、沖銷、對帳
+const VERSION = "2026-11-B"; // 測試連線會回報；網站用它判斷 Apps Script 有沒有查詢、沖銷、對帳。自動記配息不改版本字串（live_check.js 認這個），有沒有看 ping 的 autoDividends 欄位
 const SOURCE = "網站輸入";
 const MAX_FAILS = 10;        // 密鑰錯 10 次就暫停 10 分鐘
 const FAIL_WINDOW_S = 600;
@@ -91,6 +103,7 @@ function doPost(e) {
     else if (action === "reverse") out = reverse_(data, null);
     else throw new UserError("不支援的動作");
     if (out.ok === undefined) out.ok = true;
+    if (action === "ping" || action === "status") out.autoDividends = autoStatus_(); // 網站拿來顯示「上次自動檢查」
     return json_(out);
   } catch (err) {
     if (err instanceof UserError) return json_({ ok: false, error: err.message });
@@ -557,6 +570,220 @@ function reconcile_() {
   return { checks, us, basis: set.basis, at: nowText_(), ledger: SpreadsheetApp.getActiveSpreadsheet().getName() };
 }
 
+// ── 每天自動記配息（docs/AUTO_DIVIDENDS.md） ─────────────────
+
+// 時間觸發器每天呼叫一次（也可以在編輯器手動執行）。和網站記帳共用同一把鎖。
+// 三份資料（台股配息、美股配息、美元兌台幣）只要有一份抓不到，這次什麼都不寫，隔天再試。
+// 只在「其他入帳」分頁最後新增列，絕不改或刪既有的列（使用者改過的金額不會被蓋掉）。
+function autoDividends() {
+  const run = { added: 0, problems: [] };
+  const lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+  } catch (err) {
+    const busy = "帳本正在寫入別的資料，這次沒有檢查，明天再試";
+    autoSave_(0, busy);
+    return { ok: false, added: 0, error: busy };
+  }
+  try {
+    autoRun_(run);
+    const error = run.problems.join("；");
+    autoSave_(run.added, error);
+    return { ok: !error, added: run.added, error };
+  } catch (err) {
+    console.error(err);
+    const msg = err instanceof UserError ? err.message : "自動記配息失敗：" + ((err && err.message) || err);
+    autoSave_(run.added, msg);
+    return { ok: false, added: run.added, error: msg };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function autoRun_(run) {
+  const today = todayYmd_();
+  const sh = sheet_(SHEET_INCOME);
+  const ih = headers_(sh, INCOME_COLS);
+  const ts = sheet_(SHEET_TRADES);
+  const th = headers_(ts, TRADE_COLS);
+  const trades = tradeRows_(ts, th, optHeaders_(ts, TRADE_NEW_COLS));
+  const basis = settings_().basis;
+  if (!basis) throw new UserError("設定分頁找不到「基準日」，這次沒有寫入");
+
+  // 先把資料都抓到、格式確認過，才開始寫
+  const tw = fetchJson_("dividends/tw_etf.json");
+  const us = fetchJson_("dividends/us.json");
+  const fx = fxRates_(fetchText_("fx/usdtwd_mid.csv"));
+  if (!tw || typeof tw.etfs !== "object" || !tw.etfs) throw new UserError("market-data 的 dividends/tw_etf.json 格式不對（找不到 etfs），這次沒有寫入");
+  if (!us || typeof us.symbols !== "object" || !us.symbols) throw new UserError("market-data 的 dividends/us.json 格式不對（找不到 symbols），這次沒有寫入");
+
+  // 候選：台股要有 pay_date 而且到了；美股用除息日＋7 天（Yahoo 沒有發放日），也要到了
+  const cands = [];
+  for (const code of Object.keys(tw.etfs)) {
+    for (const ev of (tw.etfs[code] && tw.etfs[code].events) || []) {
+      cands.push({ market: "台股", code, ex: String(ev.ex_date || ""), pay: String(ev.pay_date || ""), cash: Number(ev.cash) });
+    }
+  }
+  for (const code of Object.keys(us.symbols)) {
+    for (const ev of (us.symbols[code] && us.symbols[code].events) || []) {
+      const ex = String(ev.ex_date || "");
+      cands.push({ market: "美股", code, ex, pay: validYmd_(ex) ? addDays_(ex, US_PAY_DELAY_DAYS) : "", cash: Number(ev.cash) });
+    }
+  }
+  const due = cands.filter((c) => validYmd_(c.ex) && c.ex >= AUTO_DIV_START && validYmd_(c.pay) && c.pay <= today && c.cash > 0)
+    .sort((a, b) => (a.pay < b.pay ? -1 : a.pay > b.pay ? 1 : a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+
+  const have = existingDividends_(sh, ih);
+  for (const c of due) {
+    const key = normCode_(c.code) + "|" + c.ex;
+    if (have.has(key)) continue;
+    const shares = sharesBefore_(trades, c.market, c.code, c.ex);
+    if (!(shares > 1e-9)) continue;
+    const mmdd = c.ex.slice(5).replace("-", "/");
+    const tail = "；跟錢包實收不同可以直接改 G 欄";
+    const row = { 入帳日: serial_(c.pay), 市場: c.market, 代號: c.code, 類型: "配息", 計入資金池: c.pay >= basis ? "是" : "否",
+      來源: AUTO_SOURCE, 除息日: serial_(c.ex) };
+    if (c.market === "台股") {
+      row.台幣金額 = Math.round(shares * c.cash);
+      row.備註 = "除息 " + mmdd + "，每單位 " + c.cash + " 元 × 除息前 " + shares + " 股" + tail;
+    } else {
+      const rate = fxAt_(fx, c.pay);
+      if (rate == null) {
+        run.problems.push(c.code + " 除息 " + mmdd + "：找不到 " + c.pay + " 以前的美元兌台幣匯率，沒有記");
+        continue;
+      }
+      const usd = Math.round(shares * c.cash * US_KEEP * 10000) / 10000;
+      row.原幣金額 = usd;
+      row.幣別 = "USD";
+      row.台幣金額 = Math.round(usd * rate);
+      row.備註 = "除息 " + mmdd + "，每股 US$" + c.cash + " × " + shares + " 股，扣 30% 預扣稅，匯率 " + rate + tail;
+    }
+    appendIncome_(sh, ih, row);
+    have.add(key);
+    run.added += 1;
+  }
+}
+
+// 除息日（不含）以前的持股：同市場同代號的買進減賣出。沖銷列的股數是負的、日期同原列，自動抵消
+function sharesBefore_(trades, market, code, ex) {
+  const want = normCode_(code);
+  let n = 0;
+  for (const x of trades) {
+    if (x.market !== market || x.code !== want || !x.date || x.date >= ex || x.shares == null) continue;
+    if (x.side === "買進") n += x.shares;
+    else if (x.side === "賣出") n -= x.shares;
+  }
+  return round6_(n);
+}
+
+// 「其他入帳」已經有的配息：Set of 代號|除息日。不管那一列是不是使用者改過。日期格可能是 Date、序號或文字，一律轉成 YYYY-MM-DD
+function existingDividends_(sh, ih) {
+  const out = new Set();
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return out;
+  const vals = sh.getRange(2, 1, n, ih._width).getValues();
+  const disp = sh.getRange(2, 1, n, ih._width).getDisplayValues();
+  for (let i = 0; i < n; i++) {
+    if (String(disp[i][ih["類型"] - 1]).trim() !== "配息") continue;
+    const code = normCode_(disp[i][ih["代號"] - 1]);
+    const ex = ymdCell_(vals[i][ih["除息日"] - 1], disp[i][ih["除息日"] - 1]);
+    if (code && ex) out.add(code + "|" + ex);
+  }
+  return out;
+}
+
+// 在「其他入帳」最後加一列（一次寫完），格式照上一列；v 是 { 欄名: 值 }，沒給的欄留空
+function appendIncome_(sh, ih, v) {
+  const r = sh.getLastRow() + 1;
+  if (r > 2) sh.getRange(r - 1, 1, 1, ih._width).copyTo(sh.getRange(r, 1, 1, ih._width), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  sh.getRange(r, ih["入帳日"]).setNumberFormat("yyyy-mm-dd");
+  sh.getRange(r, ih["除息日"]).setNumberFormat("yyyy-mm-dd");
+  sh.getRange(r, ih["代號"]).setNumberFormat("@"); // 00981A 的前導 0 要保留
+  const row = new Array(ih._width).fill("");
+  for (const k of INCOME_COLS) if (v[k] !== undefined) row[ih[k] - 1] = v[k];
+  sh.getRange(r, 1, 1, ih._width).setValues([row]);
+  SpreadsheetApp.flush();
+  return r;
+}
+
+function fetchText_(path) {
+  let res;
+  try {
+    res = UrlFetchApp.fetch(MARKET_DATA + path, { muteHttpExceptions: true });
+  } catch (err) {
+    throw new UserError("抓不到 market-data 的 " + path + "（" + ((err && err.message) || err) + "），這次沒有寫入，明天再試");
+  }
+  const code = res.getResponseCode();
+  if (code !== 200) throw new UserError("抓不到 market-data 的 " + path + "（HTTP " + code + "），這次沒有寫入，明天再試");
+  return res.getContentText();
+}
+
+function fetchJson_(path) {
+  try {
+    return JSON.parse(fetchText_(path));
+  } catch (err) {
+    if (err instanceof UserError) throw err;
+    throw new UserError("market-data 的 " + path + " 不是正確的 JSON，這次沒有寫入");
+  }
+}
+
+// usdtwd_mid.csv：每行「日期,匯率」，由舊到新
+function fxRates_(text) {
+  const out = [];
+  for (const line of String(text).split(/\r?\n/)) {
+    const m = /^(\d{4}-\d{2}-\d{2}),\s*([0-9.]+)/.exec(line.trim());
+    if (m && Number(m[2]) > 0) out.push([m[1], Number(m[2])]);
+  }
+  if (!out.length) throw new UserError("market-data 的 fx/usdtwd_mid.csv 讀不到匯率，這次沒有寫入");
+  return out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
+
+// 入帳日或之前最近一天的匯率；比第一筆還早回傳 null
+function fxAt_(rates, ymd) {
+  let rate = null;
+  for (const [d, v] of rates) if (d <= ymd) rate = v;
+  return rate;
+}
+
+// 每次跑完記一下（時間、新增幾列、錯誤），ping／status 回應帶出去給網站顯示
+function autoSave_(added, error) {
+  try {
+    PropertiesService.getScriptProperties().setProperty(AUTO_STATUS_PROP, JSON.stringify({ lastRun: nowText_(), added, error: error || "" }));
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+function autoStatus_() {
+  try {
+    const raw = PropertiesService.getScriptProperties().getProperty(AUTO_STATUS_PROP);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    return { lastRun: String(s.lastRun || ""), added: Number(s.added) || 0, error: String(s.error || "") };
+  } catch (err) {
+    return null;
+  }
+}
+
+// 在 Apps Script 編輯器手動執行一次：建立每天台北 09:00～10:00 的觸發器；已經有就不重複建
+function installDividendTrigger() {
+  const have = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === AUTO_HANDLER);
+  const msg = have.length ? "已經有每天自動記配息的觸發器（" + have.length + " 個），沒有重複建立"
+    : "已建立觸發器：每天台北 09:00～10:00 執行 " + AUTO_HANDLER;
+  if (!have.length) ScriptApp.newTrigger(AUTO_HANDLER).timeBased().everyDays(1).atHour(9).inTimezone(TZ).create();
+  console.log(msg);
+  return msg;
+}
+
+// 拿掉每天自動記配息的觸發器
+function removeDividendTrigger() {
+  const have = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === AUTO_HANDLER);
+  have.forEach((t) => ScriptApp.deleteTrigger(t));
+  const msg = "已移除 " + have.length + " 個自動記配息的觸發器";
+  console.log(msg);
+  return msg;
+}
+
 // ── 帳本讀寫小工具 ─────────────────────────────────────
 
 function json_(o) {
@@ -932,6 +1159,19 @@ function validYmd_(s) {
 function normYmd_(s) {
   const m = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(String(s || "").trim());
   return m ? m[1] + "-" + ("0" + m[2]).slice(-2) + "-" + ("0" + m[3]).slice(-2) : "";
+}
+
+// 儲存格的日期 → YYYY-MM-DD：Date 物件（試算表日期格）、顯示值（2026/11/5、2026-11-05）、序號都可以；不是日期回傳 ""
+function ymdCell_(v, disp) {
+  if (v instanceof Date) return Utilities.formatDate(v, TZ, "yyyy-MM-dd");
+  const t = normYmd_(disp) || normYmd_(v);
+  if (t) return t;
+  return typeof v === "number" && v > 20000 && v < 80000 ? new Date(Date.UTC(1899, 11, 30) + v * 86400000).toISOString().slice(0, 10) : "";
+}
+
+function addDays_(ymd, n) {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
 }
 
 // 試算表日期序號（1899-12-30 起算的天數）
