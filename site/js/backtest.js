@@ -123,6 +123,11 @@ export function blockSample(returns, months, pv, pmt, { paths = SAMPLE_PATHS, bl
   };
 }
 
+// 投入本金逐年累積：第 y 年（0～years）是 pv ＋ pmt × 12y（圖上的灰色虛線）
+export function principalLine(pv, pmt, years) {
+  return Array.from({ length: years + 1 }, (_, y) => pv + pmt * 12 * y);
+}
+
 // 回測期間的描述：月報酬的起訖年月、這段期間的年化報酬、最大回落（月底資料，含第一個月底當起點）
 export function describeBacktest(series) {
   const ends = monthEnds(series);
@@ -238,4 +243,94 @@ export function rollingRequired(returns, months, pv, target) {
     if (!worst || v > worst.value) worst = { value: v, start };
   }
   return { count: n, small: n < MIN_ROLLING, worst, median: percentile(need, 0.5), best };
+}
+
+// ── 生命週期試算（docs/FUNDS_BACKTEST.md 第三部分）──
+// 現在到退休每月投入、退休後每月提領（今天的錢，每月跟著通膨長）到預期壽命。路徑與第一部分一樣：固定種子、依序 blockPath，
+// lifecycleSpend 與 lifecycleRun 各自從種子重新開始，所以看的是同一組 2,000 條路徑。
+
+// 年齡 → 存錢月數 S、提領月數 D、總月數 N；退休 ≤ 現在或壽命 ≤ 退休時不算（回傳 null）
+export function lifecycleSpan(now, retire, life) {
+  if (![now, retire, life].every(Number.isFinite) || retire <= now || life <= retire) return null;
+  const S = Math.round((retire - now) * 12), D = Math.round((life - retire) * 12);
+  return { S, D, N: S + D };
+}
+// 月通膨：年通膨換成等值的月通膨
+export const monthlyInflation = (infl) => Math.pow(1 + infl, 1 / 12) - 1;
+
+// 每月可花多少：每條路徑算 G（整段累積倍數）、A（存錢期每月投 1 元累積到第 N 個月）、B（提領期每月領「今天的 1 元」累積到第 N 個月），
+// 第 N 個月的資產 ＝ pv × G ＋ pmt × A − W × B，對 W 線性，所以剛好用完的花費 W* ＝ max(0, (pv × G ＋ pmt × A) ÷ B)，直接算。
+// retire 是退休時（第 S 個月月底）的資產，換成今天的錢（除以 f_S）；retireNominal 是名目；spend 是 W* 的百分位（今天的錢）。
+// W（Float64Array）與 retireAssets（今天的錢）是每條路徑的值，測試與核對用
+export function lifecycleSpend(returns, { pv, pmt, infl, S, D }, { paths = SAMPLE_PATHS, block = BLOCK_MONTHS, seed = SAMPLE_SEED } = {}) {
+  const N = S + D;
+  if (!returns.length || !(S > 0) || !(D > 0)) return { paths: 0, S, D, N, retire: null, retireNominal: null, spend: null, W: new Float64Array(0), retireAssets: new Float64Array(0) };
+  const m = monthlyInflation(infl);
+  const f = new Float64Array(N + 1); // f[t]：第 t 個月的通膨倍數
+  for (let t = 0; t <= N; t++) f[t] = Math.pow(1 + m, t);
+  const rng = mulberry32(seed);
+  const W = new Float64Array(paths), retireAssets = new Float64Array(paths), retireNom = new Float64Array(paths);
+  for (let k = 0; k < paths; k++) {
+    const rs = blockPath(returns, N, rng, block);
+    let g = 1, a = 0, b = 0, gS = 1, aS = 0;
+    for (let t = 1; t <= N; t++) {
+      const r1 = 1 + rs[t - 1];
+      g *= r1;
+      a = a * r1 + (t <= S ? 1 : 0);
+      b = b * r1 + (t > S ? f[t] : 0);
+      if (t === S) { gS = g; aS = a; }
+    }
+    W[k] = Math.max(0, (pv * g + pmt * a) / b);
+    retireNom[k] = pv * gS + pmt * aS;
+    retireAssets[k] = retireNom[k] / f[S];
+  }
+  const [r10, r50, r90] = percentiles(retireAssets, PERCENTILES);
+  const [n10, n50, n90] = percentiles(retireNom, PERCENTILES);
+  const [w10, w50, w90] = percentiles(W, PERCENTILES);
+  return {
+    paths, S, D, N, W, retireAssets,
+    retire: { p10: r10, p50: r50, p90: r90 },
+    retireNominal: { p10: n10, p50: n50, p90: n90 },
+    spend: { p10: w10, p50: w50, p90: w90 },
+  };
+}
+
+// 照某個花費 W（今天的錢，每月）跑一遍：某個月算完小於 0 就記為「第 t 個月用完」，之後資產當 0、不再提領。
+// survive：錢撐到預期壽命的機率（沒有用完的路徑比例）；depleted：用完月份的第 10、50 百分位（沒用完的路徑當成無限大，
+// 內插碰到沒用完的路徑記成 null）；yearly：第 0、1、…、N ÷ 12 年年底資產（用完後是 0，換成今天的錢）的第 10、50、90 百分位，第 0 年就是 pv
+export function lifecycleRun(returns, { pv, pmt, infl, S, D, W }, { paths = SAMPLE_PATHS, block = BLOCK_MONTHS, seed = SAMPLE_SEED } = {}) {
+  const N = S + D;
+  if (!returns.length || !(S > 0) || !(D > 0)) return { paths: 0, S, D, N, survive: null, depleted: null, yearly: [], depleteMonths: new Float64Array(0) };
+  const m = monthlyInflation(infl);
+  const f = new Float64Array(N + 1);
+  for (let t = 0; t <= N; t++) f[t] = Math.pow(1 + m, t);
+  const years = Math.floor(N / 12);
+  const atYear = Array.from({ length: years + 1 }, () => new Float64Array(paths));
+  atYear[0].fill(pv);
+  const ends = new Float64Array(paths); // 用完的月份（沒用完是 Infinity）
+  const rng = mulberry32(seed);
+  let alive = 0;
+  for (let k = 0; k < paths; k++) {
+    const rs = blockPath(returns, N, rng, block);
+    let v = pv, dead = Infinity;
+    for (let t = 1; t <= N; t++) {
+      if (dead === Infinity) {
+        v = v * (1 + rs[t - 1]) + (t <= S ? pmt : -W * f[t]);
+        if (v < 0) { dead = t; v = 0; }
+      }
+      if (t % 12 === 0) atYear[t / 12][k] = v / f[t];
+    }
+    ends[k] = dead;
+    if (dead === Infinity) alive++;
+  }
+  const fin = (x) => (Number.isFinite(x) ? x : null);
+  const [d10, d50] = percentiles(ends, [0.1, 0.5]);
+  return {
+    paths, S, D, N, survive: alive / paths, depleteMonths: ends,
+    depleted: { p10: fin(d10), p50: fin(d50) },
+    yearly: atYear.map((vals, y) => {
+      const [a, b, c] = percentiles(vals, PERCENTILES);
+      return { year: y, p10: a, p50: b, p90: c };
+    }),
+  };
 }
