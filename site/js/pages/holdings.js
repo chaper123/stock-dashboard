@@ -1,21 +1,22 @@
-// 持倉：每檔股數、成本、現價、市值、未實現損益與報酬率，以及交易紀錄。
-import { loadTrades } from "../data.js";
-import { loadPortfolio, FX_KIND_LABEL } from "../portfolio.js";
+// 持倉：每檔股數、成本、現價、市值、未實現損益與報酬率、已實現損益（賣出的部分），以及交易紀錄。
+import { loadTrades, loadHoldings } from "../data.js";
+import { loadPortfolio, loadRealized, FX_KIND_LABEL } from "../portfolio.js";
 import { el, twd, usd, price, pct, shares, shortDate, signed, tone, int } from "../fmt.js";
 import { slot, card, pageHeader, kv, notice } from "../ui.js";
-import { MARKET_LABEL } from "../config.js";
+import { MARKET_LABEL, NAMES } from "../config.js";
 import { loadStatus, marketItem, statusLine } from "../status.js";
 
 export async function render(root) {
   root.append(pageHeader("持倉", "股數與成本來自共用帳本「持倉」分頁（券商確認）。"));
   slot(root, positionsView);
+  slot(root, realizedCard);
   slot(root, tradesCard);
 }
 
 const money = (market, v) => (market === "us" ? usd(v) : twd(v));
 
 async function positionsView() {
-  const [pf, S] = await Promise.all([loadPortfolio(), loadStatus()]);
+  const [pf, S, rz] = await Promise.all([loadPortfolio(), loadStatus(), loadRealized().catch((e) => e)]);
   const t = pf.totals;
   const hasUs = pf.positions.some((p) => p.market === "us");
   // R14：價格與匯率不是正常時，在合計旁邊標狀態與資料時間
@@ -27,6 +28,7 @@ async function positionsView() {
       kv(hasUs ? el("span", {}, "成本", el("div", { class: "tiny" }, "美股用現在的匯率換算")) : "成本", twd(t.costTwd)),
       kv(el("span", {}, "未實現損益", el("div", { class: "tiny" }, "證券損益折台幣，不含匯差")),
         el("span", { class: tone(t.pnlTwd) }, `${signed(t.pnlTwd, twd)}（${pct(t.pnlPct)}）`)),
+      kv(el("span", {}, "已實現損益", el("div", { class: "tiny" }, "已賣出的部分，扣過手續費與稅")), realizedValue(rz)),
       hasUs && kv(el("span", {}, `含匯差損益${t.withFx.complete && t.withFx.kind !== "actual" ? "（參考）" : ""}`,
         el("div", { class: "tiny" }, "現在的台幣市值 − 當初的台幣成本")),
       t.withFx.complete ? el("span", {}, el("span", { class: tone(t.withFx.pnl) }, `${signed(t.withFx.pnl, twd)}（${pct(t.withFx.pnlPct)}）`),
@@ -49,6 +51,14 @@ async function positionsView() {
       list.map((p) => position(p)));
   });
   return [summary, ...cards];
+}
+
+// 合計格的值：賺紅賠綠；沒有賣出、有錯誤、讀不到各寫各的
+function realizedValue(rz) {
+  if (rz instanceof Error) return el("span", { class: "muted" }, "讀不到");
+  if (rz.errors.length) return el("span", { class: "muted" }, "算不出來（原因見下方）");
+  if (!rz.rows.length) return el("span", { class: "muted" }, "還沒有賣出過");
+  return el("span", { class: tone(rz.total) }, `${signed(rz.total, twd)}（${pct(rz.pct)}）`);
 }
 
 function position(p) {
@@ -88,6 +98,34 @@ function fxNote(pf) {
       "「含匯差損益」是現在的台幣市值 − 剩餘持股當初的台幣成本，美元漲跌與匯率變化都在裡面，「其中匯率」是兩者的差。",
       "部分賣出用平均成本法：賣出照當時的平均台幣成本扣掉，剩下的持股沿用原本的平均成本。",
       w.complete && w.kind === "actual" ? `${FX_KIND_LABEL.actual}。` : ""));
+}
+
+// 已實現損益：每一筆賣出（平均成本法、台幣）。沒有賣出時整張卡只寫「還沒有賣出過。」
+async function realizedCard() {
+  const [rz, holdings] = await Promise.all([loadRealized(), loadHoldings().catch(() => [])]);
+  if (!rz.rows.length && !rz.errors.length) return card("已實現損益", el("p", { class: "muted" }, "還沒有賣出過。"));
+  const name = (r) => NAMES[r.code] || holdings.find((h) => h.market === r.market && h.code === r.code)?.name || "";
+  const row = (r) => {
+    const tag = (r.est ? "（估）" : "") + (r.ref ? "（參考匯率）" : "");
+    return el("tr", {},
+      el("td", {}, r.date),
+      el("td", {}, el("strong", {}, r.code), el("span", { class: "tk-name" }, `　${name(r)}`)),
+      el("td", { class: "r" }, shares(r.shares)),
+      el("td", {}, `${shortDate(r.since)}・${r.days} 天`),
+      el("td", { class: "r" }, int(r.cost) + tag),
+      el("td", { class: "r" }, int(r.proceeds) + tag),
+      el("td", { class: `r ${tone(r.pnl)}` }, `${signed(r.pnl, int)}（${r.pct == null ? "—" : pct(r.pct, 2)}）`));
+  };
+  return card("已實現損益",
+    rz.rows.length > 0 && el("p", {}, "合計 ", el("strong", { class: tone(rz.total) }, `${signed(rz.total, twd)}（${pct(rz.pct)}）`), `，共 ${rz.rows.length} 筆賣出`),
+    rz.errors.map((e) => notice("warn", `${e.code} 算不出來：${e.message}。這一檔沒有算進合計。`)),
+    rz.rows.length > 0 && el("div", { class: "table-wrap" }, el("table", { class: "nowrap" },
+      el("thead", {}, el("tr", {}, ["賣出日", "代號", "股數", "首次買進", "成本", "賣出拿回", "損益（報酬率）"]
+        .map((h, i) => el("th", { class: i === 2 || i >= 4 ? "r" : "" }, h)))),
+      el("tbody", {}, rz.rows.map(row)))),
+    el("p", { class: "tiny" }, "已實現損益＝賣出拿回的錢（扣掉手續費與交易稅）－賣出那些股數的平均成本（含買進手續費），平均成本法跟上面的持倉成本相同。不含現金股利。",
+      rz.est ? "標（估）的那段持有，帳本缺交割金額，用股數 × 成交價估算。" : "",
+      rz.ref ? "標（參考匯率）的美股，帳本沒有台幣金額與成交匯率，用當天的美元兌台幣中間價換算。" : ""));
 }
 
 async function tradesCard() {
