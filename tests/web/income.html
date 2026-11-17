@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>其他入帳</title></head>
+<body>
+<h1>其他入帳：配息與手續費折抵（docs/OTHER_INCOME.md）</h1>
+<p>讀帳本「其他入帳」分頁（parseIncome、還沒接上時的回傳）；算進可用資金與總資產走勢（cashTable、assetTrend）；算進組合績效（computePerf 的 other）。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { parseIncome, loadIncome } from "/site/js/data.js";
+import { SOURCES } from "/site/js/config.js";
+
+// ── 讀「其他入帳」分頁 ──
+const HEAD = "入帳日,市場,代號,類型,原幣金額,幣別,台幣金額,計入資金池,來源,備註";
+test("parseIncome：欄位、金額（含千分位）、市場、計入資金池", () => {
+  const rows = parseIncome([HEAD,
+    "2026-05-08,台股＋美股,,手續費折抵,,,5,否,口袋錢包帳務明細,4 月台 3 美 2 折抵",
+    "2026-07-06,美股,VOO,配息,0.17,USD,5,否,口袋錢包帳務明細,配息 VOO",
+    "2026-12-01,台股,009816,配息,\"1,234\",TWD,\"1,200\",是,,",
+  ].join("\n"));
+  eq(rows.length, 3);
+  eq(rows[0], { row: 2, date: "2026-05-08", market: "", code: "", kind: "手續費折抵", amount: null, currency: "", twd: 5, inPool: false, source: "口袋錢包帳務明細", note: "4 月台 3 美 2 折抵" });
+  eq([rows[1].market, rows[1].code, rows[1].kind, rows[1].amount, rows[1].currency, rows[1].twd], ["us", "VOO", "配息", 0.17, "USD", 5]);
+  eq([rows[2].market, rows[2].amount, rows[2].twd, rows[2].inPool, rows[2].row], ["tw", 1234, 1200, true, 4]);
+});
+test("parseIncome：日期格式不對、類型不是配息／手續費折抵的列不要；空白列略過；台幣金額空白是 null（不補 0）", () => {
+  const rows = parseIncome([HEAD,
+    "2026/05/08,美股,VOO,配息,,,5,否,,",   // 日期格式不對
+    "2026-05-09,美股,VOO,利息,,,5,否,,",   // 類型不對
+    ",,,,,,,,,",
+    "2026-05-10,美股,VOO,配息,,,,是,,",    // 台幣金額空白
+  ].join("\n"));
+  eq(rows.length, 1);
+  eq([rows[0].date, rows[0].twd, rows[0].inPool], ["2026-05-10", null, true]);
+});
+test("parseIncome：只有表頭、完全空白都是空陣列", () => {
+  eq(parseIncome(HEAD), []);
+  eq(parseIncome(""), []);
+});
+// 這一項跟著設定走：gid 還是 null 才成立；填了 gid 之後 loadIncome 會讀真實分頁，所以只在沒設定時檢查
+const unsetResult = SOURCES.ledger.income ? null : await loadIncome();
+test("loadIncome：INCOME_GID 還沒設定（null）時回傳 { configured: false, rows: [] }，不讀網路", () => {
+  if (SOURCES.ledger.income) return;
+  eq(unsetResult, { configured: false, rows: [] });
+});
+
+report();
+</script>
+</body>
+</html>
