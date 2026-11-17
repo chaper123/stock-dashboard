@@ -28,7 +28,7 @@
    - 首頁示意在本機分支 `claude/fervent-merkle-1607ac`（工作目錄 `.claude/worktrees/fervent-merkle-1607ac`，cacbefe）與備份分支 `archive/design-preview-2026-11-10`，沒有 push、沒有合併。要看：在 `.claude/launch.json` 暫時加 `py -3.14 -m http.server 8766 --directory .claude/worktrees/fervent-merkle-1607ac/site`，開 `/preview-home.html`。
    - 重啟時照使用者的意見改：六個範本都要實際開來看（上次 Ledgely、Zapline、Fundora 沒開），互動當成重點（上次沒有跳數字、沒有背景動畫，使用者覺得只比現在好一點）。
 4. **檢查後繼續補足**（PIVOT 第 12 節）與**資金頁「總資產走勢」**（[ASSET_TREND.md](ASSET_TREND.md)）：2026-11-17 上線（`bde1da1`，sw.js `2026-11-17-3`）。補足從 2027-04 的檢查才開始算；晨報要等下次改提示詞換 engine 釘選才會用到，2027/04 前換好（可以跟 v4.2a 一起）。
-5. **「資產」新頁與「試算」頁整頓**（使用者 2026-11-17 參考 CMoney 美股 K 線 app 的資產變化頁）：新頁放現金與投入、資產走勢、累計／每日損益、報酬率對比較標的（從 K 線頁搬來，可選加權報酬指數、0050、009816、00981A）、個股表現、報酬日曆，圖表可縮放；原資金頁改名「試算」。規格在 [ASSETS_PAGE.md](ASSETS_PAGE.md)，交給「網站實作」做。
+5. **「資產」新頁與「試算」頁整頓**（使用者 2026-11-17 參考 CMoney 美股 K 線 app 的資產變化頁）：新頁放現金與投入、資產走勢、累計／每日損益、報酬率對比較標的（從 K 線頁搬來，可選加權報酬指數、0050、009816、00981A）、個股表現、報酬日曆，圖表可縮放；原資金頁改名「試算」。規格在 [ASSETS_PAGE.md](ASSETS_PAGE.md)；「網站實作」做完（分支 `claude/funds-fire-30y-122524`，a11344f～572aa05 五個 commit，還沒合併），主 session 審查並在本機預覽看過桌面與手機畫面；等使用者說「部署」。
 6. 較小、不急：
    - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：等 Sonnet 測試有結論、新聞排程穩定再做。
 
