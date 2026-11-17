@@ -175,4 +175,4 @@
 ### 進度（第 12 節）
 
 - 2026-11-17「網站實作」做完（分支 `claude/funds-fire-30y-122524`：eb83027、0876bf0，還沒合併）：Python 與網站用同一份 `tests/fixtures/discipline_continue.json`（16 個案例），`tests/web/discipline.html`；pytest 301 項全過（主 session 在分支上重跑確認）。現在偏離 +4.91，本月紀律跟改之前一樣。晨報要等 engine 釘選換新才會用到。
-
+- 2026-11-17 使用者說「部署」：合併上線（`bde1da1`，sw.js `2026-11-17-3`）；合併後 pytest 301 項、網頁測試 11 頁全過，線上確認卡片數字與 console 沒有錯誤。
