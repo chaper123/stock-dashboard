@@ -15,7 +15,7 @@
 - 舊的美股、台股兩個買點晨報 2026-11-03 停用（轉型，見 [PIVOT.md](PIVOT.md)）。
 - **market-data**（公開）：GitHub Actions 抓行情、新聞標題、總經、法人、行事曆，cron-job.org 觸發（fetch 06:15、news 08:20、11:10 等），狀態看 `data/meta.json`。台股不再程式抓證交所／櫃買網站（改 FinMind＋OpenAPI）；盤中價由網站在使用者瀏覽器用富果查（金鑰只在使用者裝置）。
 - **market-data-private**（私人，本機 `C:\market-data-private`）：00981A、009816 每日持股。投信網站不得轉載，所以不放公開 repo；公開的「新聞」分頁不能寫股數、權重、排名、檔數。
-- **網站**（GitHub Pages，純靜態，八頁：總覽、新聞、持倉、K 線、分析、資金、報告、記帳）：記帳透過帳本綁定的 Apps Script 寫入（[LEDGER_WRITE.md](LEDGER_WRITE.md)、[LEDGER_CONSISTENCY.md](LEDGER_CONSISTENCY.md)）。第三方改進報告第 A、B、C 批與 R02 已上線（[IMPROVE.md](IMPROVE.md)）。線上 sw.js 2026-11-14-2（財富自由試算回測推算）。
+- **網站**（GitHub Pages，純靜態，八頁：總覽、新聞、持倉、K 線、分析、資金、報告、記帳）：記帳透過帳本綁定的 Apps Script 寫入（[LEDGER_WRITE.md](LEDGER_WRITE.md)、[LEDGER_CONSISTENCY.md](LEDGER_CONSISTENCY.md)）。第三方改進報告第 A、B、C 批與 R02 已上線（[IMPROVE.md](IMPROVE.md)）。線上 sw.js 2026-11-17-1（財富自由試算年數上限 30 年）。
 - **試算表**：「儀表板資料」（排程寫入；正式「新聞」gid 5、「測試_新聞」gid 4）；共用帳本（Claude 只讀，網站記帳寫入）。ID 在提示詞裡。
 - **使用者的投資規則**：每月 6 日照帳本「定投金額」投入台股 009816 80%、00981A 20%；4、10 月檢查，偏離超過 5 個百分點才整筆補偏低的一檔；美股 VOO、GOOGL 保留、不加碼。所有輸出都是依規則的訊號，不是投資建議。
 
@@ -33,7 +33,7 @@
    - PIVOT 寫的「檢查後偏離仍超過 5 個百分點時，之後每月入金繼續補到回到 ±5 內」網站與 `discipline.py` 都還沒做，2027/04 前決定。
    - MoneyDJ 美股日線 11/07 起只回 1 根，market-data 的 `vote_daily` 改用 Yahoo 當歷史主來源，觀察會不會持續。
    - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：使用者 2026-11-17 說等 Sonnet 測試有結論、新聞排程穩定再做。
-   - 財富自由試算年數上限改 30 年（使用者 2026-11-17 決定）：「網站實作」session 在自己的分支做，使用者看過說「部署」才上線。
+   - 財富自由試算年數上限改 30 年（使用者 2026-11-17 決定）：「網站實作」做（745e252），使用者說「部署」後合併上線（1979ded，sw.js 2026-11-17-1，線上確認滑桿最大 30）。
    - PLAN 的 Phase 3（跨市場配置器）、5、6 尚未開始；2026-10-30 轉型成只管台股後要不要做，還沒決定。
 
 ## 注意事項
