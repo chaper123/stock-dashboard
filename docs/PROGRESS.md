@@ -22,16 +22,15 @@
 ## 待辦
 1. **v4.2 後續**（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14 節）：11/17 第一次正式執行通過（剛好是大波動日，格式與數字都對）。
    - 還沒遇到費半漲跌在 3%～5% 之間的日子（不該用大波動日格式），遇到那天看一次執行紀錄。
-   - 下次改提示詞時一起修：午間重點理由寫過「前 3 天賣超」（實際連 11 天；往前數整個檔的規則只寫在總經總結）；`allowed_domains` 把 cnbc.com、bloomberg.com、wsj.com、ft.com 整組列成不要放，可能限制過頭。
+   - 下次改提示詞時一起修（2026-11-17 起「晨報排程維護」先把 v4.2a 準備好放在 `private/routines/v42a/`，不動排程；Sonnet 比對有結論後跟換模型一起上）：午間重點理由寫過「前 3 天賣超」（實際連 11 天；往前數整個檔的規則只寫在總經總結）；`allowed_domains` 把 cnbc.com、bloomberg.com、wsj.com、ft.com 整組列成不要放，可能限制過頭。
 2. **晨報改用 Sonnet 的測試**（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 15 節）：只換模型，測試排程 11/18、11/19 自動跑（晨間 08:55、午間 11:50），接在 Opus 正式版後面同一天比對。11/19 午間跑完後，「晨報排程維護」做比較表（B 階段）並停用測試排程；主 session 審查後給建議，使用者同意才改正式排程。使用者 2026-11-17：Sonnet 給的資料不如 Opus 就維持 Opus。
 3. **設計改版擱置**（使用者 2026-11-11 決定先功能、後美化；使用者沒提就不要主動提）：IMPROVE 的 D01～D08、R16、R17 跟著擱置。
    - 首頁示意在本機分支 `claude/fervent-merkle-1607ac`（工作目錄 `.claude/worktrees/fervent-merkle-1607ac`，cacbefe）與備份分支 `archive/design-preview-2026-11-10`，沒有 push、沒有合併。要看：在 `.claude/launch.json` 暫時加 `py -3.14 -m http.server 8766 --directory .claude/worktrees/fervent-merkle-1607ac/site`，開 `/preview-home.html`。
    - 重啟時照使用者的意見改：六個範本都要實際開來看（上次 Ledgely、Zapline、Fundora 沒開），互動當成重點（上次沒有跳數字、沒有背景動畫，使用者覺得只比現在好一點）。
-4. 較小、不急：
-   - PIVOT 寫的「檢查後偏離仍超過 5 個百分點時，之後每月入金繼續補到回到 ±5 內」網站與 `discipline.py` 都還沒做，2027/04 前決定。
-   - MoneyDJ 美股日線 11/07 起只回 1 根，market-data 的 `vote_daily` 改用 Yahoo 當歷史主來源，觀察會不會持續。
+4. **檢查後繼續補足**（使用者 2026-11-17 決定照 PIVOT 原文：檢查月觸發後一直補，回到 ±5 內就停）：規格在 [PIVOT.md](PIVOT.md) 第 12 節，交給「網站實作」做（網站與 `engine/discipline.py`）；晨報要等下次改提示詞換 engine 釘選才會用到，2027/04 前換好。
+5. **資金頁「總資產走勢」**（使用者 2026-11-17：PLAN 的 Phase 3、5、6 結案，只加做這張）：規格在 [ASSET_TREND.md](ASSET_TREND.md)，交給「網站實作」做。
+6. 較小、不急：
    - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：等 Sonnet 測試有結論、新聞排程穩定再做。
-   - PLAN 的 Phase 3（跨市場配置器）、5、6 尚未開始；轉型成只管台股後要不要做，還沒決定。
 
 ## 注意事項
 - 分工（使用者 2026-11-12、11-13 訂）：主 session 的高階模型只做規劃、規格、審查與較難的製作；部署、例行檢查、照規格實作交給常駐的便宜模型 session（部署與例行檢查、網站實作、market-data 維護、排程維護；教學要用時開新的；id 在記憶 `delegate-routine-work`）。模型（使用者 2026-11-16 訂）：交辦預設 Sonnet，看新聞、讀執行紀錄這類簡單檢查用 Haiku，只有 Sonnet 做不到才用 Opus；主 session 以前開的 Opus session 已全部封存。同類工作用同一個 session，不要每件事開新的；主對話只講結論與要使用者決定的事。會對外生效的動作（push、部署、改排程）要使用者本人在執行的那個 session 裡同意。
@@ -50,10 +49,11 @@
 - [IMPROVE.md](IMPROVE.md)：第三方改進報告 R01～R20、D01～D08 與批次狀態。[NEWS_ROUTINE.md](NEWS_ROUTINE.md)：新聞排程 v1～v4.2。
 - [FUNDS_BACKTEST.md](FUNDS_BACKTEST.md)：資金頁回測試算的規格（N 年後、財富自由、生命週期、本金／獲利）。
 - [LEDGER_WRITE.md](LEDGER_WRITE.md)、[LEDGER_CONSISTENCY.md](LEDGER_CONSISTENCY.md)：網站記帳。[DATA_SOURCES.md](DATA_SOURCES.md)：資料來源。[BACKTEST.md](BACKTEST.md)：買點規則回測。[ROUTINE_V2.md](ROUTINE_V2.md)：舊晨報 v2（已停用）。
+- [ASSET_TREND.md](ASSET_TREND.md)：資金頁總資產走勢的規格。
 - [HISTORY.md](HISTORY.md)：2026-10-16～11-10 完整進度紀錄（Phase 0～4 的勾選清單也在裡面）；最後面是 11/11 起的大事記。
 - 私人（不進 git）：`private/routines/`——各版提示詞、`routines.json`、每版一個資料夾（v3、v4、v41、v42）的 README 記排程 ID、測試與上線紀錄；更新與核對的腳本在 `tools/`。
 
 ## Phase 狀態
 - Phase 0 基礎建設（tag v0.1）、Phase 1 強化資料、Phase 2 排程結構化輸出：勾選項目都已完成。
 - Phase 4 網站：2026-10-27 上線，持續改版中；2026-11-17 打 tag `v0.2`（使用者同意；Phase 1、2 當時沒打 tag，一起算在內）。
-- Phase 3、5、6：尚未開始。
+- Phase 3、5、6：使用者 2026-11-17 決定結案（Phase 3 是轉型前買點晨報用的配置器；Phase 5 只缺總資產走勢，另外做；Phase 6 的 CI 與資料狀態頁已經有了）。
