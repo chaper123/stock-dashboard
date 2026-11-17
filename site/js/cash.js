@@ -83,7 +83,8 @@ export function nextDeposit(today, dca) {
 
 // ── 總資產走勢（docs/ASSET_TREND.md）──
 // 基準日到最新台股交易日，每個交易日的「持倉市值 ＋ 可用資金」，加一條對照線（基準日的總資產 ＋ 到那天為止已入帳的入金）。
-// 純函式。股數從現在的持倉往回推（減掉那天之後的買進、加回賣出）；入金排在基準日之後每個月的 6 日、金額跟著「定投金額」；
+// 純函式。股數從現在的持倉往回推（減掉那天之後的買進、加回賣出）；入金是基準日之後每個月一筆，日子取
+// 那個月 6 日和那個月第一筆「計入資金池」買進的日子比較早的（6 日前就先買的月份，照 6 日入金會有一天負的可用資金），金額跟著「定投金額」；
 // 沒有收盤的日子用之前最近的一筆。任何一檔缺價或匯率，整張圖不畫（回傳 ok:false 與缺什麼），不用 0 補；
 // 可用資金排不出來（入金合計跟帳本不同、買賣讀不到金額、缺期初）時只畫持倉市值，hasCash:false 並寫明原因。
 // 資料落後時（交易、入金的日期比最後一個交易日還晚）當成發生在最後一個交易日，最後一天才等於帳本現在的持倉與可用資金。
@@ -152,7 +153,9 @@ export function assetTrend({ settings, trades, holdings, bars = {}, fxRows = nul
   else {
     for (let i = 1; i <= s.depositMonths; i++) {
       const ym = addMonth(s.basis.slice(0, 7), i);
-      deposits.push({ date: `${ym}-${String(D.depositDay).padStart(2, "0")}`, amount: dcaFor(dca, ym) });
+      const sixth = `${ym}-${String(D.depositDay).padStart(2, "0")}`;
+      const firstBuy = (trades || []).filter((t) => t.inPool && t.side === "買進" && t.date.startsWith(ym)).map((t) => t.date).sort()[0];
+      deposits.push({ date: firstBuy && firstBuy < sixth ? firstBuy : sixth, amount: dcaFor(dca, ym) });
     }
     const sum = round2(deposits.reduce((a, x) => a + x.amount, 0));
     if (!isNum(s.depositTotal)) reasons.push("缺累計入金");

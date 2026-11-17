@@ -51,6 +51,23 @@ test("入金排在基準日之後每個月的 6 日，金額跟著定投金額�
   eq([day(a, "2026-12-04").cash, day(a, "2026-12-07").cash], [3605, 8605]);
   eq([day(a, "2026-11-05").line, day(a, "2026-11-06").line, day(a, "2026-12-04").line, day(a, "2026-12-07").line], [7600, 10600, 10600, 15600]);
 });
+test("6 日前先買的月份：入金改算在那個月第一筆計入資金池的買進日，可用資金不會變負；最後一天的可用資金不變", () => {
+  // 11/04 先買 A 10 股（3,500，計入資金池）：照 6 日入金，11/04 的可用資金會是 750 − 3,500 ＜ 0
+  const early = [...trades, tr("2026-11-04", "A", "買進", 10, 3500)];
+  const a = run({ trades: early });
+  eq(a.deposits[0], { date: "2026-11-04", amount: 3000 });
+  eq([day(a, "2026-11-03").cash, day(a, "2026-11-04").cash], [750, 250]);
+  ok(a.days.every((d) => d.cash >= 0), "不該有負的可用資金");
+  eq([day(a, "2026-11-03").line, day(a, "2026-11-04").line], [7500, 10500]);   // 基準日 A 少 10 股（往回推），對照線 11/04 加 3,000
+  const closing = cashTable({ settings: { ...settings }, trades: early }).closing;
+  eq([a.last.cash, closing], [5105, 5105]);                        // 期初 1,050 ＋ 入金 8,000 − 買進 4,000 ＋ 賣出 55
+  // 6 日之後才買、或前面的買進不計入資金池：入金還是 6 日
+  eq(run().deposits[0].date, "2026-11-06");
+  const notPool = run({ trades: [...trades, tr("2026-11-03", "B", "買進", 1, 20, false)], holdings: holdings.map((h) => (h.code === "B" ? { ...h, shares: 11 } : h)) });
+  eq(notPool.deposits[0].date, "2026-11-06");
+  // 最後一天的可用資金跟「同樣的買進晚到 11/06」一樣
+  eq(a.last.cash, run({ trades: [...trades, tr("2026-11-06", "A", "買進", 10, 3500)] }).last.cash);
+});
 test("計入資金池的買進賣出才動可用資金：把 B 改成計入，可用資金少 200", () => {
   const b = run({ trades: trades.map((t) => (t.code === "B" ? { ...t, inPool: true } : t)), settings: { ...settings } });
   eq([day(b, "2026-10-19").cash, day(b, "2026-10-20").cash, b.last.cash], [750, 550, 8405]);
