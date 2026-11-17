@@ -31,7 +31,7 @@
 4. **檢查後繼續補足**（PIVOT 第 12 節）與**資金頁「總資產走勢」**（[ASSET_TREND.md](ASSET_TREND.md)）：2026-11-17 上線（`bde1da1`，sw.js `2026-11-17-3`）。補足從 2027-04 的檢查才開始算；晨報要等下次改提示詞換 engine 釘選才會用到，2027/04 前換好（可以跟 v4.2a 一起）。
 5. **「資產」新頁與「試算」頁整頓**：2026-11-17 上線（`f1ff46d` 合併、`08d91d5` 導覽列，sw.js `2026-11-17-4`），規格與紀錄在 [ASSETS_PAGE.md](ASSETS_PAGE.md)。導覽列照使用者指定：總覽、持倉、資產、K 線、記帳、分析、新聞、報告、試算（記帳在正中間）。
 6. **帳本補兩組已賣出的買賣與已實現損益**（[REALIZED_PNL.md](REALIZED_PNL.md)）：2026-11-18 上線（sw.js `2026-11-18-1`）。帳本補了 00679B、00735 兩組買賣與 VOO、GOOGL、009816 的實際金額；持倉頁與總覽顯示已實現損益 +175。
-7. **配息與手續費折抵記進帳本**（[OTHER_INCOME.md](OTHER_INCOME.md)、[AUTO_DIVIDENDS.md](AUTO_DIVIDENDS.md)）：網站已上線（2026-11-18，合併 `fa82ff1`，sw.js `2026-11-18-2`；「現金與投入」多其他入帳、資產頁多「配息」卡），market-data 的 `data/dividends/us.json` 也已上線。剩 Apps Script 更新與觸發器（教學 session 帶使用者）；第一筆自動記帳預計是 GOOGL（12 月中）或 00981A。
+7. **配息自動記帳已全部上線**（2026-11-18；[OTHER_INCOME.md](OTHER_INCOME.md)、[AUTO_DIVIDENDS.md](AUTO_DIVIDENDS.md)）：網站（合併 `fa82ff1`，sw.js `2026-11-18-2`）、market-data `us.json`、Apps Script 與每日觸發器都好了。**11/19 確認第一次自動執行**（台北 09:00～10:00；看配息卡「上次自動檢查」或 Apps Script「觸發條件」的上次執行時間）。第一筆真正自動記帳預計是 GOOGL（12 月中）或 00981A。
 8. 較小、不急：
    - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：等 Sonnet 測試有結論、新聞排程穩定再做。
 
