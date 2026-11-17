@@ -141,3 +141,58 @@ export function performanceRows({ holdings, bars, indices = {}, last, start }) {
   }
   return out;
 }
+
+// ── 報酬日曆（ASSETS_PAGE 2.5）──
+
+// 兩個月份（YYYY-MM）之間（含）的每個月，升冪
+export function monthsBetween(a, b) {
+  const out = [];
+  let [y, m] = a.split("-").map(Number);
+  const [y2, m2] = b.split("-").map(Number);
+  while (y < y2 || (y === y2 && m <= m2)) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    if (++m > 12) {
+      m = 1;
+      y++;
+    }
+  }
+  return out;
+}
+
+// 單日報酬連乘：只乘有值的日子，一天都沒有是 null（報酬率，不是百分比）
+const chain = (rets) => {
+  const live = rets.filter((r) => r != null);
+  return live.length ? live.reduce((p, r) => p * (1 + r), 1) - 1 : null;
+};
+
+// 一個月的日曆：週一到週五五欄的一列一週。daily 是 dailyPnl(perf.days) 的結果（[{ date, pnl, ret }]）。
+// 回傳 { ym, weeks: [{ cells, pnl, ret }], pnl, ret }：cells 五格，不是這個月的日子是 null，這個月但沒有資料（休市、還沒到、還沒開始）是
+// { date, day, trading: false }，有資料的是 { date, day, trading: true, pnl, ret }。
+// 週損益＝那一列有資料的日子的損益相加，週報酬率＝那些日子的單日報酬連乘減 1（跨月的週，這個月只算這個月的日子，兩個月加起來是整週）；
+// 整月損益＝每日損益相加、整月報酬率＝每日報酬連乘減 1。整列都不是這個月的週（月初週末那一列）不列。沒有資料的週與月，pnl、ret 是 null
+export function calendarMonth(daily, ym) {
+  const byDate = new Map(daily.map((d) => [d.date, d]));
+  const [y, m] = ym.split("-").map(Number);
+  const DAY = 86400000;
+  const first = Date.UTC(y, m - 1, 1), end = Date.UTC(y, m, 0); // 當月第一天、最後一天
+  const back = (new Date(first).getUTCDay() + 6) % 7;            // 往前退到那一週的週一
+  const weeks = [];
+  for (let monday = first - back * DAY; monday <= end; monday += 7 * DAY) {
+    const cells = [];
+    for (let k = 0; k < 5; k++) {
+      const t = monday + k * DAY;
+      if (t < first || t > end) {
+        cells.push(null);
+        continue;
+      }
+      const date = new Date(t).toISOString().slice(0, 10);
+      const d = byDate.get(date);
+      cells.push(d ? { date, day: new Date(t).getUTCDate(), trading: true, pnl: d.pnl, ret: d.ret } : { date, day: new Date(t).getUTCDate(), trading: false });
+    }
+    if (cells.every((c) => c == null)) continue;
+    const live = cells.filter((c) => c?.trading);
+    weeks.push({ cells, pnl: live.length ? live.reduce((a, c) => a + c.pnl, 0) : null, ret: chain(live.map((c) => c.ret)) });
+  }
+  const live = weeks.flatMap((w) => w.cells).filter((c) => c?.trading);
+  return { ym, weeks, pnl: live.length ? live.reduce((a, c) => a + c.pnl, 0) : null, ret: chain(live.map((c) => c.ret)) };
+}

@@ -1,8 +1,8 @@
 // 資產頁的表格類卡片：個股表現、報酬日曆。跟 assets_charts.js 一樣共用 ctx 的期間選擇（個股表現跟著期間；報酬日曆有自己的月份切換）。
 import { loadHoldings, loadDaily, loadIndex } from "../data.js";
 import { loadPerformance } from "../perf.js";
-import { periodStart, periodLabel, daysFrom, performanceRows } from "../assets.js";
-import { el, pct, tone, shortDate } from "../fmt.js";
+import { periodStart, periodLabel, daysFrom, performanceRows, dailyPnl, monthsBetween, calendarMonth } from "../assets.js";
+import { el, pct, tone, shortDate, twd, int, signed, taipeiToday } from "../fmt.js";
 import { card, notice } from "../ui.js";
 import { NAMES } from "../config.js";
 
@@ -55,4 +55,63 @@ export async function stocksCard(ctx) {
     note,
     el("p", { class: "tiny" }, "全部用收盤價對收盤價的價格報酬，不含股利（跟對照的加權指數、S&P 500 價格指數一致，所以含配息的 ETF 會比「投資報酬率對比較標的」那張卡低一點）；"
       + "美股用美元價格，不含匯率。這是每一檔自己的報酬，不是你的實際損益（不看你什麼時候買、買多少）。"));
+}
+
+// ── 報酬日曆（ASSETS_PAGE 2.5）──
+// 一個月一頁：週一到週五五欄加「週損益」；每格寫日期、當天損益與當天報酬率（時間加權指數的單日變化），賺的淡紅底、賠的淡綠底。
+// 休市或還沒到的日子只留淡淡的日期。有自己的月份切換（從第一筆買進的月份到這個月），不跟上面的期間選擇
+const WEEKDAYS = ["一", "二", "三", "四", "五"];
+
+export async function calendarCard() {
+  const perf = await loadPerformance();
+  const daily = dailyPnl(perf.days);
+  const months = monthsBetween(perf.first.slice(0, 7), [perf.last.slice(0, 7), taipeiToday().slice(0, 7)].sort().at(-1));
+  let at = months.length - 1; // 預設這個月
+  const title = el("strong", { class: "cal-title" });
+  const sum = el("div", { class: "cal-sum" });
+  const grid = el("div", { class: "cal", role: "table", "aria-label": "報酬日曆" });
+  const prev = el("button", { class: "btn small", type: "button", "aria-label": "上一個月" }, "‹");
+  const next = el("button", { class: "btn small", type: "button", "aria-label": "下一個月" }, "›");
+  const money = (x) => (x == null ? "—" : signed(x, int));
+  const rate = (r) => (r == null ? "" : pct(r * 100, 2));
+  const kind = (x) => (x > 0 ? "gain" : x < 0 ? "loss" : "");
+
+  const render = () => {
+    const ym = months[at];
+    const m = calendarMonth(daily, ym);
+    title.textContent = `${ym.replace("-", "/")} 報酬`;
+    prev.disabled = at === 0;
+    next.disabled = at === months.length - 1;
+    sum.replaceChildren(m.pnl == null ? "這個月還沒有資料" : el("span", {}, "整月損益 ", el("strong", { class: tone(m.pnl) }, signed(m.pnl, twd)),
+      "　整月報酬率 ", m.ret == null ? "—" : el("strong", { class: tone(m.ret) }, pct(m.ret * 100, 2))));
+    grid.replaceChildren(
+      ...WEEKDAYS.map((w) => el("div", { class: "cal-h", role: "columnheader" }, w)), el("div", { class: "cal-h", role: "columnheader" }, "週損益"),
+      ...m.weeks.flatMap((w) => [
+        ...w.cells.map((c) => {
+          if (!c) return el("div", { class: "cal-c none", role: "cell" });
+          if (!c.trading) return el("div", { class: "cal-c off", role: "cell", title: `${shortDate(c.date)} 休市或沒有資料` }, el("span", { class: "cal-d" }, String(c.day)));
+          return el("div", { class: `cal-c ${kind(c.pnl)}`, role: "cell", "aria-label": `${shortDate(c.date)} 損益 ${money(c.pnl)}${c.ret == null ? "" : `，報酬率 ${rate(c.ret)}`}` },
+            el("span", { class: "cal-d" }, String(c.day)),
+            el("span", { class: `cal-p ${tone(c.pnl)}` }, money(c.pnl)),
+            c.ret != null && el("span", { class: `cal-r ${tone(c.ret)}` }, rate(c.ret)));
+        }),
+        w.pnl == null ? el("div", { class: "cal-c none", role: "cell" })
+          : el("div", { class: `cal-c cal-w ${kind(w.pnl)}`, role: "cell" },
+            el("span", { class: `cal-p ${tone(w.pnl)}` }, money(w.pnl)),
+            w.ret != null && el("span", { class: `cal-r ${tone(w.ret)}` }, rate(w.ret))),
+      ]));
+  };
+  prev.addEventListener("click", () => {
+    at = Math.max(0, at - 1);
+    render();
+  });
+  next.addEventListener("click", () => {
+    at = Math.min(months.length - 1, at + 1);
+    render();
+  });
+  render();
+  return card("報酬日曆", el("div", { class: "cal-nav" }, prev, title, next), sum, grid,
+    el("p", { class: "tiny" }, "每格是當天的損益（含手續費與匯率變動、台股 ETF 現金股利）與報酬率（時間加權指數的單日變化，扣掉當天買進、賣出的影響）；"
+      + "週損益是那一列有資料的日子相加，週報酬率與整月報酬率是每日報酬連乘；跨月的週，每個月只算那個月的日子。"
+      + "休市或還沒到的日子只留淡色的日期。第一筆買進那天只有損益、沒有報酬率。這張卡的月份自己切換，不跟上面的期間選擇。"));
 }

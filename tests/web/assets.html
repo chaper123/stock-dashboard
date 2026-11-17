@@ -6,7 +6,7 @@
 <p>docs/ASSETS_PAGE.md 第 3 節的驗收：六種期間起點；每日損益（含投入、股利的日子）；累計損益從期間起點歸 0、期間內每日損益加總等於累計損益；比較線換算成期間起點 0%、含股利與不含股利；個股表現的三種報酬；日曆的週合計、週與月報酬率連乘、休市留空、跨月的週。</p>
 <script type="module">
 import { test, eq, near, ok, report } from "./harness.js";
-import { PERIODS, periodLabel, periodStart, dailyPnl, daysFrom, periodPnl, valuesAt, etfIndex, rebase, shiftDays, priceReturns, performanceRows } from "/site/js/assets.js";
+import { PERIODS, periodLabel, periodStart, dailyPnl, daysFrom, periodPnl, valuesAt, etfIndex, rebase, shiftDays, priceReturns, performanceRows, monthsBetween, calendarMonth } from "/site/js/assets.js";
 import { computePerf } from "/site/js/perf.js";
 
 // ── 期間 ──
@@ -203,6 +203,78 @@ test("個股表現的列：沒有持有的市場不列對照指數；加權指�
   const bars = { A: cl([["2026-11-03", 100], ["2026-11-10", 120]]) };
   const rows = performanceRows({ holdings: [{ market: "tw", code: "A" }], bars, indices: { tw: { code: "TAIEX", name: "加權指數", bars: [] }, us: { code: "SPX", name: "S&P 500", bars: bars.A } }, last: "2026-11-10", start: "2026-11-03" });
   eq(rows.map((r) => [r.code, r.missing]), [["A", false], ["TAIEX", true]]);
+});
+
+// ── 報酬日曆 ──
+// 2026-09-28（週一）到 2026-11-06：9/30、10/9 休市（沒有資料）；9/28 是第一個有資料的日子（報酬率 null）。損益與報酬率自己填，方便算
+const cal = [
+  ["2026-09-28", 100, null], ["2026-09-29", -50, -0.02], ["2026-09-30", 30, 0.01],
+  ["2026-10-01", 20, 0.01], ["2026-10-02", -10, -0.005],
+  ["2026-10-05", 40, 0.02], ["2026-10-06", 0, 0], ["2026-10-07", 15, 0.005], ["2026-10-08", -5, -0.01],
+  ["2026-10-12", 60, 0.03], ["2026-10-13", 10, 0.004],
+  ["2026-11-02", 200, 0.05], ["2026-11-03", -100, -0.04],
+].map(([date, pnl, ret]) => ({ date, pnl, ret }));
+const rnd = (x) => Math.round(x * 1e6) / 1e6;
+test("monthsBetween：含頭尾，跨年", () => {
+  eq(monthsBetween("2026-04", "2026-04"), ["2026-04"]);
+  eq(monthsBetween("2026-11", "2027-02"), ["2026-11", "2026-12", "2027-01", "2027-02"]);
+  eq(monthsBetween("2026-04", "2026-11").length, 8);
+});
+test("日曆：週一到週五五欄；休市與沒資料的日子留空（trading:false），不是這個月的格子是 null", () => {
+  const oct = calendarMonth(cal, "2026-10");
+  eq(oct.weeks.length, 5);                         // 9/28 那週、10/5、10/12、10/19、10/26
+  eq(oct.weeks[0].cells.map((c) => c && c.day), [null, null, null, 1, 2]);   // 9/28～9/30 不是 10 月
+  eq(oct.weeks[1].cells.map((c) => c.trading), [true, true, true, true, false]);   // 10/9 休市
+  eq(oct.weeks[1].cells[4], { date: "2026-10-09", day: 9, trading: false });
+  eq(oct.weeks[2].cells.map((c) => c.trading), [true, true, false, false, false]);  // 10/14 起還沒資料
+  eq(oct.weeks[3].cells.every((c) => !c.trading), true);
+  eq(oct.weeks[0].cells[3], { date: "2026-10-01", day: 1, trading: true, pnl: 20, ret: 0.01 });
+});
+test("日曆：整列都不是這個月的週不列（11 月 1 日是週日）", () => {
+  const nov = calendarMonth(cal, "2026-11");
+  eq(nov.weeks.length, 5);                         // 11/2、11/9、11/16、11/23、11/30（11/30 那列只有週一是 11 月）
+  eq(nov.weeks[0].cells.map((c) => c.day), [2, 3, 4, 5, 6]);
+  eq(nov.weeks.at(-1).cells.map((c) => c && c.day), [30, null, null, null, null]);
+});
+test("週損益＝那一列每日損益相加；週報酬率＝每日報酬連乘減 1", () => {
+  const oct = calendarMonth(cal, "2026-10");
+  eq(oct.weeks[1].pnl, 40 + 0 + 15 - 5);
+  near(oct.weeks[1].ret, 1.02 * 1.0 * 1.005 * 0.99 - 1, 1e-12);
+  eq(oct.weeks[2].pnl, 70);
+  near(oct.weeks[2].ret, 1.03 * 1.004 - 1, 1e-12);
+  eq([oct.weeks[3].pnl, oct.weeks[3].ret], [null, null]);       // 整週都沒資料
+});
+test("整月損益＝每日損益相加（等於各週相加）；整月報酬率＝每日報酬連乘減 1", () => {
+  const oct = calendarMonth(cal, "2026-10");
+  eq(oct.pnl, 20 - 10 + 40 + 0 + 15 - 5 + 60 + 10);
+  eq(oct.pnl, oct.weeks.reduce((a, w) => a + (w.pnl ?? 0), 0));
+  near(oct.ret, 1.01 * 0.995 * 1.02 * 1.0 * 1.005 * 0.99 * 1.03 * 1.004 - 1, 1e-12);
+  const nov = calendarMonth(cal, "2026-11");
+  eq(nov.pnl, 100);
+  near(nov.ret, 1.05 * 0.96 - 1, 1e-12);
+  eq([nov.weeks[1].pnl, nov.weeks[1].ret], [null, null]);
+});
+test("跨月的週：這個月只算這個月的日子，兩個月加起來是整週；週報酬率連乘也是", () => {
+  const sep = calendarMonth(cal, "2026-09"), oct = calendarMonth(cal, "2026-10");
+  const sepLast = sep.weeks.at(-1), octFirst = oct.weeks[0];
+  eq(sepLast.cells.map((c) => c && c.day), [28, 29, 30, null, null]);
+  eq([sepLast.pnl, octFirst.pnl], [100 - 50 + 30, 20 - 10]);
+  eq(sepLast.pnl + octFirst.pnl, 100 - 50 + 30 + 20 - 10);                       // 整週
+  near((1 + sepLast.ret) * (1 + octFirst.ret), 0.98 * 1.01 * 1.01 * 0.995, 1e-12);   // 9/28 是第一個有資料的日子、沒有報酬率，不乘
+});
+test("日曆：第一天（沒有報酬率）算損益、不乘報酬；沒有資料的月份 pnl、ret 是 null", () => {
+  const sep = calendarMonth(cal, "2026-09");
+  eq(sep.weeks.at(-1).cells[0], { date: "2026-09-28", day: 28, trading: true, pnl: 100, ret: null });
+  eq(sep.pnl, 80);
+  near(sep.ret, 0.98 * 1.01 - 1, 1e-12);
+  const none = calendarMonth(cal, "2026-08");
+  eq([none.pnl, none.ret], [null, null]);
+  eq(none.weeks.every((w) => w.pnl === null && w.ret === null), true);
+});
+test("日曆：只有第一天的月份只有損益、沒有報酬率", () => {
+  const one = calendarMonth([{ date: "2026-04-08", pnl: 3.56, ret: null }], "2026-04");
+  near(one.pnl, 3.56, 1e-12);
+  eq(one.ret, null);
 });
 
 report();

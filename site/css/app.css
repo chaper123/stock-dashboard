@@ -439,6 +439,20 @@ details.card.more > summary { padding: 0; }
 @media (min-width: 700px) { .lw-box { height: 320px; } .lw-box.tall { height: 440px; } }
 .head-note { margin-left: 10px; font-size: .9rem; font-weight: 400; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .head-note strong { font-weight: 700; }
+/* 報酬日曆：五個交易日加週損益，賺淡紅底、賠淡綠底（台股習慣紅漲綠跌） */
+.cal-nav { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.cal-nav .btn { margin-left: 0; min-width: 40px; min-height: 36px; font-size: 1.1rem; }
+.cal-sum { text-align: center; font-size: .9rem; margin: 4px 0 8px; font-variant-numeric: tabular-nums; }
+.cal { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.15fr); gap: 3px; }
+.cal-h { text-align: center; font-size: .75rem; color: var(--ink-2); padding: 2px 0; }
+.cal-c { min-height: 56px; padding: 3px 3px 2px; border-radius: 6px; display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow: hidden;
+  font-size: .64rem; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.cal-c.gain { background: color-mix(in srgb, var(--up) 18%, transparent); }
+.cal-c.loss { background: color-mix(in srgb, var(--down) 18%, transparent); }
+.cal-d { font-size: .7rem; color: var(--ink-2); }
+.cal-c.off .cal-d { color: var(--muted); opacity: .55; }
+.cal-p { font-weight: 700; } .cal-w .cal-p { margin-top: 12px; }
+@media (min-width: 560px) { .cal-c { font-size: .8rem; min-height: 64px; padding: 4px 6px; } .cal-d { font-size: .78rem; } }
 .stock-perf .idx-row td { font-style: italic; color: var(--muted); }
 .stock-perf td:first-child { white-space: normal; }
 .stock-perf th, .stock-perf td { padding-left: 4px; padding-right: 4px; }
