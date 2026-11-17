@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>資產頁的計算</title></head>
+<body>
+<h1>資產頁的計算（site/js/assets.js）</h1>
+<p>docs/ASSETS_PAGE.md 第 3 節的驗收：六種期間起點；每日損益（含投入、股利的日子）；累計損益從期間起點歸 0、期間內每日損益加總等於累計損益；比較線換算成期間起點 0%、含股利與不含股利；個股表現的三種報酬；日曆的週合計、週與月報酬率連乘、休市留空、跨月的週。</p>
+<script type="module">
+import { test, eq, near, ok, report } from "./harness.js";
+import { PERIODS, periodLabel, periodStart, dailyPnl, daysFrom, periodPnl, valuesAt, etfIndex, rebase, shiftDays, priceReturns, performanceRows, monthsBetween, calendarMonth } from "/site/js/assets.js";
+import { computePerf } from "/site/js/perf.js";
+
+// ── 期間 ──
+test("六種期間：一週、一月、一季、年初至今、一年、全部，預設全部在最後", () => {
+  eq(PERIODS.map(([k]) => k), ["1w", "1m", "3m", "ytd", "1y", "all"]);
+  eq(PERIODS.map(([, t]) => t), ["一週", "一月", "一季", "年初至今", "一年", "全部"]);
+  eq(periodLabel("ytd"), "年初至今");
+});
+test("期間起點：從最後一個交易日往前推；比第一筆買進早就從第一筆買進開始", () => {
+  const first = "2026-04-08", last = "2026-11-16";
+  eq(periodStart("1w", first, last), "2026-11-09");
+  eq(periodStart("1m", first, last), "2026-10-16");
+  eq(periodStart("3m", first, last), "2026-08-16");
+  eq(periodStart("ytd", first, last), first);        // 2026-01-01 比第一筆買進早
+  eq(periodStart("1y", first, last), first);         // 2025-11-16 比第一筆買進早
+  eq(periodStart("all", first, last), first);
+  // 資料夠長的時候：年初至今是當年 1/1、一年是去年同一天
+  eq(periodStart("ytd", "2020-01-01", last), "2026-01-01");
+  eq(periodStart("1y", "2020-01-01", last), "2025-11-16");
+  eq(periodStart("3m", "2020-01-01", last), "2026-08-16");
+});
+test("期間起點：月底不夠的月份取當月最後一天；跨年；閏年", () => {
+  eq(periodStart("1m", "2020-01-01", "2026-03-31"), "2026-02-28");
+  eq(periodStart("1m", "2020-01-01", "2028-03-31"), "2028-02-29");
+  eq(periodStart("3m", "2020-01-01", "2026-05-31"), "2026-02-28");
+  eq(periodStart("1m", "2020-01-01", "2026-01-15"), "2025-12-15");
+  eq(periodStart("1w", "2020-01-01", "2026-01-03"), "2025-12-27");
+  eq(periodStart("1y", "2020-01-01", "2028-02-29"), "2027-02-28");
+});
+
+// ── 每日損益、累計損益 ──
+// 第 0 天買進 996（成交價到收盤價差 +3），第 2 天再買 500，第 3 天除息 10，第 4 天賣出 200；index 照 perf.js 的口徑逐日連乘
+const raw = [["2026-04-08", 999, 996, 0], ["2026-04-09", 1010, 0, 0], ["2026-04-10", 1500, 500, 0], ["2026-04-13", 1490, 0, 10], ["2026-04-14", 1300, -200, 0], ["2026-04-15", 1330, 0, 0]];
+let idx = 1, prevV = null;
+const days = raw.map(([date, value, flow, div]) => {
+  if (prevV != null) idx *= (value - flow + div) / prevV;
+  prevV = value;
+  return { date, value, flow, div, invested: 0, index: idx, hv: {}, px: {} };
+});
+const sum = (xs) => xs.reduce((a, x) => a + x, 0);
+
+test("每日損益：市值變化 − 當天投入（賣出算負的）＋ 當天股利；第一天是市值 − 投入", () => {
+  const p = dailyPnl(days);
+  eq(p.map((x) => x.pnl), [3, 11, -10, 0, 10, 30]);
+  eq(p.map((x) => x.date), raw.map((r) => r[0]));
+  // 買進的那天（第 2 天）：市值多了 490，其中 500 是自己投入的，所以損益是 −10；除息那天股利算進損益
+  eq([p[2].pnl, p[3].pnl], [-10, 0]);
+});
+test("每日報酬率＝時間加權指數的單日變化（index(d) ÷ index(d−1) − 1），第一天沒有", () => {
+  const p = dailyPnl(days);
+  eq(p[0].ret, null);
+  near(p[1].ret, 1010 / 999 - 1, 1e-12);
+  near(p[2].ret, 1000 / 1010 - 1, 1e-12);       // 當天買進的 500 不算報酬
+  near(p[3].ret, 1500 / 1500 - 1, 1e-12);       // 股利補回市值的下跌
+  near(p[4].ret, 1500 / 1490 - 1, 1e-12);       // 賣出的 200 不算虧損
+  near(p[5].ret, 1330 / 1300 - 1, 1e-12);
+  near(days.at(-1).index, p.reduce((x, r) => x * (1 + (r.ret ?? 0)), 1), 1e-12);
+});
+test("累計損益：選全部時從第一天的損益開始累加，最後一天＝最新市值 − 累計投入 ＋ 已領股利", () => {
+  const rows = periodPnl(days, "2026-04-08");
+  eq(rows.map((r) => r.cum), [3, 14, 4, 4, 14, 44]);
+  eq(rows.map((r) => r.pnl), [3, 11, -10, 0, 10, 30]);
+  eq(rows[0].ret, null);
+  const invested = sum(days.map((d) => d.flow)), divs = sum(days.map((d) => d.div));
+  eq(rows.at(-1).cum, days.at(-1).value - invested + divs);
+  eq(rows.at(-1).cum, sum(rows.map((r) => r.pnl)));
+});
+test("累計損益：其他期間的第一天歸 0，期間內每日損益加總＝累計損益＝期間末市值 − 期間初市值 − 之後的投入 ＋ 之後的股利", () => {
+  const rows = periodPnl(days, "2026-04-10");
+  eq(rows.map((r) => r.date), ["2026-04-10", "2026-04-13", "2026-04-14", "2026-04-15"]);
+  eq(rows.map((r) => r.cum), [0, 0, 10, 40]);
+  eq(rows.map((r) => r.pnl), [null, 0, 10, 30]);        // 第一天自己的損益（−10）算在期間之前
+  eq(rows.at(-1).cum, sum(rows.map((r) => r.pnl ?? 0)));
+  const after = days.filter((d) => d.date > "2026-04-10");
+  eq(rows.at(-1).cum, 1330 - 1500 - sum(after.map((d) => d.flow)) + sum(after.map((d) => d.div)));
+  // 只有一天的期間：累計 0
+  const one = periodPnl(days, "2026-04-15");
+  eq(one.map((r) => [r.date, r.pnl, r.cum]), [["2026-04-15", null, 0]]);
+});
+test("期間起點不是交易日：從下一個交易日開始；起點在最後一天之後沒有資料", () => {
+  const rows = periodPnl(days, "2026-04-11");          // 週六
+  eq(rows[0].date, "2026-04-13");
+  eq(rows.map((r) => r.cum), [0, 10, 40]);
+  eq(periodPnl(days, "2026-04-16"), []);
+  eq(daysFrom(days, "2026-04-13").length, 3);
+  eq(daysFrom(days, "2026-04-16"), []);
+});
+test("期間內沒有投入也沒有股利：累計損益就是市值的變化", () => {
+  const flat = ["2026-05-04", "2026-05-05", "2026-05-06"].map((date, i) => ({ date, value: [1000, 1100, 1050][i], flow: 0, div: 0, invested: 1000, index: [1, 1.1, 1.05][i], hv: {}, px: {} }));
+  eq(periodPnl(flat, "2026-05-05").map((r) => r.cum), [0, -50]);
+});
+
+// ── 比較線 ──
+const bar = (time, close) => ({ time, open: close, high: close, low: close, close, volume: 1 });
+test("valuesAt：每個日子取不晚於那天的最後一筆，那天之前沒有資料是 null", () => {
+  const rows = [{ date: "2026-05-04", value: 10 }, { date: "2026-05-06", value: 12 }];
+  eq(valuesAt(rows, ["2026-05-01", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07"]), [null, 10, 10, 12, 12]);
+  eq(valuesAt([bar("2026-05-04", 7)], ["2026-05-04"], (b) => b.close), [7]);
+});
+test("rebase：期間起點換算成 0%，起點或某天沒有值就是 null", () => {
+  near(rebase([2, 2.2, 1.9])[1], 10, 1e-9);
+  near(rebase([2, 2.2, 1.9])[2], -5, 1e-9);
+  eq(rebase([2, 2.2, 1.9], 1).map((x) => Math.round(x * 1000) / 1000), [-9.091, 0, -13.636]);
+  eq(rebase([null, 2, 3]), [null, null, null]);
+  eq(rebase([2, null, 3]), [0, null, 50]);
+  eq(rebase(null), []);
+});
+test("ETF 比較線只用價格（沒有配息資料）：逐日連乘等於收盤價相除", () => {
+  const dates = ["2026-05-04", "2026-05-05", "2026-05-06"];
+  const idx = etfIndex([bar("2026-05-04", 100), bar("2026-05-05", 102), bar("2026-05-06", 101)], [], dates);
+  near(idx[0], 1, 1e-12); near(idx[1], 1.02, 1e-12); near(idx[2], 1.01, 1e-12);
+  eq(etfIndex([bar("2026-05-04", 100), bar("2026-05-05", 102), bar("2026-05-06", 101)], null, dates).length, 3);
+});
+test("ETF 比較線含股利：除息那天股價扣掉股利，指數不憑空損失；不含股利會少算", () => {
+  const dates = ["2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07"];
+  const bars = [bar("2026-05-04", 100), bar("2026-05-05", 100), bar("2026-05-06", 95), bar("2026-05-07", 96)];
+  const withDiv = etfIndex(bars, [{ date: "2026-05-06", cash: 5 }], dates);
+  const price = etfIndex(bars, [], dates);
+  eq(withDiv.map((x) => Math.round(x * 10000) / 10000), [1, 1, 1, 1.0105]);       // 除息日 (95+5)/100 = 1；之後 96/95
+  eq(price.map((x) => Math.round(x * 10000) / 10000), [1, 1, 0.95, 0.96]);
+  ok(withDiv.at(-1) > price.at(-1));
+});
+test("ETF 比較線的除息日：落在兩個日子之間（休市日）算在下一個日子；第一天（含）以前的除息不算", () => {
+  const dates = ["2026-05-04", "2026-05-08", "2026-05-11"];       // 5/9、5/10 是週末，不在日子裡
+  const bars = [bar("2026-05-04", 100), bar("2026-05-08", 100), bar("2026-05-11", 90)];
+  const idx = etfIndex(bars, [{ date: "2026-05-09", cash: 10 }, { date: "2026-05-04", cash: 3 }, { date: "2026-04-20", cash: 3 }], dates);
+  eq(idx.map((x) => Math.round(x * 10000) / 10000), [1, 1, 1]);   // 5/9 的 10 元算在 5/11；5/4 以前的不算
+});
+test("ETF 比較線：缺日沿用前一天收盤；第一天以前沒有日線就回傳 null；配息的 0、負數、壞日期忽略", () => {
+  const dates = ["2026-05-04", "2026-05-05", "2026-05-06"];
+  const idx = etfIndex([bar("2026-05-04", 100), bar("2026-05-06", 110)], [{ date: "x", cash: 5 }, { date: "2026-05-05", cash: 0 }, { date: "2026-05-05", cash: -1 }], dates);
+  eq(idx.map((x) => Math.round(x * 10000) / 10000), [1, 1, 1.1]);
+  eq(etfIndex([bar("2026-05-05", 100)], [], dates), null);
+  eq(etfIndex([], [], dates), null);
+  eq(etfIndex([bar("2026-05-04", 100)], [], []), null);
+});
+test("ETF 比較線跟 perf.js 對同一檔持股的算法一致（含股利）", () => {
+  const dates = ["2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08"];
+  const closes = [50, 51, 49, 49.5, 50.5];
+  const bars = dates.map((d, i) => bar(d, closes[i]));
+  const events = [{ ex_date: "2026-05-06", cash: 1.2 }];
+  const perf = computePerf({ trades: [{ date: "2026-05-04", market: "tw", code: "X", side: "買進", shares: 1000, price: 50, twd: 50000 }], bars: { X: bars }, fxRows: [], divs: { etfs: { X: { events } } } });
+  const mine = etfIndex(bars, events.map((e) => ({ date: e.ex_date, cash: e.cash })), dates);
+  eq(perf.days.map((d) => d.date), dates);
+  perf.days.forEach((d, i) => near(mine[i], d.index, 1e-12, dates[i]));
+  // 換算成期間（5/5 起）0%
+  near(rebase(mine, 1).at(-1), (perf.days.at(-1).index / perf.days[1].index - 1) * 100, 1e-9);
+});
+
+// ── 個股表現 ──
+const cl = (pairs) => pairs.map(([time, close]) => bar(time, close));
+test("shiftDays：往前、往後推幾天，跨月跨年", () => {
+  eq([shiftDays("2026-11-16", -7), shiftDays("2026-01-03", -7), shiftDays("2026-02-27", 3), shiftDays("2028-02-28", 1)], ["2026-11-09", "2025-12-27", "2026-03-02", "2028-02-29"]);
+});
+test("priceReturns：收盤對收盤的價格報酬，近 1 日跟前一根比、近一週跟 7 天前（含）以前最近的一根比、期間跟起點（含）以前最近的一根比", () => {
+  const bars = cl([["2026-11-02", 100], ["2026-11-03", 110], ["2026-11-04", 121], ["2026-11-05", 121], ["2026-11-06", 90.75], ["2026-11-09", 99], ["2026-11-10", 108.9]]);
+  const r = priceReturns(bars, "2026-11-10", "2026-11-03");
+  near(r.day, 10, 1e-9);                       // 108.9 / 99
+  near(r.week, (108.9 / 110 - 1) * 100, 1e-9); // 7 天前是 11/03（110）
+  near(r.period, (108.9 / 110 - 1) * 100, 1e-9);
+  eq([r.endDate, r.close], ["2026-11-10", 108.9]);
+  // 起點不是交易日：用它以前最近的一根（週末的起點用週五收盤）
+  near(priceReturns(bars, "2026-11-10", "2026-11-07").period, (108.9 / 90.75 - 1) * 100, 1e-9);
+  // last 不是這檔的交易日（例如美股休市）：用不晚於 last 的最後一根
+  eq(priceReturns(bars, "2026-11-12", "2026-11-03").endDate, "2026-11-10");
+});
+test("priceReturns：資料不夠早是 null；只有一根；完全沒有資料", () => {
+  const bars = cl([["2026-11-09", 99], ["2026-11-10", 108.9]]);
+  const r = priceReturns(bars, "2026-11-10", "2026-11-03");
+  near(r.day, 10, 1e-9);
+  eq([r.week, r.period], [null, null]);        // 7 天前、起點都在第一根之前
+  eq(priceReturns(cl([["2026-11-10", 5]]), "2026-11-10", "2026-11-10").day, null);
+  eq(priceReturns(cl([["2026-11-10", 5]]), "2026-11-10", "2026-11-10").period, 0);
+  eq(priceReturns([], "2026-11-10", "2026-11-03").close, null);
+  eq(priceReturns(null, "2026-11-10", "2026-11-03").day, null);
+});
+test("個股表現的列：台股依期間報酬由高到低、後面接加權指數；美股後面接 S&P 500；讀不到的排最後", () => {
+  const up = (a, b) => cl([["2026-11-03", a], ["2026-11-09", a], ["2026-11-10", b]]);
+  const rows = performanceRows({
+    holdings: [{ market: "tw", code: "A" }, { market: "us", code: "U1" }, { market: "tw", code: "B" }, { market: "us", code: "U2" }, { market: "tw", code: "C" }],
+    bars: { A: up(100, 105), B: up(100, 130), U1: up(10, 9), U2: up(10, 12) },       // C 沒有日線
+    indices: { tw: { code: "TAIEX", name: "加權指數", bars: up(1000, 1100) }, us: { code: "SPX", name: "S&P 500", bars: up(5000, 5050) } },
+    last: "2026-11-10", start: "2026-11-03",
+  });
+  eq(rows.map((r) => r.code), ["B", "A", "C", "TAIEX", "U2", "U1", "SPX"]);
+  eq(rows.map((r) => r.kind), ["stock", "stock", "stock", "index", "stock", "stock", "index"]);
+  eq(rows.map((r) => r.missing), [false, false, true, false, false, false, false]);
+  near(rows[0].period, 30, 1e-9);
+  near(rows[3].period, 10, 1e-9);                 // 加權指數
+  near(rows[6].period, 1, 1e-9);                  // S&P 500
+  eq([rows[2].period, rows[2].day], [null, null]);
+});
+test("個股表現的列：沒有持有的市場不列對照指數；加權指數資料讀不到時那一列標 missing", () => {
+  const bars = { A: cl([["2026-11-03", 100], ["2026-11-10", 120]]) };
+  const rows = performanceRows({ holdings: [{ market: "tw", code: "A" }], bars, indices: { tw: { code: "TAIEX", name: "加權指數", bars: [] }, us: { code: "SPX", name: "S&P 500", bars: bars.A } }, last: "2026-11-10", start: "2026-11-03" });
+  eq(rows.map((r) => [r.code, r.missing]), [["A", false], ["TAIEX", true]]);
+});
+
+// ── 報酬日曆 ──
+// 2026-09-28（週一）到 2026-11-06：9/30、10/9 休市（沒有資料）；9/28 是第一個有資料的日子（報酬率 null）。損益與報酬率自己填，方便算
+const cal = [
+  ["2026-09-28", 100, null], ["2026-09-29", -50, -0.02], ["2026-09-30", 30, 0.01],
+  ["2026-10-01", 20, 0.01], ["2026-10-02", -10, -0.005],
+  ["2026-10-05", 40, 0.02], ["2026-10-06", 0, 0], ["2026-10-07", 15, 0.005], ["2026-10-08", -5, -0.01],
+  ["2026-10-12", 60, 0.03], ["2026-10-13", 10, 0.004],
+  ["2026-11-02", 200, 0.05], ["2026-11-03", -100, -0.04],
+].map(([date, pnl, ret]) => ({ date, pnl, ret }));
+const rnd = (x) => Math.round(x * 1e6) / 1e6;
+test("monthsBetween：含頭尾，跨年", () => {
+  eq(monthsBetween("2026-04", "2026-04"), ["2026-04"]);
+  eq(monthsBetween("2026-11", "2027-02"), ["2026-11", "2026-12", "2027-01", "2027-02"]);
+  eq(monthsBetween("2026-04", "2026-11").length, 8);
+});
+test("日曆：週一到週五五欄；休市與沒資料的日子留空（trading:false），不是這個月的格子是 null", () => {
+  const oct = calendarMonth(cal, "2026-10");
+  eq(oct.weeks.length, 5);                         // 9/28 那週、10/5、10/12、10/19、10/26
+  eq(oct.weeks[0].cells.map((c) => c && c.day), [null, null, null, 1, 2]);   // 9/28～9/30 不是 10 月
+  eq(oct.weeks[1].cells.map((c) => c.trading), [true, true, true, true, false]);   // 10/9 休市
+  eq(oct.weeks[1].cells[4], { date: "2026-10-09", day: 9, trading: false });
+  eq(oct.weeks[2].cells.map((c) => c.trading), [true, true, false, false, false]);  // 10/14 起還沒資料
+  eq(oct.weeks[3].cells.every((c) => !c.trading), true);
+  eq(oct.weeks[0].cells[3], { date: "2026-10-01", day: 1, trading: true, pnl: 20, ret: 0.01 });
+});
+test("日曆：整列都不是這個月的週不列（11 月 1 日是週日）", () => {
+  const nov = calendarMonth(cal, "2026-11");
+  eq(nov.weeks.length, 5);                         // 11/2、11/9、11/16、11/23、11/30（11/30 那列只有週一是 11 月）
+  eq(nov.weeks[0].cells.map((c) => c.day), [2, 3, 4, 5, 6]);
+  eq(nov.weeks.at(-1).cells.map((c) => c && c.day), [30, null, null, null, null]);
+});
+test("週損益＝那一列每日損益相加；週報酬率＝每日報酬連乘減 1", () => {
+  const oct = calendarMonth(cal, "2026-10");
+  eq(oct.weeks[1].pnl, 40 + 0 + 15 - 5);
+  near(oct.weeks[1].ret, 1.02 * 1.0 * 1.005 * 0.99 - 1, 1e-12);
+  eq(oct.weeks[2].pnl, 70);
+  near(oct.weeks[2].ret, 1.03 * 1.004 - 1, 1e-12);
+  eq([oct.weeks[3].pnl, oct.weeks[3].ret], [null, null]);       // 整週都沒資料
+});
+test("整月損益＝每日損益相加（等於各週相加）；整月報酬率＝每日報酬連乘減 1", () => {
+  const oct = calendarMonth(cal, "2026-10");
+  eq(oct.pnl, 20 - 10 + 40 + 0 + 15 - 5 + 60 + 10);
+  eq(oct.pnl, oct.weeks.reduce((a, w) => a + (w.pnl ?? 0), 0));
+  near(oct.ret, 1.01 * 0.995 * 1.02 * 1.0 * 1.005 * 0.99 * 1.03 * 1.004 - 1, 1e-12);
+  const nov = calendarMonth(cal, "2026-11");
+  eq(nov.pnl, 100);
+  near(nov.ret, 1.05 * 0.96 - 1, 1e-12);
+  eq([nov.weeks[1].pnl, nov.weeks[1].ret], [null, null]);
+});
+test("跨月的週：這個月只算這個月的日子，兩個月加起來是整週；週報酬率連乘也是", () => {
+  const sep = calendarMonth(cal, "2026-09"), oct = calendarMonth(cal, "2026-10");
+  const sepLast = sep.weeks.at(-1), octFirst = oct.weeks[0];
+  eq(sepLast.cells.map((c) => c && c.day), [28, 29, 30, null, null]);
+  eq([sepLast.pnl, octFirst.pnl], [100 - 50 + 30, 20 - 10]);
+  eq(sepLast.pnl + octFirst.pnl, 100 - 50 + 30 + 20 - 10);                       // 整週
+  near((1 + sepLast.ret) * (1 + octFirst.ret), 0.98 * 1.01 * 1.01 * 0.995, 1e-12);   // 9/28 是第一個有資料的日子、沒有報酬率，不乘
+});
+test("日曆：第一天（沒有報酬率）算損益、不乘報酬；沒有資料的月份 pnl、ret 是 null", () => {
+  const sep = calendarMonth(cal, "2026-09");
+  eq(sep.weeks.at(-1).cells[0], { date: "2026-09-28", day: 28, trading: true, pnl: 100, ret: null });
+  eq(sep.pnl, 80);
+  near(sep.ret, 0.98 * 1.01 - 1, 1e-12);
+  const none = calendarMonth(cal, "2026-08");
+  eq([none.pnl, none.ret], [null, null]);
+  eq(none.weeks.every((w) => w.pnl === null && w.ret === null), true);
+});
+test("日曆：只有第一天的月份只有損益、沒有報酬率", () => {
+  const one = calendarMonth([{ date: "2026-04-08", pnl: 3.56, ret: null }], "2026-04");
+  near(one.pnl, 3.56, 1e-12);
+  eq(one.ret, null);
+});
+
+report();
+</script>
+</body>
+</html>

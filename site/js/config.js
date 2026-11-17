@@ -66,7 +66,7 @@ export const DISCIPLINE = {
   start: "2026-10",                  // 從這個月起算連續投入
 };
 
-// 資金頁的試算常數（docs/PIVOT.md 第 6 節）。都是試算，不是投資建議
+// 試算頁的常數（docs/PIVOT.md 第 6 節）。都是試算，不是投資建議
 export const FUNDS = {
   bucket: 1_000_000,                 // 小豬撲滿每隻 100 萬
   scenarios: [0.04, 0.07, 0.10],     // 20 年後的三種年報酬情境

@@ -88,7 +88,7 @@ export const loadSettings = () => once("settings", async () => {
     lastBuy: get("最近一次買入日"),
     capTw: get("台股單次上限"),
     capUs: get("美股單次上限"),
-    // 資金頁「現金與投入」要的欄位（R18）。讀不到（沒有這一列或格子是空的）是 null，不丟錯
+    // 資產頁「現金與投入」要的欄位（R18）。讀不到（沒有這一列或格子是空的）是 null，不丟錯
     basis: get("基準日", true) || null,       // 基準日（YYYY-MM-DD）
     basisFund: num(get("基準日未投入資金")),   // 基準日當天還沒投入的資金
     pocket: num(get("記帳前錢包零頭")),

@@ -1,7 +1,7 @@
-// 資金頁「現金與投入」的計算（docs/R15_R18.md「R18 資金頁先講現金」）。
+// 資產頁「現金與投入」的計算（docs/R15_R18.md「R18 先講現金」；2026-11-17 資金頁改名，這張卡搬到資產頁）。
 // 純函式：不讀網路、不碰 DOM。輸入是 loadSettings() 的結果與 loadTrades() 的結果（loadTrades 已經拿掉網站沖銷的一對）。
 // 讀不到的項目不補 0：那一項回傳 null、列在 missing，期末也不算。
-import { isNum } from "./fmt.js";
+import { isNum, int } from "./fmt.js";
 import { dcaFor, nextDepositDate, addMonth } from "./discipline.js";
 import { DISCIPLINE as D } from "./config.js";
 
@@ -215,3 +215,6 @@ export function assetTrend({ settings, trades, holdings, bars = {}, fxRows = nul
     closing: cash.closing,
   };
 }
+
+// 讀不到帳本的定投金額、改用計畫金額時，接在金額後面的提醒（試算頁與資產頁共用）
+export const depositNote = (d) => (d.known ? "" : `（讀不到帳本的定投金額，先用計畫的 ${int(d.amount)} 元）`);

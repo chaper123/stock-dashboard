@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head><meta charset="utf-8"><title>總資產走勢</title></head>
 <body>
-<h1>資金頁「總資產走勢」（site/js/cash.js 的 assetTrend）</h1>
+<h1>總資產走勢（site/js/cash.js 的 assetTrend；資產頁的資產走勢切到「總資產」時用）</h1>
 <p>docs/ASSET_TREND.md 的驗收：往回推的股數；入金排在每月 6 日、金額跟著 dcaFor；計入資金池的買賣改變可用資金、不計入的不改；美股換匯；最後一天的可用資金等於 cashTable 的期末；入金合計跟「累計入金」不相等時只畫持倉市值；基準日前沒資料時不畫。</p>
 <script type="module">
 import { test, eq, near, ok, report } from "./harness.js";
