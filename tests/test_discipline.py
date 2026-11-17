@@ -204,6 +204,7 @@ def test_config_constants():
     c = dp.CONFIG
     assert (c["core"], c["satellite"], c["deposit_day"], c["monthly"], c["check_months"], c["threshold_pp"],
             c["invested_min"], c["market"]) == ("009816", "00981A", 6, 3000, [4, 10], 5, 2700, "台股")
+    assert c["first_check"] == "2027-04"
 
 
 # 帳本「定投金額」分頁（2026-11-05 建立；E、F 欄是公式）。表頭照帳本實際的字樣（2026-11-06 測試排程讀回）
@@ -353,7 +354,7 @@ def test_continue_helpers():
 
 def test_continue_cli_uses_history(tmp_path):
     """--data 目錄的日線收盤歷史會餵給 compute()：命令列的結果跟直接呼叫一樣。"""
-    case = next(c for c in CONTINUE if c["name"].startswith("檢查月觸發後一直補"))
+    case = CONTINUE[0]   # 檢查月（4 月）觸發後一直補
     holdings, trades_obj, d, px, hist = continue_inputs(case)
     for code in dp.CODES:
         (tmp_path / f"tw_{code}_norm.csv").write_text("\n".join(f"{day},1,{c},{c},{c},{c}" for day, c in hist[code]) + "\n",
@@ -366,4 +367,4 @@ def test_continue_cli_uses_history(tmp_path):
                         str(tmp_path), "--today", case["today"], "--brief"], capture_output=True)
     assert p.returncode == 0, p.stderr.decode("utf-8", "replace")
     text = p.stdout.decode("utf-8")
-    assert "繼續補：2026-10 檢查時偏離 +13.75 個百分點，之後還沒回到 ±5 內，入金全部補 00981A" in text
+    assert "繼續補：2027-04 檢查時偏離 +13.75 個百分點，之後還沒回到 ±5 內，入金全部補 00981A" in text

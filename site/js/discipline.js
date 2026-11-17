@@ -3,7 +3,7 @@
 // 只管台股；美股不算進比例。都在瀏覽器計算。
 // 檢查後繼續補足（docs/PIVOT.md 第 12 節，2026-11-17）：非檢查月 M，找最近一個在 M 之前的檢查月 C；C 的計畫日前一天收盤的偏離超過
 // 門檻、C 到 M 前一個月每個月月底的偏離都超過門檻而且偏低的是同一檔、現在的偏離也超過門檻而且偏低的還是那一檔，入金整筆補那一檔
-// （plan.continued、plan.since）；中途哪個月月底回到 ±5 內或換成另一檔偏低就停，等下次檢查月。過去某天的股數 ＝ 現在的股數減掉
+// （plan.continued、plan.since）；第一個算數的檢查月是 D.firstCheck（2027-04），比它早的檢查月一律當成沒觸發；中途哪個月月底回到 ±5 內或換成另一檔偏低就停，等下次檢查月。過去某天的股數 ＝ 現在的股數減掉
 // 那天之後的買進、加回賣出；缺收盤或股數就不猜，照目標比例並在 warnings 警告。算法和 engine/discipline.py 相同
 import { DISCIPLINE as D } from "./config.js";
 
@@ -106,6 +106,7 @@ const underOf = (dev) => (dev > 0 ? D.satellite : D.core);
 // 非檢查月 ym 要不要繼續補：回傳 { since, devAtCheck }、null（不補）；缺資料時回傳 { missing: true }
 function continuedSince(ym, under, ctx) {
   const c = lastCheckBefore(ym);
+  if (c < D.firstCheck) return null; // 轉型前的檢查月不算觸發，不用算也不警告
   const devC = deviationOn(isoDay(dayMs(planDay(c)) - 86400000), ctx); // 當月入金之前
   if (devC == null) return { missing: true };
   if (Math.abs(devC) <= D.bandPts || underOf(devC) !== under) return null;

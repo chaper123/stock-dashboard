@@ -21,7 +21,7 @@
   - 檢查月觸發後繼續補（docs/PIVOT.md 第 12 節，2026-11-17）：非檢查月 M，找最近一個在 M 之前的檢查月 C；C 的計畫日前一天
     收盤的偏離超過 5、C 到 M 前一個月每個月月底的偏離都超過 5 而且偏低的是同一檔、現在的偏離也超過 5 且偏低的還是那一檔，
     入金全部補那一檔（plan.continued＝true、plan.since＝C）；中途哪個月月底回到 ±5 內或換成另一檔偏低就停，等下次檢查月。
-    其他情況照 80／20。過去某天的股數＝現在的股數減掉那天之後的買進、加回賣出；缺收盤或股數就不猜，照 80／20 並警告
+    其他情況照 80／20。第一個算數的檢查月是 CONFIG 的 first_check（2027-04）：比它早的檢查月一律當成沒觸發。過去某天的股數＝現在的股數減掉那天之後的買進、加回賣出；缺收盤或股數就不猜，照 80／20 並警告
   - 偏離＝核心市值比例 − 80（百分點；正數表示核心偏高、衛星偏低）
 輸出 JSON：見 compute() 的回傳；--brief 印給模型與人看的精簡文字。
 """
@@ -44,6 +44,7 @@ CONFIG = {
     "deposit_day": 6,
     "monthly": 3000,
     "check_months": [4, 10],
+    "first_check": "2027-04",   # 第一個算數的檢查月（轉型 2026-10-30 才決定，2026-10-06 那次不算）；比它早的檢查月一律當成沒觸發
     "threshold_pp": 5,
     "invested_min": 2700,
 }
@@ -273,6 +274,8 @@ def continued_since(ym, under, hold, tr, hist, closed, warnings):
     """非檢查月 ym 要不要繼續補（docs/PIVOT.md 第 12 節）。回傳 (C 的 YYYY-MM, C 檢查時的偏離) 或 None。
     現在的偏離已經超過門檻、偏低的是 under 才會呼叫。缺資料時加警告、回傳 None。"""
     c = last_check_before(ym)
+    if c < CONFIG["first_check"]:    # 轉型前的檢查月不算觸發，不用算也不警告
+        return None
     cy, cm = int(c[:4]), int(c[5:])
     dev_c = deviation_on(plan_day(cy, cm) - dt.timedelta(days=1), hold, tr, hist)   # 當月入金之前
     if dev_c is None:
