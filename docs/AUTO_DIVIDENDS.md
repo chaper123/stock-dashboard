@@ -80,3 +80,12 @@
 3. 網站實作：OTHER_INCOME 做完後接著做第 2、3 節（Apps Script＋配息卡），分支上做、不 push。
 4. 主 session 審查 → 使用者說「部署」→ 部署 session 合併上線；Apps Script 由教學 session 帶使用者更新與裝觸發器。
 5. 第一筆自動記帳預計是 GOOGL（12 月中）或 00981A（12 月中除息、1 月上旬發放）。
+
+## 7. 進度
+
+- 2026-11-18 market-data 維護做完第 1 節（market-data `48a22e1`，還沒 push）；主 session 審查通過，VOO 6/26、9/28 兩次配息都在。
+- 2026-11-18 網站實作做完第 2、3 節（分支 `claude/funds-fire-30y-122524`：`94c0bf2` Apps Script、`1a39613` 配息卡、`8c81f14` 試算頁文字）。
+  主 session 審查通過：只新增不改列、代號＋除息日去重、除息日前持股（沖銷互抵）、`AUTO_DIV_START`、美股除息＋7 天、LockService、觸發器不重複建都符合規格；
+  Apps Script 測試 59 項（含 VOO 0.1262 股約 5 元、00981A 141 × 0.63＝89）、網頁測試 15 頁、pytest 301 全過；資產頁桌面與 375 寬正常。
+- 上線順序：market-data push（us.json 產出）→ 網站部署 → 教學 session 帶使用者更新 Apps Script、裝觸發器（us.json 還沒有時 `autoDividends` 會記錯誤、不寫列）。
+- 已知限制（不擋上線）：使用者在 11/18 以後手動記的配息沒填 K 欄除息日的話，腳本認不出來、會再記一列估算；美股成交日若用台灣日期，除息日前一晚的成交可能差一天。
