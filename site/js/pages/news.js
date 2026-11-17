@@ -7,7 +7,7 @@ import { cnnReading, gaugeBlock, pocketBlock } from "../gauge.js";
 import { el, taipeiTime, shortDate, taipeiToday, extLink, daysBetween, int, pct, twd, tone } from "../fmt.js";
 import { slot, card, pageHeader, notice } from "../ui.js";
 import { DROPPED } from "../config.js";
-import { TABS, holdTags, sortItems, hotList, nsfNews, nsfStatus, ago, timeOf, foldKind, VOO_KIND_LABEL } from "../headlines.js";
+import { TABS, holdTags, sortItems, hotList, nsfNews, nsfStatus, nsfDecisionNews, ago, timeOf, foldKind, VOO_KIND_LABEL } from "../headlines.js";
 import { macroTiles } from "../macro.js";
 import { outlookEvents, review009816, dayLabel } from "../outlook.js";
 import { loadPortfolio } from "../portfolio.js";
@@ -58,10 +58,13 @@ const ext = (href, text) => el("a", { href, target: "_blank", rel: "noopener nor
 // 同一家媒體最多列 n 則（同一家常一題多發，避免擠掉其他來源）
 const perSource = (items, n) => { const c = {}; return items.filter((x) => (c[x.source] = (c[x.source] || 0) + 1) <= n); };
 
-// 國安基金狀態 → 圖示、一個字的答案、一句話
+// 國安基金狀態 → 圖示、一個字的答案、一句話。進場是一段期間（財政部公告停止才結束），
+// 所以「進場中」一定寫出是哪一天決定的、到今天第幾天，免得幾天前的公告看起來像今天又要護盤（使用者 2026-11-17）
 const NSF_VIEW = {
-  active: { icon: "✓", word: "會", line: () => "國安基金已決定進場護盤" },
-  considering: { icon: "?", word: "未定", line: () => "有進場的消息，但還沒正式決定" },
+  active: { icon: "✓", word: "進場中", line: (s, today) => (s.media
+    ? `主要媒體 ${shortDate(s.date)} 報導已決議進場（財政部還沒公告）`
+    : `${shortDate(s.date)} 決定進場，到今天財政部還沒公告停止（第 ${daysBetween(s.date, today) + 1} 天）`) },
+  considering: { icon: "?", word: "未定", line: (s) => `有進場的消息，但還沒正式決定（${shortDate(s.date)}）` },
   stopped: { icon: "✕", word: "沒有", line: (s) => `國安基金目前沒有在護盤（${shortDate(s.date)} 已停止）` },
   none: { icon: "✕", word: "沒有", line: () => "財政部沒有進場公告" },
   unknown: { icon: "—", word: "讀不到", line: () => "讀不到財政部的國安基金公告，請稍後再看" },
@@ -88,11 +91,21 @@ async function nsfView() {
     && media.filter((x) => now - timeOf(x) < 48 * 3600e3).length < 2) return null;
 
   const v = NSF_VIEW[st.state];
-  return card("國安基金會不會護盤？",
+  // 最近兩天有沒有「新的決定」：財政部新公告，或主要媒體標題寫決議進場、不排除、停止。
+  // 只是提到國安基金、盤中買盤的報導不算新決定（大跌時這類報導一天幾十則），沒有新決定就明講狀態沿用哪一天
+  const recent = media.filter((x) => now - timeOf(x) < 48 * 3600e3);
+  const decided = nsfDecisionNews(recent).length;
+  const newOfficial = official.some((x) => daysBetween(x.date, today) <= 1);
+  const news = newOfficial || decided
+    ? `最近兩天有${newOfficial ? "新的財政部公告" : ""}${newOfficial && decided ? "，也有" : ""}${decided ? ` ${decided} 則主要媒體報導新的決定` : ""}（見下面的依據）。`
+    : `最近兩天沒有新的財政部公告，主要媒體也沒有報導新的決定（決議進場或停止）${st.date ? `，狀態沿用 ${shortDate(st.date)} 的${st.media ? "報導" : "公告"}` : ""}`
+      + `${recent.length ? `；另有 ${recent.length} 則報導提到國安基金或盤中買盤，下面的依據列出其中幾則` : ""}。`;
+  return card("國安基金護盤狀態",
     el("div", { class: `nsf-status ${st.state}` },
       el("span", { class: "nsf-icon", "aria-hidden": "true" }, v.icon),
       el("div", {},
-        el("div", { class: "nsf-word" }, v.word, el("span", {}, v.line(st))),
+        el("div", { class: "nsf-word" }, v.word, el("span", {}, v.line(st, today))),
+        st.state !== "unknown" && el("p", { class: "tiny" }, news),
         st.title && el("p", { class: "tiny" }, `依據：${st.by} ${shortDate(st.date)}`, ext(st.link, `〈${st.title}〉`),
           st.media ? "（財政部還沒公告）" : ""))),
     el("details", { class: "nsf-more" },

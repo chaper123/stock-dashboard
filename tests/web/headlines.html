@@ -6,7 +6,7 @@
 <p>market 大盤事件、peer 別的標的、advice 理財與預測文；判斷不出來一律 market。樣本是 2026-11-13 抓的 VOO 嚴格模式 57 則，標題人工標類（tests/web/fixtures/voo_headlines.json）。</p>
 <script type="module">
 import { test, eq, ok, report } from "./harness.js";
-import { vooKind, foldKind, TABS } from "/site/js/headlines.js";
+import { vooKind, foldKind, TABS, nsfDecisionNews } from "/site/js/headlines.js";
 
 // 單則標題 → 類別。year 決定「明年以後」的年份判斷
 const k = (title, year = "2026") => vooKind({ title, published_taipei: `${year}-11-13 10:00` });
@@ -168,6 +168,14 @@ test("樣本門檻一：人工標 market 的至少 90% 仍然顯示", () => ok(s
 test("樣本門檻二：被收起來的至少 85% 真的是 peer 或 advice", () => ok(rightFold.length / folded.length >= 0.85,
   `${rightFold.length}／${folded.length}，收錯：${folded.filter((x) => x.label === "market").map((x) => x.title).join("｜")}`));
 
+test("國安基金：只有標題寫新的決定才算（決議進場、不排除、臨時會、停止），只是提到國安基金或盤中買盤的不算", () => {
+  const t = (title) => ({ title });
+  const got = nsfDecisionNews([
+    t("國安基金決議進場護盤 維護台股穩定"), t("財政部：不排除召開臨時委員會"), t("國安基金宣布停止執行安定市場任務"),
+    t("台股盤中狂震！國安基金傳出手護盤仍跌破4萬點"), t("近5次國安基金護盤 台股皆大漲二位數"), t("八大公股砸狂掃6檔ETF"),
+  ]).map((x) => x.title);
+  eq(got, ["國安基金決議進場護盤 維護台股穩定", "財政部：不排除召開臨時委員會", "國安基金宣布停止執行安定市場任務"]);
+});
 report();
 // 把樣本的實際數字與所有判錯的標題寫在頁面上
 const wrong = sample.filter((x) => vooKind(x) !== x.label);

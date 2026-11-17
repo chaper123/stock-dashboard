@@ -58,6 +58,8 @@ const OFFICIAL_RULES = [["stopped", /停止|結束|退場/], ["active", /啟動|
 const MEDIA_ACTIVE = /(決議|決定|宣布|拍板|啟動).{0,8}(進場|護盤|安定市場)/;
 const MEDIA_CONSIDER = /不排除|臨時會|臨時委員會/;
 const MEDIA_STOP = /停止|退場|結束/;
+// 標題裡有「新的決定」（決議進場、不排除、臨時會、停止）的主要媒體報導；只是提到國安基金或盤中買盤的不算
+export const nsfDecisionNews = (media) => media.filter((x) => MEDIA_ACTIVE.test(x.title) || MEDIA_CONSIDER.test(x.title) || MEDIA_STOP.test(x.title));
 const fromMedia = (xs) => ({ date: xs[0].published_taipei.slice(0, 10), title: xs[0].title, link: xs[0].url || xs[0].link,
   by: [...new Set(xs.map((x) => x.source))].slice(0, 3).join("、"), media: true });
 
