@@ -54,6 +54,9 @@ export const NAMES = {
 
 // K 線頁與盤中區塊追蹤的標的（2026-10-30 轉型：00411A 移出；美股 VOO、GOOGL 持有，其餘只追蹤）
 export const TRACK = { tw: ["009816", "00981A"], us: ["VOO", "GOOGL", "NVDA", "TSLA", "SPCX", "AAPL"] };
+// 不配息的標的：收益留在基金裡，價格報酬就是總報酬。配息卡、總覽的近期除權息都不列；比較標的不標「（不含股利）」。
+// 美股在 us.json 裡 events 是空陣列的（TSLA、SPCX）當成「沒有配息紀錄」，不用寫進這裡
+export const NO_DIVIDEND = new Set(["009816"]);
 // 已移出追蹤的代號（新聞資料裡還可能出現，網站的篩選清單不列）
 export const DROPPED = new Set(["00411A"]);
 

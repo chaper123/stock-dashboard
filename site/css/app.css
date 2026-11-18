@@ -127,6 +127,7 @@ main { max-width: 1040px; margin: 0 auto; padding: 16px 16px 24px; outline: none
 .grid > .card, .grid > .slot > .card { margin-bottom: 0; }
 .slot { min-width: 0; }
 .stack > * + * { margin-top: 14px; }
+.stack > .slot > .card { margin-bottom: 0; }
 @media (min-width: 700px) {
   .grid.two { grid-template-columns: 1fr 1fr; }
   .grid.three { grid-template-columns: repeat(3, 1fr); }
@@ -215,6 +216,9 @@ main { max-width: 1040px; margin: 0 auto; padding: 16px 16px 24px; outline: none
 .health li:last-child { border-bottom: 0; }
 .health li > span:first-child { flex-shrink: 0; white-space: nowrap; }
 .health li > span:last-child { text-align: right; min-width: 0; }
+/* 左邊文字比較長的清單（近期除權息）：左邊可以換行，右邊的日期不換行 */
+.health.wrap li > span:first-child { flex-shrink: 1; white-space: normal; }
+.health.wrap li > span:last-child { flex-shrink: 0; white-space: nowrap; }
 .st-ok::before { content: "● "; color: var(--good); }
 .st-stale::before { content: "▲ "; color: var(--warn); }
 .st-fail::before { content: "✕ "; color: var(--crit); }

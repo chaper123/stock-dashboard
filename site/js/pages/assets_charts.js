@@ -6,7 +6,7 @@ import { loadPerformance, attribution } from "../perf.js";
 import { periodStart, periodPnl, daysFrom, periodLabel, valuesAt, etfIndex, rebase } from "../assets.js";
 import { el, twd, pct, signed, tone, shortDate, shares, isNum } from "../fmt.js";
 import { card, notice } from "../ui.js";
-import { NAMES } from "../config.js";
+import { NAMES, NO_DIVIDEND } from "../config.js";
 import { loadStatus, statusLine } from "../status.js";
 import { loadLW, cssVar, alpha, timeChart, mountChart } from "../lw.js";
 
@@ -230,7 +230,8 @@ export async function compareCard(ctx) {
     lastDay[c] = bars.at(-1).time;
   });
   const trAt = (d) => (trOk ? valuesAt(tr, [d])[0] : null);
-  const noDiv = (k) => k !== "tr" && !hasDiv[k];
+  // 不配息的標的（009816）價格報酬就是總報酬，不標「（不含股利）」；其他沒有配息資料的才標
+  const noDiv = (k) => k !== "tr" && !NO_DIVIDEND.has(k) && !hasDiv[k];
   const avail = BENCH.filter(([k]) => series[k]);
   let pick = avail[0]?.[0] ?? null;
 
@@ -314,11 +315,13 @@ export async function compareCard(ctx) {
     asOf.fx && { kind: S.fx(asOf.fx), what: "匯率", when: shortDate(asOf.fx) },
     trOk && { kind: S.tw(tr.at(-1).date), what: "加權報酬指數", when: shortDate(tr.at(-1).date) }], { closed: false });
   const noDivList = BENCH.filter(([k]) => series[k] && noDiv(k)).map(([k]) => k);
+  const noPayList = BENCH.filter(([k]) => series[k] && NO_DIVIDEND.has(k)).map(([k]) => k); // 不配息：價格報酬就是總報酬
   return card("投資報酬率對比較標的", chips, perfStatus, box, stats, why,
     problems.length > 0 && notice("warn", `讀不到比較標的：${problems.join("；")}。`),
     !perf.divsKnown && notice("warn", "讀不到配息資料：台股 ETF 的現金股利這次沒有算進來，報酬可能少算。"),
     el("p", { class: "tiny" }, `範圍：已投入部位（帳本交易紀錄還原的持股），不含可用資金與其他現金。曲線是時間加權報酬：扣掉每次買進、賣出的影響，只看持股本身的漲跌與股利。`
       + `比較線可以選：加權報酬指數（含股利）、0050、009816、00981A；ETF 用收盤價加除息的現金股利逐日連乘（稅前），跟組合同一個算法。`
+      + (noPayList.length ? `${noPayList.join("、")} 不配息，價格報酬就是總報酬。` : "")
       + (noDivList.length ? `${noDivList.join("、")} 沒有配息資料，只用價格，所以選項上標「（不含股利）」；之後有配息資料會自動算進來。` : "")
       + `組合裡有美股，跟台股比較的差距也包含台美配置與匯率，不等於選股能力。算到 ${perf.last}。`),
     perfMethod(perf));
