@@ -6,7 +6,7 @@
 <p>預估金額（台股、美股）、60 天內篩選、已除息待發放、最近入帳排序、Apps Script 自動記帳狀態的文字。不連網。</p>
 <script type="module">
 import { test, eq, ok, report } from "./harness.js";
-import { sharesBefore, usEstimate, upcomingDividends, recentDividends, autoStatusLine } from "/site/js/dividends.js";
+import { sharesBefore, usEstimate, upcomingDividends, recentDividends, autoStatusLine, estimateNextEx, nearbyDividendEvents } from "/site/js/dividends.js";
 
 const TODAY = "2026-11-18";
 const hold = (market, code, shares) => ({ market, code, shares });
@@ -131,6 +131,123 @@ test("autoStatusLine：上次檢查的月/日 時:分、新增幾筆、錯誤；
   eq([e.kind, e.text, e.error], ["error", "上次自動檢查：11/18 09:12", "抓不到 market-data 的 dividends/us.json（HTTP 404）"]);
   eq(autoStatusLine(null).kind, "never");
   eq(autoStatusLine({ lastRun: "", added: 0, error: "" }).text, "上次自動檢查：時間不明，沒有新增");
+});
+
+// ── 第 8 節：不配息、推估下次除息日、總覽近期除權息 ──
+const E981A = [ev("2026-03-17", "2026-04-10", 0.41), ev("2026-06-16", "2026-07-09", 0.63), ev("2026-09-16", "2026-10-13", 0.63)];
+const exs = (...d) => d.map((x) => ({ ex_date: x, cash: 1 }));
+const etfE = (events, next = null) => ({ events, next, last: events.length ? events[events.length - 1] : null, ttm_cash: 0, ttm_count: events.length });
+const NODIV = new Set(["009816"]);
+
+test("estimateNextEx：00981A 三次除息（間隔 91、92 天，取中間兩個平均並捨去＝91）→ 12/16", () => {
+  eq(estimateNextEx(E981A, TODAY), { date: "2026-12-16", gap: 91, lastEx: "2026-09-16", overdue: false });
+});
+
+test("estimateNextEx：只看最近 5 次的間隔；奇數個間隔取中間那個；順序亂、重複的日期不影響", () => {
+  // 6 次除息：最早那段 200 天的間隔不算（只取最近 5 次＝4 個間隔：10、20、30、100 → 中位數 25）
+  const six = exs("2025-01-01", "2025-07-20", "2025-07-30", "2025-08-19", "2025-09-18", "2025-12-27");
+  eq(estimateNextEx(six, "2025-12-28").gap, 25);
+  eq(estimateNextEx(six, "2025-12-28").date, "2026-01-21");
+  // 4 次除息＝3 個間隔：30、60、90 → 中位數 60
+  const four = exs("2026-06-30", "2026-01-01", "2026-01-31", "2026-04-01");
+  eq(estimateNextEx(four, "2026-07-01").gap, 60, "亂序也行");
+  eq(estimateNextEx([...four, ...four], "2026-07-01").gap, 60, "重複的日期只算一次");
+});
+
+test("estimateNextEx：少於 3 次除息紀錄不推估", () => {
+  eq(estimateNextEx(exs("2026-06-16", "2026-09-16"), TODAY), null);
+  eq(estimateNextEx(exs("2026-06-16"), TODAY), null);
+  eq(estimateNextEx([], TODAY), null);
+  eq(estimateNextEx(null, TODAY), null);
+  eq(estimateNextEx(exs("2026-06-16", "2026-06-16", "2026-06-16"), TODAY), null, "同一天重複不算三次");
+});
+
+test("estimateNextEx：推估日是今天算還沒到；早於今天 14 天內標 overdue，更早就不列", () => {
+  const e = exs("2026-01-01", "2026-04-01", "2026-07-01"); // 間隔 90、91 → 90；推估 2026-09-29
+  eq(estimateNextEx(e, "2026-09-29").overdue, false, "今天");
+  eq(estimateNextEx(e, "2026-10-01"), { date: "2026-09-29", gap: 90, lastEx: "2026-07-01", overdue: true }, "過 2 天");
+  eq(estimateNextEx(e, "2026-10-13").overdue, true, "剛好 14 天");
+  eq(estimateNextEx(e, "2026-10-14"), null, "15 天");
+});
+
+test("資產頁卡：台股沒有 next 用推估：00981A 約 12/16、上次每單位 0.63、141 股 → 估 89；有官方 next 一律用官方", () => {
+  const holdings = [hold("tw", "00981A", 141)];
+  const r = up({ holdings, tw: TW({ "00981A": etfE(E981A) }), us: null });
+  eq(r.items, [{ status: "est", market: "tw", code: "00981A", exDate: "2026-12-16", overdue: false, lastEx: "2026-09-16", perUnit: 0.63, shares: 141, estimate: 89 }]);
+  const off = up({ holdings, tw: TW({ "00981A": etfE(E981A, ev("2026-12-22", "2027-01-12", 0.7)) }), us: null });
+  eq([off.items.length, off.items[0].status, off.items[0].exDate, off.items[0].perUnit, off.items[0].estimate], [1, "next", "2026-12-22", 0.7, 99], "官方優先，不再推估");
+  const far = up({ holdings, tw: TW({ "00981A": etfE(E981A, ev("2027-03-10", null, null)) }), us: null });
+  eq(far.items.map((x) => x.status), ["none"], "官方 next 超過 60 天：最近沒有除息，不用推估頂替");
+});
+
+test("資產頁卡：推估日超過 60 天或太久以前＝最近沒有除息；剛過還沒公告標 overdue；不足 3 次不推估", () => {
+  const at = (today, events = E981A) => upcomingDividends({ today, holdings: [hold("tw", "00981A", 141)], tw: TW({ "00981A": etfE(events) }), us: null }).items[0];
+  eq(at("2026-10-16").status, "none", "推估 12/16 離今天 61 天");
+  eq(at("2026-10-17").status, "est", "60 天");
+  eq([at("2026-12-20").status, at("2026-12-20").overdue], ["est", true], "推估日過了 4 天");
+  eq(at("2026-12-31").status, "none", "過了 15 天就不列");
+  eq(at("2026-11-18", E981A.slice(0, 2)).status, "none", "只有兩次除息");
+});
+
+test("資產頁卡：不配息的標的不列，代號放進 skipped（小字寫「009816 不配息，不列」）；沒有設定時照舊", () => {
+  const holdings = [hold("tw", "009816", 1241), hold("tw", "00981A", 141), hold("us", "VOO", 1)];
+  const r = up({ holdings, tw: TW({ "009816": etfE([]), "00981A": etfE(E981A) }), us: US({ VOO: [{ ex_date: "2026-09-28", cash: 1.823 }] }), fxRows: FX, noDividend: NODIV });
+  eq(r.items.map((x) => x.code), ["00981A", "VOO"]);
+  eq(r.skipped, ["009816"]);
+  eq(up({ holdings, tw: TW({ "009816": etfE([]) }), us: null, noDividend: NODIV }).skipped, ["009816"]);
+  eq(up({ holdings, tw: TW({ "009816": etfE([]) }), us: null }).items.map((x) => `${x.code}:${x.status}`), ["009816:none", "00981A:none"], "沒傳清單＝跟以前一樣");
+});
+
+// 總覽新卡用真實的 2026-11 資料（00981A、美股 us.json 的最近幾次除息）
+const REAL_US = US({
+  VOO: [{ ex_date: "2025-06-30", cash: 1.745 }, { ex_date: "2025-09-29", cash: 1.74 }, { ex_date: "2025-12-22", cash: 1.771 }, { ex_date: "2026-03-27", cash: 1.872 },
+    { ex_date: "2026-06-26", cash: 1.962 }, { ex_date: "2026-09-28", cash: 1.823 }],
+  GOOGL: [{ ex_date: "2025-06-09", cash: 0.21 }, { ex_date: "2025-09-08", cash: 0.21 }, { ex_date: "2025-12-08", cash: 0.21 }, { ex_date: "2026-03-09", cash: 0.21 },
+    { ex_date: "2026-06-08", cash: 0.22 }, { ex_date: "2026-09-04", cash: 0.22 }],
+  NVDA: [{ ex_date: "2025-09-11", cash: 0.01 }, { ex_date: "2025-12-04", cash: 0.01 }, { ex_date: "2026-03-11", cash: 0.01 }, { ex_date: "2026-06-04", cash: 0.25 }, { ex_date: "2026-09-10", cash: 0.25 }],
+  TSLA: [], SPCX: [],
+  AAPL: [{ ex_date: "2025-11-10", cash: 0.26 }, { ex_date: "2026-02-09", cash: 0.26 }, { ex_date: "2026-05-11", cash: 0.27 }, { ex_date: "2026-08-10", cash: 0.27 }, { ex_date: "2026-11-12", cash: 0.27 }],
+});
+const TRACKS = { tw: ["009816", "00981A"], us: ["VOO", "GOOGL", "NVDA", "TSLA", "SPCX", "AAPL"] };
+const near8 = (o) => nearbyDividendEvents({ tracks: TRACKS, noDividend: NODIV, held: new Set(["00981A", "VOO", "GOOGL"]), today: TODAY, ...o });
+
+test("總覽新卡：真實資料——依日期排序、持有標記、推估旗標；不配息與沒有配息紀錄列進清單", () => {
+  const r = near8({ tw: TW({ "009816": etfE([]), "00981A": etfE(E981A) }), us: REAL_US });
+  eq(r.rows.map((x) => `${x.date} ${x.code} ${x.kind}${x.held ? " 持有" : ""}${x.approx ? " 推估" : ""}`),
+    ["2026-12-04 GOOGL ex 持有 推估", "2026-12-10 NVDA ex 推估", "2026-12-16 00981A ex 持有 推估", "2026-12-29 VOO ex 持有 推估"]);
+  eq(r.rows[2], { kind: "ex", date: "2026-12-16", market: "tw", code: "00981A", held: true, official: false, approx: true, overdue: false, perUnit: 0.63 });
+  eq([r.rows[3].perShare, r.rows[0].perShare], [1.823, 0.22], "上次每股");
+  eq([r.noDividend, r.noRecord, r.tooFew], [["009816"], ["TSLA", "SPCX"], []], "AAPL 推估 2027-02-11 超過 60 天：不列也不進清單");
+  eq([r.twMissing, r.usMissing], [false, false]);
+});
+
+test("總覽新卡：台股有官方 next 用官方（每單位照公告）；發放日只給持有的、今天～60 天內，上一次還沒發放的也算", () => {
+  const tw = TW({ "00981A": etfE([...E981A, ev("2026-11-10", "2026-11-20", 0.5)], ev("2026-12-22", "2027-01-12", 0.7)), "009816": etfE([]) });
+  const r = near8({ tw, us: null });
+  eq(r.rows.map((x) => `${x.date} ${x.kind}${x.official ? " 官方" : ""}`), ["2026-11-20 pay 官方", "2026-12-22 ex 官方", "2027-01-12 pay 官方"]);
+  eq(r.rows[1].perUnit, 0.7);
+  eq(near8({ tw, us: null, held: new Set() }).rows.map((x) => x.kind), ["ex"], "沒持有就沒有發放列");
+  eq(near8({ tw: TW({ "00981A": etfE(E981A, { ex_date: "2026-12-22", pay_date: "2027-03-01", cash: null }), "009816": etfE([]) }), us: null }).rows.map((x) => x.kind), ["ex"], "發放日超過 60 天不列");
+  eq(near8({ tw: TW({ "00981A": etfE(E981A, { ex_date: "2026-12-22", pay_date: null, cash: null }), "009816": etfE([]) }), us: null }).rows[0].perUnit, null, "金額未公布");
+});
+
+test("總覽新卡：60 天篩選（今天與第 60 天算）、官方 next 太遠不列也不推估、推估剛過的標 overdue", () => {
+  const nx = (d) => near8({ tw: TW({ "00981A": etfE(E981A, ev(d, null, 1)), "009816": etfE([]) }), us: null }).rows.filter((x) => x.kind === "ex").length;
+  eq([nx("2026-11-18"), nx("2027-01-17"), nx("2027-01-18"), nx("2026-11-17")], [1, 1, 0, 0]);
+  const r = near8({ tw: TW({ "00981A": etfE(E981A), "009816": etfE([]) }), us: null, today: "2026-12-20" });
+  eq([r.rows[0].date, r.rows[0].overdue, r.rows[0].approx], ["2026-12-16", true, true]);
+  eq(near8({ tw: TW({ "00981A": etfE(E981A), "009816": etfE([]) }), us: null, today: "2026-12-31" }).rows, [], "過了 15 天不列");
+});
+
+test("總覽新卡：紀錄不到 3 次的列進 tooFew；讀不到的資料只標 missing，另一邊照常", () => {
+  const r = near8({ tw: TW({ "00981A": etfE(E981A.slice(0, 2)), "009816": etfE([]) }), us: US({ VOO: [{ ex_date: "2026-09-28", cash: 1.8 }, { ex_date: "2026-06-26", cash: 1.9 }], TSLA: [] }) });
+  eq(r.rows, []);
+  eq([r.tooFew, r.noRecord], [["00981A", "VOO"], ["GOOGL", "NVDA", "TSLA", "SPCX", "AAPL"]], "檔案裡沒有的追蹤標的也算沒有配息紀錄");
+  const m = near8({ tw: null, us: REAL_US });
+  eq([m.twMissing, m.usMissing, m.rows.map((x) => x.code)], [true, false, ["GOOGL", "NVDA", "VOO"]]);
+  const m2 = near8({ tw: TW({ "00981A": etfE(E981A), "009816": etfE([]) }), us: null });
+  eq([m2.twMissing, m2.usMissing, m2.rows.map((x) => x.code), m2.noRecord], [false, true, ["00981A"], []]);
+  eq(near8({ tw: null, us: null }).rows, []);
 });
 
 report();

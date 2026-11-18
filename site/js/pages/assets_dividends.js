@@ -5,7 +5,7 @@ import { upcomingDividends, recentDividends, autoStatusLine, US_KEEP } from "../
 import { writeConfig, callLedger } from "../ledger_write.js";
 import { el, twd, shortDate, taipeiToday, isNum } from "../fmt.js";
 import { card, notice } from "../ui.js";
-import { NAMES } from "../config.js";
+import { NAMES, NO_DIVIDEND } from "../config.js";
 
 const name = (code) => NAMES[code] || "";
 const label = (code) => el("span", {}, el("strong", {}, code), name(code) ? ` ${name(code)}` : "");
@@ -18,6 +18,10 @@ function upcomingRow(it) {
   let amount;
   if (it.status === "next") {
     what = `${shortDate(it.exDate)} 除息，每單位 ${money(it.perUnit)}${it.perUnit == null ? "" : " 元"}・${it.payDate ? `${shortDate(it.payDate)} 發放` : "發放日還沒公布"}`;
+    amount = est(it.estimate);
+  } else if (it.status === "est") {
+    const last = it.perUnit == null ? "上次金額未公布" : `上次每單位 ${it.perUnit} 元`;
+    what = it.overdue ? `推估 ${shortDate(it.exDate)} 前後，還沒公告，${last}` : `約 ${shortDate(it.exDate)} 除息（推估，還沒公告），${last}`;
     amount = est(it.estimate);
   } else if (it.status === "paying") {
     what = `已在 ${shortDate(it.exDate)} 除息，每單位 ${money(it.perUnit)}${it.perUnit == null ? "" : " 元"}・${it.payDate ? `${shortDate(it.payDate)} 發放` : "發放日還沒公布"}`;
@@ -49,7 +53,7 @@ export async function dividendCard() {
     loadHoldings().catch(() => null), loadDividends().catch(() => null), loadUsDividends().catch(() => null),
     loadFx().catch(() => null), loadTrades().catch(() => null), loadIncome().catch(() => null)]);
 
-  const up = holdings ? upcomingDividends({ holdings, tw, us, fxRows, trades, income: income ? income.rows : [], today }) : null;
+  const up = holdings ? upcomingDividends({ holdings, tw, us, fxRows, trades, income: income ? income.rows : [], today, noDividend: NO_DIVIDEND }) : null;
   const recent = income && income.configured ? recentDividends(income.rows) : null;
 
   // 自動記帳狀態：有設定記帳連線才問 Apps Script（ping，不寫入）；不等它，先畫卡片，回來再補這一行
@@ -75,7 +79,8 @@ export async function dividendCard() {
       : up.items.length === 0 ? el("p", { class: "tiny" }, "目前沒有持有標的。")
         : up.items.map(upcomingRow),
     missing.length > 0 && el("p", { class: "tiny" }, `${missing.join("、")}讀不到，那幾檔先不列。`),
-    el("p", { class: "tiny" }, `台股用除息預告的每單位現金股利 × 持股；美股沒有未來的除息日，用上次的每股 × ${US_KEEP} × 最新匯率（扣 30% 預扣稅）。都是估算，實際入帳以錢包為準。`),
+    up && up.skipped.length > 0 && el("p", { class: "tiny" }, `${up.skipped.join("、")} 不配息，不列。`),
+    el("p", { class: "tiny" }, `台股用除息預告的每單位現金股利 × 持股，還沒公告的用過去的除息間隔推估日期、金額照上次；美股沒有未來的除息日，用上次的每股 × ${US_KEEP} × 最新匯率（扣 30% 預扣稅）。都是估算，實際入帳以錢包為準。`),
     el("h3", {}, "最近入帳"),
     income === null ? notice("info", "讀不到帳本的「其他入帳」分頁。")
       : recent === null ? el("p", { class: "tiny" }, "帳本的「其他入帳」分頁還沒接上。")
