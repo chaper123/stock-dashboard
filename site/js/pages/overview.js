@@ -1,8 +1,9 @@
 // 總覽：午間一站式（docs/PIVOT.md 第 3 節），由上到下：招呼與今日一句、我的資產、本月紀律、今天的重點、
 // 台股盤中、隔夜美股與總經、行事曆、市場背景，最後是資料狀態。每一塊各自讀資料、各自失敗。
 import {
-  loadSettings, loadTrades, loadDca, loadMeta, loadFearGreed, loadNavHistory, loadIndex, loadDaily, loadCalendar, loadFx, loadHoldings, loadDividends,
+  loadSettings, loadTrades, loadDca, loadMeta, loadFearGreed, loadNavHistory, loadIndex, loadDaily, loadCalendar, loadFx, loadHoldings, loadDividends, loadUsDividends,
 } from "../data.js";
+import { nearbyDividendEvents } from "../dividends.js";
 import { loadPortfolio, loadRealized, FX_KIND_LABEL } from "../portfolio.js";
 import { marketCard } from "../market.js";
 import { riskCard } from "../checkup.js";
@@ -15,7 +16,7 @@ import {
   el, twd, pct, price, int, taipeiTime, shortDate, taipeiToday, daysBetween, tone, signed, isNum,
 } from "../fmt.js";
 import { slot, card, kv, notice } from "../ui.js";
-import { DISCIPLINE as D, NAMES, TRACK } from "../config.js";
+import { DISCIPLINE as D, NAMES, TRACK, NO_DIVIDEND } from "../config.js";
 import { loadStatus, marketItem, statusLine, datasetKind, newsKind, worst, STATUS } from "../status.js";
 
 export async function render(root) {
@@ -32,7 +33,11 @@ export async function render(root) {
   root.append(grid2);
   slot(grid2, twCard);
   slot(grid2, usMacroCard);
-  slot(grid2, calendarCard);
+  // 左欄：行事曆與近期除權息疊在一起（桌面版行事曆卡下面本來就有空位），右欄市場背景；手機寬度依序是行事曆、近期除權息、市場背景
+  const stack = el("div", { class: "stack" });
+  grid2.append(stack);
+  slot(stack, calendarCard);
+  slot(stack, dividendEventsCard);
   slot(grid2, backgroundCard);
   slot(root, marketCard); // 市場狀態（docs/INSIGHTS.md 3.2）
   slot(root, riskCard); // 風險燈號（3.3）
@@ -284,7 +289,7 @@ async function usMacroCard() {
 }
 
 async function calendarCard() {
-  const [cal, div, dca] = await Promise.all([loadCalendar(), loadDividends().catch(() => null), loadDca().catch(() => null)]);
+  const [cal, dca] = await Promise.all([loadCalendar(), loadDca().catch(() => null)]);
   const today = taipeiToday();
   const until = new Date(Date.parse(today) + 60 * 86400000).toISOString().slice(0, 10);
   const ev = [];
@@ -296,10 +301,6 @@ async function calendarCard() {
   for (const f of cal.fomc || []) if (f.end >= today) add(f.start < today ? today : f.start, `FOMC 會議 ${shortDate(f.start)}～${shortDate(f.end)}${f.sep ? "（含經濟預測）" : ""}`);
   const names = new Map((cal.tw_market?.entries || []).map((x) => [x.date, x.name]));
   for (const d of cal.tw_market?.closed || []) add(d, `台股休市（${names.get(d) || "休市"}）`);
-  for (const c of TRACK.tw) {
-    const n = div?.etfs?.[c]?.next;
-    if (n?.ex_date) add(n.ex_date, `${c} 除息${isNum(n.cash) ? `（每單位 ${n.cash} 元）` : ""}`);
-  }
   const nd = nextDepositDate(today);
   add(nd, `入金 ${twd(dcaFor(dca, nd.slice(0, 7)))}`);
   add(nextCheckDate(today), "配置檢查（核心：衛星）");
@@ -308,11 +309,41 @@ async function calendarCard() {
     ev.length ? el("ul", { class: "health" }, ev.slice(0, 10).map(([d, t]) =>
       el("li", {}, el("span", {}, t), el("span", { class: "muted nums" }, `${shortDate(d)}（${daysBetween(today, d)} 天後）`))))
       : el("p", { class: "muted" }, "60 天內沒有排定的事件。"),
-    el("p", { class: "tiny" }, `CPI：${cal.cpi?.status === "未取得" ? "日期未取得" : "見行事曆"}。`,
-      div ? TRACK.tw.map((c) => {
-        const l = div.etfs?.[c]?.last;
-        return l ? `${c} 上次除息 ${shortDate(l.ex_date)} 每單位 ${l.cash} 元。` : `${c} 還沒有配息紀錄。`;
-      }).join("") : "除息資料讀不到。"));
+    el("p", { class: "tiny" }, `CPI：${cal.cpi?.status === "未取得" ? "日期未取得" : "見行事曆"}。`));
+}
+
+// 近期除權息（60 天內，docs/AUTO_DIVIDENDS.md 第 8 節）：追蹤的台股與美股，每個事件一列。
+// 台股用官方除權除息預告（沒公告的用過去的間隔推估）、美股一律推估；持有的台股另外列發放日。金額估算在「資產」頁的配息卡，這裡不寫
+async function dividendEventsCard() {
+  const today = taipeiToday();
+  const [tw, us, holdings] = await Promise.all([loadDividends().catch(() => null), loadUsDividends().catch(() => null), loadHoldings().catch(() => [])]);
+  const held = new Set(holdings.map((h) => h.code));
+  const r = nearbyDividendEvents({ tw, us, held, noDividend: NO_DIVIDEND, tracks: TRACK, today });
+  const label = (code) => `${code}${NAMES[code] ? ` ${NAMES[code]}` : ""}${held.has(code) ? "（持有）" : ""}`;
+  const money = (x) => (x.market === "us" ? (x.perShare == null ? "金額未公布" : `US$${x.perShare}`) : x.perUnit == null ? "金額未公布" : `${x.perUnit} 元`);
+  const text = (x) => {
+    if (x.kind === "pay") return `${x.code} 發放`;
+    const who = label(x.code) + (x.held ? "" : " "); // 「（持有）」後面不加空格
+    if (x.approx) return `${who}除息（推估${x.overdue ? "，還沒公告" : ""}）・上次${x.market === "us" ? "每股" : "每單位"} ${money(x)}`;
+    return `${who}除息・每單位 ${money(x)}`;
+  };
+  const when = (x) => {
+    const n = daysBetween(today, x.date);
+    if (x.overdue) return `推估 ${shortDate(x.date)} 前後`;
+    return `${x.approx ? "約 " : ""}${shortDate(x.date)}（${n === 0 ? "今天" : `${n} 天後`}）`;
+  };
+  const notes = [
+    "台股來自證交所除權除息預告表與 FinMind；美股沒有公布未來除息日，用過去的間隔推估，實際以公告為準。",
+    r.noDividend.length ? `不配息：${r.noDividend.join("、")}。` : "",
+    r.noRecord.length ? `沒有配息紀錄：${r.noRecord.join("、")}。` : "",
+    r.tooFew.length ? `配息紀錄不到 3 次，沒推估：${r.tooFew.join("、")}。` : "",
+    "預估金額見「資產」頁的配息卡。"].filter(Boolean).join("");
+  return card("近期除權息（60 天內）",
+    r.rows.length ? el("ul", { class: "health wrap" }, r.rows.map((x) =>
+      el("li", {}, el("span", {}, text(x)), el("span", { class: "muted nums" }, when(x)))))
+      : el("p", { class: "muted" }, "60 天內沒有除權息。"),
+    (r.twMissing || r.usMissing) && el("p", { class: "tiny" }, `${[r.twMissing && "台股", r.usMissing && "美股"].filter(Boolean).join("、")}配息資料讀不到。`),
+    el("p", { class: "tiny" }, notes));
 }
 
 const LIGHT = { 紅: ["#d03b3b", "熱絡"], 黃紅: ["#ec835a", "轉向"], 綠: ["#0ca30c", "穩定"], 黃藍: ["#5598e7", "轉向"], 藍: ["#2a78d6", "低迷"] };
