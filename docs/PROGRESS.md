@@ -22,8 +22,8 @@
 ## 待辦
 1. **v4.2 後續**（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14 節）：11/17 第一次正式執行通過（剛好是大波動日，格式與數字都對）。
    - 還沒遇到費半漲跌在 3%～5% 之間的日子（不該用大波動日格式），遇到那天看一次執行紀錄。
-   - 下次改提示詞時一起修（2026-11-17 起「晨報排程維護」先把 v4.2a 準備好放在 `private/routines/v42a/`，不動排程；Sonnet 比對有結論後跟換模型一起上）：午間重點理由寫過「前 3 天賣超」（實際連 11 天；往前數整個檔的規則只寫在總經總結）；`allowed_domains` 把 cnbc.com、bloomberg.com、wsj.com、ft.com 整組列成不要放，可能限制過頭。
-2. **晨報改用 Sonnet 的測試**（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 15 節）：只換模型，測試排程 11/18、11/19 自動跑（晨間 08:55、午間 11:50），接在 Opus 正式版後面同一天比對。11/19 午間跑完後，「晨報排程維護」做比較表（B 階段）並停用測試排程；主 session 審查後給建議，使用者同意才改正式排程。使用者 2026-11-17：Sonnet 給的資料不如 Opus 就維持 Opus。
+   - 下次改提示詞時一起修（2026-11-17 起「晨報排程維護」先把 v4.2a 準備好放在 `private/routines/v42a/`，不動排程；見待辦 2）：午間重點理由寫過「前 3 天賣超」（實際連 11 天；往前數整個檔的規則只寫在總經總結）；`allowed_domains` 把 cnbc.com、bloomberg.com、wsj.com、ft.com 整組列成不要放，可能限制過頭。
+2. **Sonnet 晨報測試結束（2026-11-19），維持 Opus**（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 15 節結果）；剩 v4.2a 上線（用 Opus 的 A1／A2 body，要使用者同意並先跑一次性測試）。
 3. **設計改版擱置**（使用者 2026-11-11 決定先功能、後美化；使用者沒提就不要主動提）：IMPROVE 的 D01～D08、R16、R17 跟著擱置。
    - 首頁示意在本機分支 `claude/fervent-merkle-1607ac`（工作目錄 `.claude/worktrees/fervent-merkle-1607ac`，cacbefe）與備份分支 `archive/design-preview-2026-11-10`，沒有 push、沒有合併。要看：在 `.claude/launch.json` 暫時加 `py -3.14 -m http.server 8766 --directory .claude/worktrees/fervent-merkle-1607ac/site`，開 `/preview-home.html`。
    - 使用者 2026-11-17：導覽列的「記帳」放正中間，之後設計改版時改成像 OKX 錢包底部中間那顆凸起的圓形主按鈕（截圖是 OKX Web3 錢包首頁）。
@@ -33,7 +33,7 @@
 6. **帳本補兩組已賣出的買賣與已實現損益**（[REALIZED_PNL.md](REALIZED_PNL.md)）：2026-11-18 上線（sw.js `2026-11-18-1`）。帳本補了 00679B、00735 兩組買賣與 VOO、GOOGL、009816 的實際金額；持倉頁與總覽顯示已實現損益 +175。
 7. **配息自動記帳已全部上線**（2026-11-18；[OTHER_INCOME.md](OTHER_INCOME.md)、[AUTO_DIVIDENDS.md](AUTO_DIVIDENDS.md)）：網站（合併 `fa82ff1`，sw.js `2026-11-18-2`）、market-data `us.json`、Apps Script 與每日觸發器都好了。**11/19 確認第一次自動執行**（台北 09:00～10:00；看配息卡「上次自動檢查」或 Apps Script「觸發條件」的上次執行時間）。第一筆真正自動記帳預計是 GOOGL（12 月中）或 00981A。
 8. 較小、不急：
-   - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：等 Sonnet 測試有結論、新聞排程穩定再做。
+   - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：v4.2a 的一次性測試還會寫進測試_新聞，等 v4.2a 上線後再拿掉。
 
 ## 注意事項
 - 分工（使用者 2026-11-12、11-13 訂）：主 session 的高階模型只做規劃、規格、審查與較難的製作；部署、例行檢查、照規格實作交給常駐的便宜模型 session（部署與例行檢查、網站實作、market-data 維護、排程維護；教學要用時開新的；id 在記憶 `delegate-routine-work`）。模型（使用者 2026-11-16 訂）：交辦預設 Sonnet，看新聞、讀執行紀錄這類簡單檢查用 Haiku，只有 Sonnet 做不到才用 Opus；主 session 以前開的 Opus session 已全部封存。同類工作用同一個 session，不要每件事開新的；主對話只講結論與要使用者決定的事。會對外生效的動作（push、部署、改排程）要使用者本人在執行的那個 session 裡同意。使用者 2026-11-18 再次強調：主 session 當管理者，部署（合併、改版本號、測試、push、線上確認）與例行檢查一律交給分支 session 做，做完呈交給主 session 核對批改，主 session 不自己動手部署。
