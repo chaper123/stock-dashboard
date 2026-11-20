@@ -8,9 +8,9 @@ const sheetCsv = (pub, gid) =>
 const LEDGER_PUB = "2PACX-1vTkKjwqp4RAA2kJ6YPKCHVZCdv8fkUJOS8_S4elsyFQB6nnLs1_oA5S_CHJXbKNc7yJiYlmu0tRcAnH";
 // 「投資儀表板資料（排程寫入）」（2026-10-27 發布；null 時網站顯示「尚未發布」）
 const DASH_PUB = "2PACX-1vRhvnwZeDHTngUJNE92xxFi2cBvrZrBsiCAtrefaDzMfaR268oMF5wmC5b0E77T0yqR6fPEx71PAvlh";
-// 新聞：正式「新聞」分頁（gid 5，2026-10-28 建立）與「測試_新聞」（gid 4）都讀，取資料日較新的，同一天以正式為準。
+// 新聞：讀正式「新聞」分頁（gid 5，2026-10-28 建立）。「測試_新聞」（gid 4）是排程測試用，2026-11-21 v4.2a 上線後網站不再讀。
 // 切換當天正式分頁還空著也不會空白；正式版穩定後把測試那一項拿掉
-const NEWS_TABS = [[5, "新聞"], [4, "測試_新聞"]];
+const NEWS_TABS = [[5, "新聞"]];
 
 // 帳本新分頁「其他入帳」（配息與手續費折抵，docs/OTHER_INCOME.md）的 gid（2026-11-18 建立）。改成 null＝當成還沒接上，網站當成沒有其他入帳、不報錯
 const INCOME_GID = 11;
