@@ -383,3 +383,10 @@
 - 晨報與新聞檢查（Haiku）：可以分擔正確性抽查。
 
 **結果（2026-11-19）**：測試排程跑了 11/18、11/19 共 4 組配對，結論**維持 Opus**，兩個正式排程不改。理由是規則遵守與涵蓋度，不是準確度：Sonnet 在 11/19 標題清單狀態 partial 時仍照用（規則要求 ok）、漏了地緣與治理類消息（兩天都沒有社群列）、午間讀錯「晚於 11:45 開始就查證 25 分鐘」的規則而提早收手（內容約為 Opus 的六成）；準確度抽樣（Opus 20 列、Sonnet 19 列）樣本太小，分不出差距。下次再測要避免兩個干擾：測試提示詞強制第 1 條寫「市場怎麼了」、測試午間 11:50 才開始。比較表在 `private/routines/sonnet_test/COMPARE.md`（不進 git）。
+
+## 16. v4.2a（2026-11-21 上線）
+
+- **改了什麼**（兩個提示詞各 7 處）：版本字樣；「連 N 天買／賣超」的數法統一為往前數整個 `tw_market_insti.csv`（外資第 5 欄、投信第 4 欄），一路同方向到檔案第一列就寫「近 N 個交易日都買超（賣超）」，不寫「連 N 天」；`allowed_domains` 的說明只剩 wsj.com、ft.com 不要放（cnbc.com、bloomberg.com 11/20 在雲端實測沒被拒）；engine 釘選 `318aa86` → `0876bf089de7114a1fe15427b07291d05a8d3f24`（只有 `discipline.py` 變，SHA-256 `1655fc31…`，新增「檢查後繼續補足」，`first_check` 是 2027-04，之前輸出不變；其他三支 SHA 不變）。
+- **11/20 一次性測試（Opus、停用後保留紀錄）**：7 項都通過——兩次都在 12:00 前寫入「測試_新聞」（晨間 25 列、午間 16 列）、四支程式 SHA 都對、cnbc／bloomberg 沒被拒、外資連 4 天賣超與投信連 2 天買超跟重數一致、沒有私人持股資訊與買賣建議、「要做什麼」與正式版一致、必寫事項都寫了。跟正式 v4.2 的差異只有各自挑的來源與新鮮度。細節在 `private/routines/v42a/TEST_1120.md`。
+- **上線（11/21 凌晨，使用者本人同意）**：晨間 `trig_01DYv6GPPtaUFigGbmArRnWk`、午間 `trig_01KHWmV89YTsDzpZCWdyufLk` 換成 v4.2a（Opus，內容為 `private/routines/v42a/A1_morning_opus.json`、`A2_noon_opus.json`）。讀回：提示詞與本機檔一字不差、cron、啟用、11 個連接器、通知、環境、events uuid 都沒變；下一次執行是 11/23（週一）。退回只要送 `private/routines/v42/P1_news_morning_prod_update.json`、`P2_news_noon_prod_update.json`。
+- **還沒真的跑過的分支**：「近 N 個交易日」寫法（檔案不是一路同方向，11/20 沒觸發）、大波動日以外「機會觀察那句沒寫」的分支；遇到時看一次執行紀錄。

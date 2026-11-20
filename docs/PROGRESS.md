@@ -3,7 +3,7 @@
 > 新 session 先讀這份（現況、待辦、注意事項）。舊決定與測試細節在 [HISTORY.md](HISTORY.md)，要查時用搜尋找相關段落，不要整份讀。
 > 每次 commit 一起更新。這份保持精簡：做完的事在這裡只留一兩句，細節寫進主題文件（見文件地圖）或接在 HISTORY.md 最後面。程式註解裡的「PROGRESS.md 第 N 項」指 HISTORY.md 的編號。
 
-最後更新：2026-11-17
+最後更新：2026-11-21
 
 ## 網址
 - repo：https://github.com/chaper123/stock-dashboard
@@ -11,7 +11,7 @@
 - 行情資料：https://github.com/chaper123/market-data（本機 `C:\market-data`）
 
 ## 現在在跑的東西
-- **新聞晨報 v4.2**（claude.ai 雲端排程，平日 08:40 晨間、11:30 午間）：讀 market-data 的標題清單與資料、共用帳本（只讀）、私人持股 repo（只讀），寫「儀表板資料」試算表的「新聞」分頁並推播。2026-11-16 換成 v4.2（大波動日重點第 1 條多一句機會觀察，指到網站機會頁）。規劃、測試與上線結果見 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14 節；排程 ID、提示詞、退回上一版的設定在 `private/routines/v42/README.md`。engine 釘選 stock-dashboard 318aa86（`engine/news_select.py`、`discipline.py`、`fund_moves.py`、`opportunity.py`）。
+- **新聞晨報 v4.2a**（claude.ai 雲端排程，平日 08:40 晨間、11:30 午間）：讀 market-data 的標題清單與資料、共用帳本（只讀）、私人持股 repo（只讀），寫「儀表板資料」試算表的「新聞」分頁並推播。2026-11-16 換成 v4.2（大波動日重點第 1 條多一句機會觀察），2026-11-21 換成 v4.2a（連 N 天數法、allowed_domains 說明、engine 釘選更新）。規劃、測試與上線結果見 [NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14、16 節；排程 ID、提示詞、退回上一版的設定在 `private/routines/v42/README.md`、`v42a/`。engine 釘選 stock-dashboard 0876bf0（`engine/news_select.py`、`discipline.py`、`fund_moves.py`、`opportunity.py`）。
 - 舊的美股、台股兩個買點晨報 2026-11-03 停用（轉型，見 [PIVOT.md](PIVOT.md)）。
 - **market-data**（公開）：GitHub Actions 抓行情、新聞標題、總經、法人、行事曆，cron-job.org 觸發（fetch 06:15、news 08:20、11:10 等），狀態看 `data/meta.json`。台股不再程式抓證交所／櫃買網站（改 FinMind＋OpenAPI）；盤中價由網站在使用者瀏覽器用富果查（金鑰只在使用者裝置）。
 - **market-data-private**（私人，本機 `C:\market-data-private`）：00981A、009816 每日持股。投信網站不得轉載，所以不放公開 repo；公開的「新聞」分頁不能寫股數、權重、排名、檔數。
@@ -20,20 +20,20 @@
 - **使用者的投資規則**：每月 6 日照帳本「定投金額」投入台股 009816 80%、00981A 20%；4、10 月檢查，偏離超過 5 個百分點才整筆補偏低的一檔；美股 VOO、GOOGL 保留、不加碼。所有輸出都是依規則的訊號，不是投資建議。
 
 ## 待辦
-1. **v4.2 後續**（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14 節）：11/17 第一次正式執行通過（剛好是大波動日，格式與數字都對）。
+1. **v4.2／v4.2a 後續**（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14、16 節）：11/17 第一次正式執行通過（剛好是大波動日，格式與數字都對）。
    - 還沒遇到費半漲跌在 3%～5% 之間的日子（不該用大波動日格式），遇到那天看一次執行紀錄。
-   - 下次改提示詞時一起修（2026-11-17 起「晨報排程維護」先把 v4.2a 準備好放在 `private/routines/v42a/`，不動排程；見待辦 2）：午間重點理由寫過「前 3 天賣超」（實際連 11 天；往前數整個檔的規則只寫在總經總結）；`allowed_domains` 把 cnbc.com、bloomberg.com、wsj.com、ft.com 整組列成不要放，可能限制過頭。
-2. **Sonnet 晨報測試結束（2026-11-19），維持 Opus**（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 15 節結果）；剩 v4.2a 上線（用 Opus 的 A1／A2 body，要使用者同意並先跑一次性測試）。
+   - v4.2a 的「近 N 個交易日」寫法還沒實際出現過（外資或投信一路同方向到檔案第一列才會用到），遇到時看一次執行紀錄；v4.2a 第一次正式執行是 11/23（週一），也看一次。
+2. **已完成**：Sonnet 晨報測試（2026-11-19）維持 Opus（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 15 節）；v4.2a 2026-11-21 上線（第 16 節）。
 3. **設計改版擱置**（使用者 2026-11-11 決定先功能、後美化；使用者沒提就不要主動提）：IMPROVE 的 D01～D08、R16、R17 跟著擱置。
    - 首頁示意在本機分支 `claude/fervent-merkle-1607ac`（工作目錄 `.claude/worktrees/fervent-merkle-1607ac`，cacbefe）與備份分支 `archive/design-preview-2026-11-10`，沒有 push、沒有合併。要看：在 `.claude/launch.json` 暫時加 `py -3.14 -m http.server 8766 --directory .claude/worktrees/fervent-merkle-1607ac/site`，開 `/preview-home.html`。
    - 使用者 2026-11-17：導覽列的「記帳」放正中間，之後設計改版時改成像 OKX 錢包底部中間那顆凸起的圓形主按鈕（截圖是 OKX Web3 錢包首頁）。
    - 重啟時照使用者的意見改：六個範本都要實際開來看（上次 Ledgely、Zapline、Fundora 沒開），互動當成重點（上次沒有跳數字、沒有背景動畫，使用者覺得只比現在好一點）。
-4. **檢查後繼續補足**（PIVOT 第 12 節）與**資金頁「總資產走勢」**（[ASSET_TREND.md](ASSET_TREND.md)）：2026-11-17 上線（`bde1da1`，sw.js `2026-11-17-3`）。補足從 2027-04 的檢查才開始算；晨報要等下次改提示詞換 engine 釘選才會用到，2027/04 前換好（可以跟 v4.2a 一起）。
+4. **檢查後繼續補足**（PIVOT 第 12 節）與**資金頁「總資產走勢」**（[ASSET_TREND.md](ASSET_TREND.md)）：2026-11-17 上線（`bde1da1`，sw.js `2026-11-17-3`）。補足從 2027-04 的檢查才開始算；晨報的 engine 釘選已隨 v4.2a 換成 0876bf0，會用到這個功能。
 5. **「資產」新頁與「試算」頁整頓**：2026-11-17 上線（`f1ff46d` 合併、`08d91d5` 導覽列，sw.js `2026-11-17-4`），規格與紀錄在 [ASSETS_PAGE.md](ASSETS_PAGE.md)。導覽列照使用者指定：總覽、持倉、資產、K 線、記帳、分析、新聞、報告、試算（記帳在正中間）。
 6. **帳本補兩組已賣出的買賣與已實現損益**（[REALIZED_PNL.md](REALIZED_PNL.md)）：2026-11-18 上線（sw.js `2026-11-18-1`）。帳本補了 00679B、00735 兩組買賣與 VOO、GOOGL、009816 的實際金額；持倉頁與總覽顯示已實現損益 +175。
 7. **配息自動記帳已全部上線**（2026-11-18；[OTHER_INCOME.md](OTHER_INCOME.md)、[AUTO_DIVIDENDS.md](AUTO_DIVIDENDS.md)）：網站（合併 `fa82ff1`，sw.js `2026-11-18-2`）、market-data `us.json`、Apps Script 與每日觸發器都好了。**11/19 確認第一次自動執行**（台北 09:00～10:00；看配息卡「上次自動檢查」或 Apps Script「觸發條件」的上次執行時間）。第一筆真正自動記帳預計是 GOOGL（12 月中）或 00981A。
 8. 較小、不急：
-   - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：v4.2a 的一次性測試還會寫進測試_新聞，等 v4.2a 上線後再拿掉。
+   - `site/js/config.js` 的 `NEWS_TABS` 拿掉「測試_新聞」（gid 4）：v4.2a 的一次性測試已跑完不會再寫進測試_新聞，v4.2a 已上線（兩個測試排程已停用），可以做。
 
 ## 注意事項
 - 分工（使用者 2026-11-12、11-13 訂）：主 session 的高階模型只做規劃、規格、審查與較難的製作；部署、例行檢查、照規格實作交給常駐的便宜模型 session（部署與例行檢查、網站實作、market-data 維護、排程維護；教學要用時開新的；id 在記憶 `delegate-routine-work`）。模型（使用者 2026-11-16 訂）：交辦預設 Sonnet，看新聞、讀執行紀錄這類簡單檢查用 Haiku，只有 Sonnet 做不到才用 Opus；主 session 以前開的 Opus session 已全部封存。同類工作用同一個 session，不要每件事開新的；主對話只講結論與要使用者決定的事。會對外生效的動作（push、部署、改排程）要使用者本人在執行的那個 session 裡同意。使用者 2026-11-18 再次強調：主 session 當管理者，部署（合併、改版本號、測試、push、線上確認）與例行檢查一律交給分支 session 做，做完呈交給主 session 核對批改，主 session 不自己動手部署。
