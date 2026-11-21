@@ -411,6 +411,82 @@ def test_init_creates_marker_and_folders(tmp_path):
     assert {"每日", "完整歷史", "紀錄"} <= set(os.listdir(root))
 
 
+# ---------- 看門狗（Apps Script）與 Python 輸出的欄位對照 ----------
+
+GS = ROOT / "apps_script" / "backup_watchdog.gs"
+
+
+def _gs_samples():
+    """backup_watchdog.gs 的 selfTest 假資料（JSON 字面值，用 /*JSON:名稱*/ … /*END*/ 框起來）。"""
+    import re
+    text = GS.read_text("utf-8")
+    got = dict(re.findall(r"/\*JSON:(\w+)\*/\s*(.*?)\s*/\*END\*/", text, re.S))
+    assert set(got) == {"state", "manifest", "bundle"}
+    return {k: json.loads(v) for k, v in got.items()}
+
+
+def _shape_diff(a, b, path=""):
+    """比對兩個 JSON 的欄位結構：dict 的鍵要一樣；list 兩邊都有元素時比第一個元素；值的內容不比。"""
+    if isinstance(a, dict) and isinstance(b, dict):
+        out = [f"{path}.{k} 只在假資料裡" for k in sorted(set(a) - set(b))]
+        out += [f"{path}.{k} 只在 Python 輸出裡" for k in sorted(set(b) - set(a))]
+        for k in set(a) & set(b):
+            out += _shape_diff(a[k], b[k], f"{path}.{k}")
+        return out
+    if isinstance(a, list) and isinstance(b, list):
+        return _shape_diff(a[0], b[0], path + "[]") if a and b else []
+    if isinstance(a, (dict, list)) != isinstance(b, (dict, list)):
+        return [f"{path} 型別不同"]
+    return []
+
+
+def _watchdog_daily_files(m):
+    """跟 backup_watchdog.gs 的 filesOf_(manifest, "daily") 一樣的取法。"""
+    out = [(r["archive"]["file"], r["archive"]["bytes"]) for r in m["repos"].values() if r.get("archive")]
+    out += [(f["zip"]["file"], f["zip"]["bytes"]) for f in m["folders"].values() if f.get("zip")]
+    out += [(c["file"], c["bytes"]) for c in m["csv"] if c.get("ok")]
+    return out
+
+
+def _watchdog_bundle_files(fm):
+    return [(r["bundle"]["file"], r["bundle"]["bytes"]) for r in fm["repos"].values() if r.get("bundle")]
+
+
+def test_watchdog_samples_have_the_documented_shape():
+    s = _gs_samples()
+    assert s["state"]["schema"] == 1 and s["state"]["last_ok_folder"] == s["state"]["last_ok"][:10]
+    assert {"last_attempt", "last_attempt_status", "last_ok", "last_ok_folder", "last_bundle_folder"} <= set(s["state"])
+    assert s["manifest"]["status"] == "OK" and len(s["manifest"]["csv"]) == 7
+    assert _watchdog_bundle_files(s["bundle"]) and len(_watchdog_daily_files(s["manifest"])) == 12
+
+
+def test_watchdog_manifest_json_has_only_the_four_scopes():
+    m = json.loads((ROOT / "apps_script" / "backup_watchdog.appsscript.json").read_text("utf-8"))
+    assert sorted(m["oauthScopes"]) == [
+        "https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/script.scriptapp",
+        "https://www.googleapis.com/auth/script.send_mail", "https://www.googleapis.com/auth/userinfo.email"]
+    assert m["timeZone"] == "Asia/Taipei"
+
+
+def test_watchdog_source_has_no_email_ids_or_http_calls():
+    import re
+    text = GS.read_text("utf-8")
+    assert not re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text)
+    assert not re.search(r"UrlFetchApp|getFolderById|getFileById|openById|ghp_|github_pat_", text)
+    assert "const W = {" in text and "function evaluate_(" in text
+
+
+def test_watchdog_flags_a_missing_file_in_a_real_backup(world):
+    """用 Python 真的寫出來的雲端資料夾，照看門狗的方式核對：少一個檔就會被發現。"""
+    root = world["root"]
+    assert b.main(["--root", str(root), "--no-notify"]) == 0
+    day = next((root / "每日").iterdir())
+    m = json.loads((day / "manifest.json").read_text("utf-8"))
+    (day / "private.zip").unlink()
+    missing = [rel for rel, n in _watchdog_daily_files(m) if not (day / rel).is_file()]
+    assert missing == ["private.zip"]
+
+
 # ---------- 完整流程（暫存資料夾裡的迷你 repo，不碰網路與真的 repo）----------
 
 def _git(cwd, *args):
@@ -505,6 +581,18 @@ def test_full_run_ok_then_restore(world, capsys):
     assert not [p for p in (tmp / "tmp").iterdir() if p.name.startswith("sdbackup-") or p.name.endswith(".lock")]
     assert before_head == {n: _git(p, "rev-parse", "HEAD") for n, p in repos.items()}
     assert not [p for p in root.rglob("*") if p.name.startswith(b.UNFINISHED)]
+    # 看門狗（apps_script/backup_watchdog.gs）靠這些欄位核對雲端檔案：路徑與大小要對得上實際寫出的檔案
+    st = json.loads((root / "最近備份.json").read_text("utf-8"))
+    for d, mf, listed in ((day, m, _watchdog_daily_files(m)), (full, fm, _watchdog_bundle_files(fm))):
+        assert listed
+        for rel, nbytes in listed:
+            assert (d / rel).is_file() and (d / rel).stat().st_size == nbytes, rel
+    assert len(_watchdog_daily_files(m)) == 5 + 7  # 5 個 zip、7 個 CSV
+    # 看門狗用的假資料欄位與這次真的寫出來的一致
+    s = _gs_samples()
+    assert _shape_diff(s["state"], st) == []
+    assert _shape_diff(s["manifest"], m) == []
+    assert _shape_diff(s["bundle"], fm) == []
 
 
 def test_dry_run_writes_nothing(world, capsys):
