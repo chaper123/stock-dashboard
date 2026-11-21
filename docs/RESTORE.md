@@ -166,7 +166,7 @@ py -3.14 tools\backup_to_drive.py --accept-rewrite market-data
 ```
 
 3. 那次備份會記下 `最近備份.json` 的 `rewrite_accepted.<repo>`（確認當下的 commit 與時間），之後以它當「非快轉」比較的起點；那次若其他都正常會變成 OK（`rewrite_accepted` 只在那次 fetch 成功時記錄；fetch 也失敗的話要等網路好了再跑一次）。之後正常的 push 不受影響，下次 force-push 才會再被擋一次。
-4. `非快轉檢查失敗` 不是歷史被改寫，是檢查本身出錯（例如本機的 git 物件缺漏）：先對那個 repo 手動 `git fetch origin`，再重跑備份；跑兩次都一樣才需要看 `problems` 裡寫的細節。
+4. `非快轉檢查失敗` 不是歷史被改寫，是檢查本身出錯（例如本機的 git 物件缺漏）：先對那個 repo 手動 `git fetch origin`，再重跑備份；跑兩次都一樣才需要看 `problems` 裡寫的細節。**如果是基準 commit 的物件已經不在本機（遠端歷史被改寫過、舊 commit 被清掉了），fetch 解決不了**：確認是自己做的之後，也可以用上面第 2 步的 `--accept-rewrite <repo>` 解除，之後的比較改以那次確認的 commit 當起點。
 
 ## 12. 注意：Google 雲端硬碟桌面版的本機快取不是備份
 

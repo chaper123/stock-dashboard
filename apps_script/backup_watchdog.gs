@@ -177,7 +177,7 @@ const INFO = {
     "開電腦後執行 Get-ScheduledTaskInfo StockDashboardBackup 看 LastRunTime 與 LastTaskResult；看雲端硬碟電腦版的同步狀態；開「最近備份.json」看 problems（還原說明第 11 項）"],
   NOT_UPLOADED: ["最近一次 OK 的備份在雲端不完整", "雲端硬碟電腦版還沒上傳完、同步被暫停、容量不足、或檔案被刪",
     "看雲端硬碟電腦版右下角的同步狀態；到每日資料夾比對缺的檔案；必要時手動跑一次備份"],
-  OLD_BUNDLE: ["完整歷史（bundle）太舊或缺檔", "有 repo 連續 fetch 失敗所以延後、備份停了，或 bundle 檔沒上傳完整",
+  OLD_BUNDLE: ["完整歷史（bundle）太舊或缺檔", "備份停了（電腦沒開、排程停用）、完整歷史做失敗（最近備份.json 的 problems 會寫原因，例如 repo 沒有 origin/main）、bundle 檔沒上傳完整，或同名的日期資料夾有重複",
     "看最近備份.json 的 last_bundle_folder；用 py -3.14 tools\\backup_to_drive.py --force-bundle 手動補一次"],
   MARKET_STALE: ["market-data 太久沒有新資料", "market-data 的 GitHub Actions 或 cron-job.org 停了（或遇到長假）",
     "看 market-data 的 Actions 執行紀錄與 cron-job.org 的工作狀態（這項跟備份本身無關）"],

@@ -76,7 +76,7 @@ G:\我的雲端硬碟\stock-dashboard 備份\
 0. **鎖**：`%TEMP%\sdbackup.lock`（O_EXCL 建立；超過 2 小時視為殘留，可以取代）。拿不到鎖 → 結束碼 12。
 1. **找雲端硬碟**：掃 D～Z 磁碟機，找 `<DRIVE_ROOT_NAMES 其一>\<DRIVE_DIR_NAME>\<MARKER>`，同時確認 `GoogleDriveFS.exe` 在跑（`tasklist` 加 CREATE_NO_WINDOW）。找不到就每 30 秒重試，最多 `DRIVE_WAIT_SEC`（開機補跑時雲端硬碟可能還沒掛上）。還是失敗：通知，結束碼 10（找到資料夾但沒有標記檔：11）。**不建任何東西、不寫本機。** 標記檔可以擋下 G: 掛的是別的 Google 帳號、或資料夾被移走的情況。
 2. **暫存區**：`tempfile.mkdtemp(prefix="sdbackup-")`，`finally` 一定刪掉；開始時另外清掉超過 1 天的舊 `sdbackup-*`（上一次被排程時間上限或當機中止留下的，不碰鎖檔）；刪不掉（`rmtree_force` 重試 3 次、每次隔 1 秒）時在雲端 `紀錄` 的 log 加一行，不算失敗。刪除細節：git 物件檔是唯讀，刪除前先清唯讀屬性，用 `shutil.rmtree(..., onexc=...)`，3.12 沒有 onexc 就用 onerror）。
-3. **每個 repo**（所有子程序：環境變數 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，設逾時，Windows 上加 `creationflags=CREATE_NO_WINDOW`；不然在 pyw 底下每個 git 都會跳黑窗、或跳登入視窗卡住。**逾時要連孫程序一起殺**：用 `Popen`，逾時時 Windows 執行 `taskkill /PID <pid> /T /F`（POSIX 用 process group），再 `communicate(timeout=30)`；只殺 git 本身的話，它啟動的 `git-remote-https` 會留著把管線握住、`run` 一直等下去。fetch 另加 `-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60`，連線卡住 60 秒就自己放棄。所有 git 呼叫加 `-c core.longpaths=true`，避免長路徑檔名在 Windows 失敗）：
+3. **每個 repo**（所有子程序：環境變數 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，設逾時，Windows 上加 `creationflags=CREATE_NO_WINDOW`；不然在 pyw 底下每個 git 都會跳黑窗、或跳登入視窗卡住。**逾時要連孫程序一起殺**：用 `Popen`，逾時時 Windows 執行 `taskkill /PID <pid> /T /F`（POSIX 用 process group），再 `communicate(timeout=30)`；**這次還等不到（孫程序不在被殺的樹裡、還握著管線）就直接回傳，不要 close 管線**（close 會等讀取執行緒＝等孫程序結束，實測 70 秒），讀取執行緒是 daemon，所以等待上限真的是 timeout＋30 秒；只殺 git 本身的話，它啟動的 `git-remote-https` 會留著把管線握住、`run` 一直等下去。fetch 另加 `-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60`，連線卡住 60 秒就自己放棄。所有 git 呼叫加 `-c core.longpaths=true`，避免長路徑檔名在 Windows 失敗）：
    - `git -C <repo> fetch --no-prune --quiet origin`，失敗等 60 秒再試一次（`FETCH_TRIES`）。第一個 repo 兩次都失敗時，其他 repo 只試一次。只動 origin/* 與 FETCH_HEAD，**不 pull、不 checkout、不碰工作目錄與 worktree**。
    - 記錄：origin/main 的 commit 與 commit 時間、本機 main 落後幾個 commit（只記錄）。
    - 非快轉檢查：比較的基準 commit 不是新 origin/main 的祖先（`git merge-base --is-ancestor`，結束碼 0＝是、1＝不是；**只有 0 與 1 有意義**，其他結束碼是檢查本身失敗）→ **PARTIAL**（可能被 force-push 或帳號被盜；跟第 5 節一致：不刪任何東西、通知）。基準＝上一份 OK 的 manifest 記的 commit，或使用者用 `--accept-rewrite <repo>` 確認過的那次之後的 commit，取**較新**的那個（`最近備份.json` 的 `rewrite_accepted.<repo> = {commit, at}`；只在那次 fetch 成功時記錄）。檢查本身失敗（結束碼不是 0 或 1，例如物件缺失）→ PARTIAL，問題寫「非快轉檢查失敗」，不當成沒事。這樣一次 force-push 只會 PARTIAL 到使用者確認為止，確認之後下一次就恢復 OK；後續的正常 push 不受影響。
@@ -84,7 +84,7 @@ G:\我的雲端硬碟\stock-dashboard 備份\
    - 只在本機的分支（`git for-each-ref refs/heads`，`git rev-list --count <分支> --not --remotes=origin` > 0）與有未提交修改的 worktree（`git worktree list --porcelain` 後逐一 `git status --porcelain`）記進 warnings。
 4. **private 與記憶資料夾**：用 `zipfile`（ZIP_DEFLATED）走訪整個資料夾，空資料夾也要寫成資料夾項目，檔名用 UTF-8（zipfile 預設會設 UTF-8 旗標）。超過 `ZIP_WARN_MB` 警告。**`private` 資料夾不存在或裡面一個檔案都沒有 → PARTIAL**（不刪任何東西、通知；排程提示詞與規劃筆記是這份備份的重點，空包不能當成功）。記憶資料夾不存在只警告、不算失敗（備份不到不影響還原其他東西）。
 5. **CSV**：從 `git show origin/main:site/js/config.js` 解析 `LEDGER_PUB`、`DASH_PUB` 與網站實際讀的 gid（目前 7 個，對照第 0 節）；`urllib` 下載，逾時 60 秒，失敗重試一次。驗證：HTTP 200、開頭不是 `<`（取消發布時會回 HTML）、能用 UTF-8 解碼。
-6. **完整歷史**：條件是「最新一份完整歷史距今超過 `BUNDLE_EVERY_DAYS` 天，或沒有任何一份，或 `--force-bundle`」。fetch 失敗時照做：fetch 失敗的 repo 從**本機已有的** `refs/remotes/origin/*` 與只在本機的分支做，manifest 標 `STALE`，那個 repo 的 `fetch_ok:false`，main 是本機最後一次 fetch 的 origin/main；只有某個 repo 一個本機 origin/main 都沒有時才略過並警告。長期 GitHub 掛掉時一樣每 7 天留一份完整歷史，不會變成沒有歷史。）**不能直接 `git bundle --all`**：本機 main 落後時，clone 出來的 main 是舊的（還原演練實測）。每個 repo：
+6. **完整歷史**：條件是「最新一份完整歷史距今超過 `BUNDLE_EVERY_DAYS` 天，或沒有任何一份，或 `--force-bundle`，或**最新一份是 `STALE` 而這次三個 fetch 都成功**」（最後一項讓連線恢復的那次立刻補一份 `OK` 的，不用再等 7 天；這次又連不上就不重做，維持每 7 天一份）。fetch 失敗時照做：fetch 失敗的 repo 從**本機已有的** `refs/remotes/origin/*` 與只在本機的分支做，manifest 標 `STALE`，那個 repo 的 `fetch_ok:false`，main 是本機最後一次 fetch 的 origin/main；只有某個 repo 一個本機 origin/main 都沒有時才略過並警告。長期 GitHub 掛掉時一樣每 7 天留一份完整歷史，不會變成沒有歷史。**不能直接 `git bundle --all`**：本機 main 落後時，clone 出來的 main 是舊的（還原演練實測）。每個 repo：
    ```
    git init --bare <tmp>\b\<repo>.git
    git -C <tmp>\b\<repo>.git fetch <repo路徑> "+refs/remotes/origin/*:refs/heads/*" "+refs/tags/*:refs/tags/*" [每個只在本機的分支 "+refs/heads/<名>:refs/heads/local/<名>"]
@@ -123,6 +123,8 @@ G:\我的雲端硬碟\stock-dashboard 備份\
 | STALE | 有 repo 的 fetch 失敗 | 該 repo 的 zip 是最後一次成功 fetch 的內容，manifest 標 `fetch_ok:false` 與 `last_fetch_ok_at`；不刪任何東西；通知 |
 | PARTIAL | fetch 都成功，但有 CSV、zip 失敗、`private` 資料夾不存在或是空的，或偵測到非快轉（含非快轉檢查本身失敗） | 不刪任何東西；通知 |
 
+`script_commit`（manifest 與 `最近備份.json` 都有）其實是**stock-dashboard 的 origin/main commit**，也就是「這份備份用的是哪一版的 `tools/backup_to_drive.py` 與 `site/js/config.js`」；欄位名稱沿用（改名會牽動看門狗的假資料與還原說明）。
+
 另外：market-data 的 origin/main 超過 `MARKET_STALE_DAYS` 天沒有新 commit → 警告（順便發現 Actions 或 cron-job.org 停了），不改狀態。
 
 GitHub 長期掛掉時刪除會一直凍結、每天多約 5 MB，這是故意的：出事前的備份最重要。
@@ -133,6 +135,7 @@ GitHub 長期掛掉時刪除會一直凍結、每天多約 5 MB，這是故意�
 - 只看 `每日\` 的直接子資料夾。名稱完全符合 `^\d{4}-\d{2}-\d{2}$`、能用固定格式解析成日期、裡面有 manifest.json，才算備份。其他資料夾一律不碰；唯一例外是自己產生的 `_未完成-*` 超過 2 天才清掉。
 - **按份數保留，不按日曆**（電腦關三週後第一次跑，不能把舊的全刪掉）。保留以下的聯集：最新 `KEEP_DAILY` 份；最近 `KEEP_MONTHLY` 個月每月最早一份 status=OK 的（那個月沒有 OK 就留最早一份）；最新一份 OK；日期在未來的（同時警告：時鐘可能不對）。
 - 刪除條件：本次 OK；**每日、完整歷史各最多刪 `MAX_DELETE_PER_RUN` 份**（上限是分開算的，一次執行最多刪 3 份每日＋3 份完整歷史），超過就整批不刪並警告（`--allow-delete N` 解除）；刪除前確認絕對路徑的上一層就是備份根目錄底下的 `每日`（完整歷史是 `完整歷史`）。
+- **刪除要先改名**：`delete_backup` 先把日期資料夾改名成 `_未完成-<日期>-<PID>-刪除` 再刪，這樣刪到一半（`manifest.json` 先被刪掉、別的檔案被占用刪不掉）時剩下的不會變成沒人管的孤兒（沒有 manifest 就不再被認成備份、也不會被重試）。改名失敗（Windows 上資料夾裡有開著的檔案時連改名都不讓）＝什麼都沒刪、進 warnings，那份還是完整的備份，下次再試。`cleanup_unfinished` 對 `-刪除` 結尾的資料夾**每次都重試**（不用等 2 天），仍刪不掉就把名稱寫進 warnings。護欄 `guard_delete` 允許這個名稱。
 - 日期在今天之後的資料夾（時鐘不對造成）不算「最新」：「最新一份完整歷史」、`last_bundle_folder`、是否到期做完整歷史、`--dry-run` 的計畫都只看日期 ≤ 今天的資料夾；未來日期的資料夾一律保留（每日另外警告）。
 
 **完整歷史**：同樣的名稱與 manifest 規則，保留最近 `KEEP_BUNDLES` 份，外加最新一份 status=OK 的（連續 fetch 失敗時 STALE 的份數可能擠掉所有 OK，不能因此把最後一份好的刪掉）；有 STALE、PARTIAL 或非快轉時不刪。
@@ -224,6 +227,7 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
     6. 沒有做 `removeTrigger()`（規格沒列）。
   - 沒驗到的：真的 Drive／Mail 服務的行為（`getEditors()` 是否包含擁有者、`getSharingAccess()` 的回傳值、`getOwner()` 在共用雲端硬碟為 null）；`getEditors`／`getViewers` 我用「排除自己的信箱」處理，`String(access)` 轉 "PRIVATE"，都靠 Apps Script 文件的說明，要在 `dryRun` 第一次實跑時確認。
 - 2026-11-21 審查退回 19 項修完（同一個分支，仍沒合併、沒 push、沒寫過 G:、沒跑 `--init`）：腳本與測試 `4fade41`、看門狗 `b39bd53`、規格與還原說明 `09917bd`。全套 pytest：`py -3.14` 與 `py -3.12` 都是 383 passed、1 skipped（約 3.7 分鐘；skip 的是 Windows 上沒權限建 symlink 的那一項）；看門狗 `selfTest` 65／65、瀏覽器測試頁 `PASS 22/22`。自己決定的地方：`--accept-rewrite` 的「較新基準」用 `rewrite_accepted.at` 對上一份 OK manifest 的 `finished`；只在該次 fetch 成功時記錄；fetch 失敗仍做完整歷史（manifest 標 STALE）；完整歷史多留最新一份 OK；完整歷史 manifest 多 `fetch_ok`；整棵樹的分享檢查沒有加時間上限保護，第一次實跑 `dryRun` 看印出的秒數。
+- 2026-11-21 最後一輪 7 項小修正：`run_cmd` 保底不關管線（等待上限 timeout＋30 秒）、`delete_backup` 改名成 `-刪除` 再刪並每次重試、STALE 的完整歷史在 fetch 恢復後立刻補 OK、測試 fixture 的 bare origin 開 longpaths、靜默伺服器測試只數自己的 `git-remote-http`、說明文字對齊、看門狗安裝步驟補 `dryRun` 的秒數與用量對照。全套 pytest：`py -3.14`、`py -3.12` 都是 389 passed、1 skipped；測試頁 `PASS 22/22`。
 
 ## 13. 雲端看門狗（Apps Script）
 
@@ -258,4 +262,4 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
 - `testMail()`：門檻當成 0，實際寄一封測試信給自己，確認收得到。
 - `dryRun()`：跑一次真的檢查但不寄信，只把結果印到執行紀錄。
 
-**驗收**（實作 session 能做的部分）：`selfTest` 的假資料跟 Python 腳本真的寫出的 `最近備份.json`、`manifest.json` 欄位一致（用假根目錄那次的輸出對照）；權限設定檔只有上面 4 個範圍；程式裡沒有信箱、ID、帳號。**安裝與授權由使用者自己在 script.google.com 做**（Claude 不能代為授權），教學 session 帶：建立專案、貼程式與 appsscript.json（要先在專案設定打開「顯示 appsscript.json」）、跑 `selfTest`、授權、跑 `dryRun`、跑 `testMail`、跑 `installTrigger`。第一次真的備份寫進雲端之後才裝，不然 `dryRun` 會回報 `NO_FOLDER`。
+**驗收**（實作 session 能做的部分）：`selfTest` 的假資料跟 Python 腳本真的寫出的 `最近備份.json`、`manifest.json` 欄位一致（用假根目錄那次的輸出對照）；權限設定檔只有上面 4 個範圍；程式裡沒有信箱、ID、帳號。**安裝與授權由使用者自己在 script.google.com 做**（Claude 不能代為授權），教學 session 帶：建立專案、貼程式與 appsscript.json（要先在專案設定打開「顯示 appsscript.json」）、跑 `selfTest`、授權、跑 `dryRun`、跑 `testMail`、跑 `installTrigger`。**第一次 `dryRun` 要看執行紀錄兩件事**：① 印出的「讀雲端硬碟共幾秒」要離 Apps Script 的 6 分鐘上限夠遠（整棵樹的分享檢查是逐項呼叫，項目多就慢）；② 「雲端硬碟用量 used／limit」要跟 Google One 的儲存空間頁面對照：`DriveApp.getStorageUsed()` 只算雲端硬碟，Gmail、相簿用量不在裡面，所以跟 Google One 顯示的總用量會不一樣；若 limit 是整個帳號的共用額度而 used 只有雲端硬碟，百分比會偏低，那就在 `INFO.QUOTA` 的說明裡寫明這個限制。第一次真的備份寫進雲端之後才裝，不然 `dryRun` 會回報 `NO_FOLDER`。
