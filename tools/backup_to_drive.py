@@ -65,6 +65,7 @@ DAILY, FULL = "每日", "完整歷史"
 LOCK_STALE_SEC = 2 * 3600
 UNFINISHED = "_未完成-"
 UNFINISHED_KEEP_DAYS = 2
+OLD_SWAPPED = re.compile(r"^" + UNFINISHED + r"(\d{4}-\d{2}-\d{2})-\d+-舊$")
 TOAST_APP_ID = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
 RESTORE_NAME = "還原說明.txt"
 STATE_NAME = "最近備份.json"
@@ -133,18 +134,32 @@ def dump_json(path, obj):
     os.replace(tmp, path)
 
 
-def rmtree_force(path):
-    """刪資料夾；遇到唯讀檔先清掉唯讀屬性再刪（Windows 上 git 的物件檔是唯讀的）。"""
+def rmtree_force(path, tries=3, wait=1):
+    """刪資料夾；遇到唯讀檔先清掉唯讀屬性再刪（Windows 上 git 的物件檔是唯讀的）。
+    刪不掉（檔案被占用等）每隔 wait 秒重試，最多 tries 次。回刪不掉的路徑清單（空＝刪乾淨了）。"""
     def _fix(func, p, *_):
         try:
             os.chmod(p, stat.S_IWRITE)
             func(p)
         except OSError:
             pass
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=_fix)
-    else:
-        shutil.rmtree(path, onerror=_fix)
+    for i in range(tries):
+        if not os.path.lexists(path):
+            return []
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=_fix)
+        else:
+            shutil.rmtree(path, onerror=_fix)
+        if not os.path.lexists(path):
+            return []
+        if i + 1 < tries:
+            time.sleep(wait)
+    left = []
+    for dirpath, dirnames, filenames in os.walk(path):
+        left += [os.path.join(dirpath, f) for f in filenames]
+        if len(left) >= 10:
+            break
+    return left[:10] or [path]
 
 
 # ---------- 鎖 ----------
@@ -193,23 +208,57 @@ def _flags():
     return getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
 
 
-def _env():
+def _env(extra=None):
     env = dict(os.environ)
     env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never", GIT_OPTIONAL_LOCKS="0",
                GIT_ASKPASS="", SSH_ASKPASS="")
+    if extra:
+        env.update(extra)
     return env
 
 
-def run_cmd(cmd, timeout=120, cwd=None):
-    """執行子程序：不開視窗、不讀 stdin、有逾時。回 (rc, stdout, stderr)；逾時或找不到程式 rc=-1。"""
+def _kill_tree(p):
+    """逾時時連孫程序一起殺（git fetch 會再開 git-remote-https；只殺 git 的話它還握著輸出管線，等不完）。"""
+    if sys.platform == "win32":
+        try:
+            subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, creationflags=_flags())
+        except Exception:
+            pass
+    else:
+        try:
+            os.killpg(p.pid, 9)
+        except OSError:
+            pass
     try:
-        p = subprocess.run(cmd, cwd=cwd, env=_env(), stdin=subprocess.DEVNULL, capture_output=True,
-                           timeout=timeout, creationflags=_flags())
-    except subprocess.TimeoutExpired:
-        return -1, b"", f"逾時（{timeout} 秒）".encode()
+        p.kill()
+    except OSError:
+        pass
+
+
+def run_cmd(cmd, timeout=120, cwd=None, env_extra=None):
+    """執行子程序：不開視窗、不讀 stdin、有逾時（逾時殺整個程序樹）。回 (rc, stdout, stderr)；逾時或找不到程式 rc=-1。"""
+    kw = {} if sys.platform == "win32" else {"start_new_session": True}
+    try:
+        p = subprocess.Popen(cmd, cwd=cwd, env=_env(env_extra), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, creationflags=_flags(), **kw)
     except OSError as e:
         return -1, b"", str(e).encode()
-    return p.returncode, p.stdout, p.stderr
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(p)
+        try:
+            out, err = p.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            out = err = b""
+            for s in (p.stdout, p.stderr):
+                try:
+                    s.close()
+                except Exception:
+                    pass
+        return -1, out or b"", f"逾時（{timeout} 秒）".encode()
+    return p.returncode, out, err
 
 
 _GIT = None
@@ -233,7 +282,7 @@ def git(repo, *args, timeout=120):
     cmd = [git_exe()]
     if repo:
         cmd += ["-C", repo]
-    cmd += ["-c", "gc.auto=0", "-c", "maintenance.auto=false", *args]
+    cmd += ["-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.longpaths=true", *args]
     rc, out, err = run_cmd(cmd, timeout=timeout)
     return rc, out.decode("utf-8", "replace"), err.decode("utf-8", "replace")
 
@@ -331,6 +380,9 @@ def bundle_keep(items, today, keep_n):
     keep = {i["name"] for i in items if i["date"] > today}
     past = sorted((i for i in items if i["date"] <= today), key=lambda i: i["date"], reverse=True)
     keep |= {i["name"] for i in past[:keep_n]}
+    oks = [i for i in past if i["status"] == "OK"]
+    if oks:
+        keep.add(oks[0]["name"])  # past 已按日期新到舊排序：最新的 OK 一定留（STALE 的完整歷史不能把它擠掉）
     return keep
 
 
@@ -364,6 +416,8 @@ def guard_delete(root, path):
 def delete_backup(root, path):
     guard_delete(root, path)
     rmtree_force(path)
+    if os.path.lexists(path):
+        raise BackupError(f"刪不掉：{path}")
 
 
 def cleanup_unfinished(root, parent, today_ts=None):
@@ -377,6 +431,9 @@ def cleanup_unfinished(root, parent, today_ts=None):
     for name in names:
         if not name.startswith(UNFINISHED):
             continue
+        m = OLD_SWAPPED.match(name)
+        if m and not os.path.isdir(os.path.join(parent, m.group(1))):
+            continue  # 同日取代到一半失敗：正式資料夾不見了，這份「-舊」是唯一的舊備份，不能清
         p = os.path.join(parent, name)
         try:
             if os.path.isdir(p) and ts - os.path.getmtime(p) > UNFINISHED_KEEP_DAYS * 86400:
@@ -520,12 +577,13 @@ def zip_folder(src, dest):
     return files, nbytes
 
 
-def backup_folder(label, src, tmp):
-    """打包 private／記憶資料夾。回 (manifest 項目, zip 路徑 or None, 警告, 問題)。"""
+def backup_folder(label, src, tmp, required=False):
+    """打包 private／記憶資料夾。回 (manifest 項目, zip 路徑 or None, 警告, 問題)。
+    required：資料夾不存在或是空的就算問題（PARTIAL）；否則只警告（記憶資料夾可能還沒有）。"""
     warns, problems = [], []
     entry = dict(path=src, files=0, bytes=0, zip=None)
     if not os.path.isdir(src):
-        warns.append(f"{label} 資料夾不存在，沒有備份：{src}")
+        (problems if required else warns).append(f"{label} 資料夾不存在，沒有備份：{src}")
         entry["missing"] = True
         return entry, None, warns, problems
     dest = os.path.join(tmp, f"{label}.zip")
@@ -533,6 +591,10 @@ def backup_folder(label, src, tmp):
         entry["files"], entry["bytes"] = zip_folder(src, dest)
     except Exception as e:
         problems.append(f"{label} 打包失敗：{type(e).__name__}: {e}"[:200])
+        return entry, None, warns, problems
+    if required and entry["files"] == 0:
+        problems.append(f"{label} 資料夾是空的，沒有備份：{src}")
+        entry["missing"] = True
         return entry, None, warns, problems
     entry["zip"] = file_info(dest)
     if entry["zip"]["bytes"] > P["ZIP_WARN_MB"] * 1024 * 1024:
@@ -545,7 +607,9 @@ def backup_folder(label, src, tmp):
 def fetch_repo(path, tries, wait=60):
     last = ""
     for i in range(tries):
-        rc, out, err = git(path, "-c", "fetch.writeCommitGraph=false", "fetch", "--no-prune", "--quiet", "origin",
+        # lowSpeed：連線卡住（一直沒資料）一分鐘就放棄，不要等到整體逾時
+        rc, out, err = git(path, "-c", "fetch.writeCommitGraph=false", "-c", "http.lowSpeedLimit=1000",
+                           "-c", "http.lowSpeedTime=60", "fetch", "--no-prune", "--quiet", "origin",
                            timeout=P["FETCH_TIMEOUT_SEC"])
         if rc == 0:
             return True, None
@@ -585,7 +649,18 @@ def count_dirty_worktrees(path):
     return n
 
 
-def backup_repo(name, path, tmp, tries, prev_commit, prev_fetch_ok_at):
+def nff_baseline(prev_commit, prev_ok_at, accepted, current):
+    """非快轉檢查的基準 commit：上一份 OK 備份的 commit，和「使用者確認過歷史改寫」記錄的 commit（--accept-rewrite）
+    取較新的那個（比時間：確認的時間晚於上一份 OK 備份完成的時間才用確認的）；這次剛下 --accept-rewrite 就以現在的為準。"""
+    if current:
+        return current
+    if accepted and accepted.get("commit"):
+        if not prev_commit or not prev_ok_at or (accepted.get("at") or "") > prev_ok_at:
+            return accepted["commit"]
+    return prev_commit
+
+
+def backup_repo(name, path, tmp, tries, prev_commit, prev_fetch_ok_at, accept=False, accepted=None, prev_ok_at=None):
     """fetch、記錄 origin/main、打包。回 (manifest 項目, 警告, 打包 zip 路徑 or None)。"""
     r = dict(fetch_ok=False, fetch_error=None, last_fetch_ok_at=prev_fetch_ok_at, commit=None, commit_time=None,
              local_main_behind=None, non_fast_forward=False, unpushed_local_branches=[], dirty_worktrees=0,
@@ -609,9 +684,15 @@ def backup_repo(name, path, tmp, tries, prev_commit, prev_fetch_ok_at):
     rc, out, _ = git(path, "rev-list", "--count", "refs/heads/main..origin/main")
     if rc == 0 and out.strip().isdigit():
         r["local_main_behind"] = int(out)
-    if prev_commit:
-        rc, _, _ = git(path, "merge-base", "--is-ancestor", prev_commit, r["commit"])
-        r["non_fast_forward"] = rc != 0
+    base = nff_baseline(prev_commit, prev_ok_at, accepted, r["commit"] if (accept and ok) else None)
+    if accept and ok:
+        r["rewrite_accepted"] = r["commit"]
+    if base:
+        rc, _, err = git(path, "merge-base", "--is-ancestor", base, r["commit"])
+        if rc == 1:
+            r["non_fast_forward"] = True
+        elif rc != 0:  # 只有 0（是後代）與 1（不是）才是判斷結果；其他（找不到 commit、git 壞了、逾時）是檢查本身失敗
+            r["nff_check_error"] = (err.strip() or f"rc={rc}")[:200]
     r["unpushed_local_branches"] = local_only_branches(path)
     r["dirty_worktrees"] = count_dirty_worktrees(path)
     zip_path = os.path.join(tmp, f"{name}.zip")
@@ -700,6 +781,7 @@ def write_dated_folder(parent, date_str, files, manifest, pid=None):
     os.makedirs(staging)
     final = os.path.join(parent, date_str)
     bak = os.path.join(parent, f"{UNFINISHED}{date_str}-{pid}-舊")
+    keep_staging = False
     try:
         for src, rel in files:
             dst = os.path.join(staging, *rel.split("/"))
@@ -716,14 +798,25 @@ def write_dated_folder(parent, date_str, files, manifest, pid=None):
             try:
                 os.rename(staging, final)
             except OSError:
-                os.rename(bak, final)
-                raise
-            rmtree_force(bak)
+                try:
+                    os.rename(bak, final)  # 新的放不進去：把舊的放回去
+                except OSError:
+                    time.sleep(1)
+                    try:
+                        os.rename(staging, final)  # 舊的也放不回去：再試一次新的
+                    except OSError as e:
+                        keep_staging = True  # 兩個都留著，不能刪
+                        raise BackupError(f"同日取代失敗，兩份都還在，請手動處理：舊的在 {bak}，新的在 {staging}（{e}）")
+                else:
+                    raise
+            left = rmtree_force(bak)
+            if left:
+                say(f"舊的同日備份刪不掉（會在 2 天後再試）：{bak}")
             return "replaced"
         os.rename(staging, final)
         return "written"
     except BaseException:
-        if os.path.isdir(staging):
+        if not keep_staging and os.path.isdir(staging):
             rmtree_force(staging)
         raise
 
@@ -752,21 +845,22 @@ def append_log(root, started, line):
 # ---------- 通知 ----------
 
 def notify(title, body):
-    """Windows 通知（不用第三方模組）；失敗不影響備份結果。"""
+    """Windows 通知（不用第三方模組）；失敗不影響備份結果。
+    標題與內文用環境變數 SDB_T、SDB_B 傳給 PowerShell：腳本字串裡不放任何使用者文字（引號、換行都不會弄壞腳本）。"""
     if sys.platform != "win32":
         return
-    q = lambda s: s.replace("'", "''")
     ps = (
         "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;"
         "$t = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02);"
         "$n = $t.GetElementsByTagName('text');"
-        f"$n.Item(0).AppendChild($t.CreateTextNode('{q(title)}')) | Out-Null;"
-        f"$n.Item(1).AppendChild($t.CreateTextNode('{q(body)}')) | Out-Null;"
+        "$n.Item(0).AppendChild($t.CreateTextNode($env:SDB_T)) | Out-Null;"
+        "$n.Item(1).AppendChild($t.CreateTextNode($env:SDB_B)) | Out-Null;"
         f"[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{TOAST_APP_ID}')"
         ".Show([Windows.UI.Notifications.ToastNotification]::new($t))"
     )
     enc = base64.b64encode(ps.encode("utf-16-le")).decode("ascii")
-    run_cmd(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], timeout=30)
+    run_cmd(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", enc], timeout=30,
+            env_extra={"SDB_T": str(title), "SDB_B": str(body)})
 
 
 # ---------- 主流程 ----------
@@ -832,12 +926,39 @@ def run_retention(root, today, allow_delete, warnings):
     return deleted
 
 
+def cleanup_old_temp(base=None, max_age=86400):
+    """清掉 %TEMP% 底下超過 1 天的 sdbackup-* 資料夾（上次被強制中止、來不及清的）。不碰鎖檔，也不碰連結。回清掉的數量。"""
+    base = base or tempfile.gettempdir()
+    n = 0
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return 0
+    for name in names:
+        if not name.startswith("sdbackup-"):
+            continue
+        p = os.path.join(base, name)
+        try:
+            if (os.path.isdir(p) and not os.path.islink(p) and time.time() - os.path.getmtime(p) > max_age
+                    and not rmtree_force(p)):
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
 def do_backup(args, root, started):
+    cleanup_old_temp()
     tmp = tempfile.mkdtemp(prefix="sdbackup-")
     try:
         return _do_backup(args, root, started, tmp)
     finally:
-        rmtree_force(tmp)
+        left = rmtree_force(tmp)
+        if left:  # 暫存刪不掉：在雲端紀錄留一行，免得悄悄累積
+            try:
+                append_log(root, started, f"{iso(now())} 暫存資料夾刪不掉：{tmp}（例如 {left[0]}）")
+            except OSError:
+                pass
 
 
 def _do_backup(args, root, started, tmp):
@@ -848,26 +969,37 @@ def _do_backup(args, root, started, tmp):
     prev_ok = latest_ok_manifest(root)
     files = []  # (來源, 雲端相對路徑)
     repos, zips = {}, {}
+    new_accepts = {}
     first_failed = False  # 第一個 repo 兩次都失敗，後面的只試一次（網路多半是壞的）
     for idx, (name, path) in enumerate(P["REPOS"].items()):
         prev_commit = (((prev_ok or {}).get("repos") or {}).get(name) or {}).get("commit")
         prev_at = ((prev_state.get("repos") or {}).get(name) or {}).get("last_fetch_ok_at")
-        r, w, zp = backup_repo(name, path, tmp, 1 if first_failed else P["FETCH_TRIES"], prev_commit, prev_at)
+        accept = name in (args.accept_rewrite or [])
+        r, w, zp = backup_repo(name, path, tmp, 1 if first_failed else P["FETCH_TRIES"], prev_commit, prev_at,
+                               accept=accept, accepted=(prev_state.get("rewrite_accepted") or {}).get(name),
+                               prev_ok_at=(prev_ok or {}).get("finished"))
         repos[name] = r
         warnings += w
+        if r.get("rewrite_accepted"):
+            new_accepts[name] = dict(commit=r["rewrite_accepted"], at=iso(now()))
+        elif accept:
+            warnings.append(f"{name} 這次 fetch 沒成功，--accept-rewrite 沒有記下")
         if not r["fetch_ok"]:
             first_failed = first_failed or idx == 0
             fetch_failed.append(f"{name} fetch 失敗：{r['fetch_error']}")
         elif zp is None:
             problems.append(f"{name} 打包失敗：{r.get('archive_error')}")
         if r["non_fast_forward"]:
-            problems.append(f"{name} 的 origin/main 不是上次備份的後代（歷史被改寫或強制推送）")
+            problems.append(f"{name} 的 origin/main 不是上次備份的後代（歷史被改寫或強制推送）；"
+                            f"確認是自己改的，就用 --accept-rewrite {name} 讓這個版本成為新的基準")
+        if r.get("nff_check_error"):
+            problems.append(f"{name} 非快轉檢查失敗：{r['nff_check_error']}")
         if zp:
             zips[name] = zp
             files.append((zp, f"{name}.zip"))
     folders = {}
     for label, src in (("private", P["PRIVATE_DIR"]), ("claude-memory", os.path.expandvars(P["MEMORY_DIR"]))):
-        entry, zp, w, pr = backup_folder(label, src, tmp)
+        entry, zp, w, pr = backup_folder(label, src, tmp, required=(label == "private"))
         folders[label] = entry
         warnings += w
         problems += pr
@@ -889,12 +1021,15 @@ def _do_backup(args, root, started, tmp):
             problems.append(f"CSV {s['name']} gid {s['gid']} 失敗：{entry['error']}")
     # 完整歷史
     bundle_info, bundle_files = None, []
-    full_items = list_backups(os.path.join(root, FULL))
+    full_items = [i for i in list_backups(os.path.join(root, FULL)) if i["date"] <= today]  # 未來日期的（時鐘錯）不算
     latest_full = max((i["date"] for i in full_items), default=None)
     if bundle_due(latest_full, today, P["BUNDLE_EVERY_DAYS"], args.force_bundle):
-        if fetch_failed or not all(r["commit"] for r in repos.values()):
-            warnings.append("這次有 repo fetch 失敗，完整歷史（bundle）延到下次")
+        no_commit = [n for n, r in repos.items() if not r["commit"]]
+        if no_commit:
+            warnings.append(f"{'、'.join(no_commit)} 沒有 origin/main 可以備份，完整歷史（bundle）這次不做")
         else:
+            if fetch_failed:  # GitHub 連不上時，本機新做的 commit 更要備到：照做，用本機現有的 origin/*，manifest 標 STALE
+                warnings.append("這次有 repo fetch 失敗：完整歷史照做，內容是本機現有的 origin/* 與本機分支（標 STALE）")
             bundle_info = {}
             try:
                 for name, path in P["REPOS"].items():
@@ -915,8 +1050,8 @@ def _do_backup(args, root, started, tmp):
     )
     result = write_dated_folder(os.path.join(root, DAILY), date_str, files, manifest)
     if bundle_info is not None:
-        fmf = dict(schema=1, started=iso(started), finished=iso(now()), status="OK", date=date_str,
-                   repos={n: dict(bundle=i) for n, i in bundle_info.items()})
+        fmf = dict(schema=1, started=iso(started), finished=iso(now()), status="STALE" if fetch_failed else "OK",
+                   date=date_str, repos={n: dict(bundle=i, fetch_ok=repos[n]["fetch_ok"]) for n, i in bundle_info.items()})
         write_dated_folder(os.path.join(root, FULL), date_str, bundle_files, fmf)
     if result == "kept_old":
         warnings.append(f"同一天（{date_str}）已有比這次更好的備份，這次的結果沒有取代它")
@@ -929,7 +1064,9 @@ def _do_backup(args, root, started, tmp):
     state = dict(prev_state)
     for k in ("status", "backup_folder"):  # 舊版欄位名稱（看門狗用 last_attempt_status、last_ok_folder）
         state.pop(k, None)
-    fulls = list_backups(os.path.join(root, FULL))
+    fulls = [i for i in list_backups(os.path.join(root, FULL)) if i["date"] <= today]
+    if new_accepts:
+        state["rewrite_accepted"] = {**(prev_state.get("rewrite_accepted") or {}), **new_accepts}
     state.update(schema=1, last_attempt=iso(started), last_attempt_status=status, warnings=warnings,
                  problems=all_problems, script_commit=manifest["script_commit"],
                  last_bundle_folder=max(fulls, key=lambda i: i["date"])["name"] if fulls else None,
@@ -962,7 +1099,7 @@ def _do_backup(args, root, started, tmp):
 
 
 def do_init(args):
-    if args.root:
+    if args.root is not None:
         base = args.root
     else:
         base = None
@@ -990,7 +1127,7 @@ def do_init(args):
 
 def do_dry_run(args, started):
     say("【dry-run】只列出計畫，不寫任何檔案、不 fetch")
-    if args.root:
+    if args.root is not None:
         root, code = (args.root, EXIT_OK) if check_root(args.root) else (None, EXIT_NO_MARKER)
     else:
         found, saw = scan_drives()
@@ -1013,7 +1150,7 @@ def do_dry_run(args, started):
     say(f"  CSV：{len(srcs)} 個" + (f"（{err}）" if err else ""))
     for s in srcs:
         say(f"    {s['name']}-gid{s['gid']}.csv  {s['url']}")
-    full_items = list_backups(os.path.join(root, FULL))
+    full_items = [i for i in list_backups(os.path.join(root, FULL)) if i["date"] <= today]
     latest_full = max((i["date"] for i in full_items), default=None)
     due = bundle_due(latest_full, today, P["BUNDLE_EVERY_DAYS"], args.force_bundle)
     say(f"  完整歷史（bundle）：上次 {latest_full or '沒有'}；這次{'要做' if due else '不做'}")
@@ -1033,7 +1170,12 @@ def parse_args(argv):
     ap.add_argument("--allow-delete", type=int, default=None, metavar="N")
     ap.add_argument("--no-notify", action="store_true")
     ap.add_argument("--root", default=None, metavar="PATH")
-    return ap.parse_args(argv)
+    ap.add_argument("--accept-rewrite", action="append", default=[], metavar="REPO", choices=list(P["REPOS"]),
+                    help="確認這個 repo 的歷史是自己改寫的：把它目前的 origin/main 記成非快轉檢查的新基準")
+    args = ap.parse_args(argv)
+    if args.root is not None and not args.root.strip():
+        ap.error("--root 不可以是空字串（空字串會被當成沒給、跑去找真的雲端硬碟）")
+    return args
 
 
 def run(args, state):
@@ -1047,7 +1189,7 @@ def run(args, state):
         say("另一個備份正在執行（或鎖檔還沒過期），這次不跑")
         return EXIT_BUSY
     try:
-        if args.root:
+        if args.root is not None:
             root, code = (args.root, EXIT_OK) if check_root(args.root) else (None, EXIT_NO_MARKER)
         else:
             root, code = find_root(P["DRIVE_WAIT_SEC"])
@@ -1069,7 +1211,10 @@ def main(argv=None):
             s.reconfigure(encoding="utf-8")
         except Exception:
             pass
-    args = parse_args(argv)
+    try:
+        args = parse_args(argv)
+    except SystemExit as e:  # argparse 的錯誤（代碼 2）與 --help（0）：回傳，不丟例外
+        return e.code if isinstance(e.code, int) else 2
     state = {}
     try:
         return run(args, state)

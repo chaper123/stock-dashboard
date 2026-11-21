@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -523,6 +524,10 @@ def world(tmp_path, monkeypatch):
         pytest.skip("需要 git")
     tempfile_dir(monkeypatch, tmp_path)
     monkeypatch.setattr(b.time, "sleep", lambda s: None)
+    # pytest 的暫存路徑很深，Windows 上 git 會撞 MAX_PATH：測試用的 git 也開 longpaths
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.longpaths")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "true")
     cfg = (ROOT / "site" / "js" / "config.js").read_bytes()
     repos = {
         "stock-dashboard": make_repo(tmp_path, "stock-dashboard", {"site/js/config.js": cfg, "docs/RESTORE.md": "# 還原\n".encode()}),
@@ -622,10 +627,14 @@ def test_stale_when_fetch_fails_and_nothing_deleted(world):
     assert m["status"] == "STALE" and m["repos"]["market-data"]["fetch_ok"] is False
     assert (day / "market-data.zip").is_file()  # 用上次成功 fetch 的 origin/main 打包
     assert set(before) <= set(tree_listing(root / "每日"))  # 舊的一份都沒少
-    assert not list((root / "完整歷史").iterdir())  # fetch 失敗時不做完整歷史
     st = json.loads((root / "最近備份.json").read_text("utf-8"))
     assert st["last_attempt_status"] == "STALE" and st["last_ok"] is None and st["last_ok_folder"] is None
-    assert st["last_bundle_folder"] is None
+    # 完整歷史照做（GitHub 連不上時，本機的 commit 更要備到）：manifest 標 STALE，內容是本機現有的 origin/*
+    full = root / "完整歷史" / b.now().date().isoformat()
+    fm = json.loads((full / "manifest.json").read_text("utf-8"))
+    assert fm["status"] == "STALE" and fm["repos"]["market-data"]["fetch_ok"] is False
+    assert fm["repos"]["stock-dashboard"]["fetch_ok"] is True
+    assert st["last_bundle_folder"] == full.name
 
 
 def test_partial_when_csv_is_html_and_nothing_deleted(world, monkeypatch):
@@ -680,3 +689,355 @@ def test_unpushed_local_branch_is_bundled_and_warned(world):
     _git(world["tmp"], "clone", "-q", "--mirror", str(full / "market-data.bundle"), str(out))
     assert "refs/heads/local/wip" in _git(out, "for-each-ref", "--format=%(refname)")
     assert _git(wd, "branch", "--show-current") == "wip"  # 原 repo 的分支沒被切換
+
+
+# ---------- 審查後的修正 ----------
+
+def test_empty_root_is_rejected_and_never_looks_for_the_real_drive(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise AssertionError("不該去找真的雲端硬碟")
+    monkeypatch.setattr(b, "scan_drives", boom)
+    monkeypatch.setattr(b, "drive_fs_running", boom)
+    monkeypatch.setattr(b, "candidate_bases", boom)
+    for argv in (["--init", "--root", ""], ["--root", ""], ["--dry-run", "--root", ""], ["--init", "--root", "  "]):
+        assert b.main(argv + ["--no-notify"]) == 2
+    assert b.main(["--accept-rewrite", "不存在的repo"]) == 2
+
+
+def test_stale_full_history_never_pushes_out_the_newest_ok_bundle():
+    its = [item("2026-10-24"), item("2026-10-31", "STALE"), item("2026-11-07", "STALE")]
+    assert b.bundle_keep(its, D(2026, 11, 8), 2) == {"2026-10-24", "2026-10-31", "2026-11-07"}
+
+
+def test_nff_baseline_picks_the_newer_of_prev_ok_and_accepted():
+    acc = {"commit": "A", "at": "2026-11-21T10:00:00+08:00"}
+    assert b.nff_baseline("P", "2026-11-21T09:00:00+08:00", acc, None) == "A"   # 確認得比上一份 OK 備份晚
+    assert b.nff_baseline("P", "2026-11-21T11:00:00+08:00", acc, None) == "P"   # 之後又有 OK 備份了
+    assert b.nff_baseline("P", "2026-11-21T09:00:00+08:00", None, None) == "P"
+    assert b.nff_baseline(None, None, acc, None) == "A"
+    assert b.nff_baseline("P", "2026-11-21T11:00:00+08:00", acc, "NOW") == "NOW"  # 這次剛下 --accept-rewrite
+    assert b.nff_baseline(None, None, None, None) is None
+
+
+def test_private_folder_missing_or_empty_is_a_problem_not_a_warning(tmp_path):
+    src = tmp_path / "private"
+    entry, zp, warns, problems = b.backup_folder("private", str(src), str(tmp_path), required=True)
+    assert zp is None and problems and not warns  # 不存在
+    src.mkdir()
+    entry, zp, warns, problems = b.backup_folder("private", str(src), str(tmp_path), required=True)
+    assert zp is None and problems and not warns  # 空的
+    entry, zp, warns, problems = b.backup_folder("claude-memory", str(tmp_path / "nope"), str(tmp_path))
+    assert zp is None and warns and not problems  # 記憶資料夾維持只警告
+
+
+def test_private_missing_makes_partial_keeps_old_backups_and_notifies_once(world, monkeypatch):
+    root = world["root"]
+    make_old_backups(root)
+    shutil.rmtree(world["tmp"] / "private")
+    calls = []
+    monkeypatch.setattr(b, "notify", lambda t, body: calls.append((t, body)))
+    assert b.main(["--root", str(root)]) == 1
+    day = root / "每日" / b.now().date().isoformat()
+    m = json.loads((day / "manifest.json").read_text("utf-8"))
+    assert m["status"] == "PARTIAL" and any("private" in p for p in m["problems"])
+    assert not (day / "private.zip").exists() and (day / "claude-memory.zip").exists()
+    assert len(list((root / "每日").iterdir())) == 17 + 1
+    assert len(calls) == 1 and calls[0][0] == "備份 PARTIAL" and "private" in calls[0][1]
+
+
+def test_memory_folder_missing_is_still_ok(world):
+    shutil.rmtree(world["tmp"] / "memory")
+    assert b.main(["--root", str(world["root"]), "--no-notify"]) == 0
+
+
+def test_run_cmd_timeout_kills_grandchildren_quickly():
+    code = ("import subprocess, sys, time\n"
+            "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+            "time.sleep(60)\n")
+    t0 = time.monotonic()
+    rc, out, err = b.run_cmd([sys.executable, "-c", code], timeout=2)
+    assert rc == -1 and time.monotonic() - t0 < 15
+    assert "逾時" in err.decode()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="git-remote-http 孫程序只在 Windows 上驗證")
+def test_git_fetch_against_a_silent_server_returns_in_time_and_leaves_no_remote_helper(tmp_path):
+    import socket
+    import threading
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+    conns = []
+    stop = threading.Event()
+
+    def accept():
+        srv.settimeout(0.5)
+        while not stop.is_set():
+            try:
+                conns.append(srv.accept()[0])  # 接受連線但永遠不回應
+            except OSError:
+                pass
+    th = threading.Thread(target=accept, daemon=True)
+    th.start()
+
+    def helpers():
+        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq git-remote-http.exe", "/NH"], capture_output=True, text=True)
+        return r.stdout.count("git-remote-http.exe")
+    repo = tmp_path / "r"
+    _git(tmp_path, "init", "-q", str(repo))
+    _git(repo, "remote", "add", "origin", f"http://127.0.0.1:{srv.getsockname()[1]}/x.git")
+    before = helpers()
+    t0 = time.monotonic()
+    try:
+        rc, out, err = b.git(str(repo), "fetch", "origin", timeout=3)
+        elapsed = time.monotonic() - t0
+    finally:
+        stop.set()
+        th.join(2)
+        for c in conns:
+            c.close()
+        srv.close()
+    assert rc != 0 and elapsed < 10, elapsed
+    time.sleep(1)
+    assert helpers() <= before
+
+
+def test_cleanup_old_temp_removes_only_old_sdbackup_dirs(tmp_path):
+    old, new, other, lock = tmp_path / "sdbackup-old", tmp_path / "sdbackup-new", tmp_path / "別的資料夾", tmp_path / "sdbackup.lock"
+    for d in (old, new, other):
+        (d / "sub").mkdir(parents=True)
+        (d / "sub" / "f").write_text("x")
+    lock.write_text("1")
+    t = time.time() - 2 * 86400
+    os.utime(old, (t, t))
+    os.utime(other, (t, t))
+    os.utime(lock, (t, t))
+    assert b.cleanup_old_temp(str(tmp_path)) == 1
+    assert not old.exists() and new.exists() and other.exists() and lock.exists()
+
+
+def test_main_cleans_stale_temp_dirs_from_a_killed_run(world):
+    tmpdir = world["tmp"] / "tmp"
+    old = tmpdir / "sdbackup-killed"
+    old.mkdir()
+    t = time.time() - 3 * 86400
+    os.utime(old, (t, t))
+    assert b.main(["--root", str(world["root"]), "--no-notify"]) == 0
+    assert not old.exists()
+
+
+def test_mirror_clone_restore_keeps_every_branch(world):
+    """RESTORE.md 的搬家步驟：clone --mirror → set-url → push --mirror，local/* 分支也要在新主機上。"""
+    root, repos, tmp = world["root"], world["repos"], world["tmp"]
+    wd = repos["market-data"]
+    _git(wd, "checkout", "-q", "-b", "wip")
+    (wd / "wip.txt").write_text("尚未推上去")
+    _git(wd, "add", "wip.txt")
+    _git(wd, "commit", "-q", "-m", "wip")
+    _git(wd, "tag", "v1")
+    assert b.main(["--root", str(root), "--no-notify"]) == 0
+    bundle = next((root / "完整歷史").iterdir()) / "market-data.bundle"
+    mirror, newhost = tmp / "m.git", tmp / "newhost.git"
+    _git(tmp, "init", "--bare", "-q", str(newhost))
+    _git(tmp, "clone", "-q", "--mirror", str(bundle), str(mirror))
+    _git(mirror, "remote", "set-url", "origin", str(newhost))
+    _git(mirror, "push", "-q", "--mirror")
+    refs = _git(newhost, "for-each-ref", "--format=%(refname)").split()
+    assert {"refs/heads/main", "refs/heads/local/wip", "refs/tags/v1"} <= set(refs)
+    # 一般 clone：local/* 分支出現在 origin/local/*
+    plain = tmp / "plain"
+    _git(tmp, "clone", "-q", str(bundle), str(plain))
+    assert "origin/local/wip" in _git(plain, "branch", "-r")
+
+
+def _push_amend(wd):
+    _git(wd, "commit", "-q", "--amend", "-m", "rewritten " + str(time.time()), "--allow-empty")
+    _git(wd, "push", "-q", "-f", "origin", "main")
+
+
+def test_force_push_is_partial_until_accept_rewrite_then_ok_again(world):
+    root, wd = world["root"], world["repos"]["market-data"]
+    argv = ["--root", str(root), "--no-notify"]
+    assert b.main(argv) == 0
+    _push_amend(wd)
+    assert b.main(argv) == 1  # 歷史被改寫
+    assert b.main(argv) == 1  # 再跑一次還是 PARTIAL（基準沒變）
+    assert b.main(argv + ["--accept-rewrite", "market-data"]) == 0
+    st = json.loads((root / "最近備份.json").read_text("utf-8"))
+    assert st["rewrite_accepted"]["market-data"]["commit"] == _git(wd, "rev-parse", "HEAD")
+    (wd / "more.txt").write_text("正常推送")
+    _git(wd, "add", "more.txt")
+    _git(wd, "commit", "-q", "-m", "more")
+    _git(wd, "push", "-q", "origin", "main")
+    assert b.main(argv) == 0  # 之後正常推送一樣 OK
+
+
+def test_nff_check_failure_is_a_problem_and_accept_rewrite_clears_it(world):
+    root = world["root"]
+    argv = ["--root", str(root), "--no-notify"]
+    assert b.main(argv) == 0
+    day = next((root / "每日").iterdir())
+    m = json.loads((day / "manifest.json").read_text("utf-8"))
+    m["repos"]["market-data"]["commit"] = "0" * 40  # 上一份 OK 備份記的基準 commit 在 repo 裡找不到（git 回 128）
+    (day / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    day.rename(root / "每日" / "2026-01-02")  # 換一天，同一天的話新的 PARTIAL 比舊的 OK 差、不會取代，就看不到這次的結果
+    assert b.main(argv) == 1
+    m3 = json.loads((root / "每日" / b.now().date().isoformat() / "manifest.json").read_text("utf-8"))
+    assert m3["status"] == "PARTIAL" and m3["repos"]["market-data"]["nff_check_error"]
+    assert any("非快轉檢查失敗" in p for p in m3["problems"]) and not m3["repos"]["market-data"]["non_fast_forward"]
+    assert b.main(argv + ["--accept-rewrite", "market-data"]) == 0
+
+
+def test_stale_bundle_clone_main_equals_local_origin_main(world):
+    root, wd = world["root"], world["repos"]["market-data"]
+    origin_main = _git(wd, "rev-parse", "origin/main")
+    _git(wd, "remote", "set-url", "origin", str(world["tmp"] / "不存在.git"))
+    (wd / "local-only.txt").write_text("只在本機")
+    _git(wd, "add", "local-only.txt")
+    _git(wd, "commit", "-q", "-m", "local only")
+    assert b.main(["--root", str(root), "--no-notify", "--force-bundle"]) == 1
+    full = next((root / "完整歷史").iterdir())
+    assert json.loads((full / "manifest.json").read_text("utf-8"))["status"] == "STALE"
+    out = world["tmp"] / "clone"
+    _git(world["tmp"], "clone", "-q", "--mirror", str(full / "market-data.bundle"), str(out))
+    assert _git(out, "rev-parse", "refs/heads/main") == origin_main
+    assert _git(out, "rev-parse", "refs/heads/local/main") == _git(wd, "rev-parse", "HEAD")  # 本機新的 commit 也備到了
+
+
+def test_future_dated_full_history_does_not_block_the_bundle(world, capsys):
+    root = world["root"]
+    d = root / "完整歷史" / "2099-01-01"
+    d.mkdir()
+    (d / "manifest.json").write_text(json.dumps({"status": "OK"}), encoding="utf-8")
+    assert b.main(["--dry-run", "--root", str(root)]) == 0
+    assert "這次要做" in capsys.readouterr().out
+    assert b.main(["--root", str(root), "--no-notify"]) == 0
+    today = b.now().date().isoformat()
+    assert (root / "完整歷史" / today / "manifest.json").is_file()
+    st = json.loads((root / "最近備份.json").read_text("utf-8"))
+    assert st["last_bundle_folder"] == today  # 不是 2099-01-01
+
+
+def test_same_day_swap_failure_keeps_both_copies(tmp_path, monkeypatch):
+    parent = tmp_path / "每日"
+    files = _staged(tmp_path)
+    assert b.write_dated_folder(str(parent), "2026-11-21", files, {"status": "PARTIAL"}, pid=7) == "written"
+    monkeypatch.setattr(b.time, "sleep", lambda s: None)
+    real = os.rename
+    calls = []
+
+    def flaky(src, dst):
+        calls.append(1)
+        if len(calls) == 1:  # 第一次（正式 → -舊）成功，之後全部失敗
+            return real(src, dst)
+        raise PermissionError("被占用")
+    monkeypatch.setattr(b.os, "rename", flaky)
+    with pytest.raises(b.BackupError) as ei:
+        b.write_dated_folder(str(parent), "2026-11-21", files, {"status": "OK"}, pid=7)
+    monkeypatch.undo()
+    msg = str(ei.value)
+    old, new = parent / "_未完成-2026-11-21-7-舊", parent / "_未完成-2026-11-21-7"
+    assert str(old) in msg and str(new) in msg
+    assert (old / "manifest.json").is_file() and (new / "manifest.json").is_file()  # 舊的新的都在
+    assert not (parent / "2026-11-21").exists()
+    # 清理：正式資料夾不見時，「-舊」不能被清掉
+    t = time.time() - 5 * 86400
+    for d in (old, new):
+        os.utime(d, (t, t))
+    b.cleanup_unfinished(str(tmp_path), str(parent))
+    assert old.exists()  # （過期的 staging 照規格會被清掉，只有「-舊」受保護）
+    # 正式資料夾回來之後，過期的「-舊」才清得掉
+    (parent / "2026-11-21").mkdir()
+    os.utime(old, (t, t))
+    b.cleanup_unfinished(str(tmp_path), str(parent))
+    assert not old.exists() and (parent / "2026-11-21").exists()
+
+
+def test_same_day_swap_retry_succeeds_on_second_try(tmp_path, monkeypatch):
+    parent = tmp_path / "每日"
+    files = _staged(tmp_path)
+    b.write_dated_folder(str(parent), "2026-11-21", files, {"status": "PARTIAL"}, pid=7)
+    monkeypatch.setattr(b.time, "sleep", lambda s: None)
+    real = os.rename
+    calls = []
+
+    def flaky(src, dst):
+        calls.append(1)
+        if len(calls) in (2, 3):  # 新→正式 失敗、舊→正式 也失敗，隔一秒再試新→正式 就成功
+            raise PermissionError("被占用")
+        return real(src, dst)
+    monkeypatch.setattr(b.os, "rename", flaky)
+    assert b.write_dated_folder(str(parent), "2026-11-21", files, {"status": "OK"}, pid=7) == "replaced"
+    monkeypatch.undo()
+    assert json.loads((parent / "2026-11-21" / "manifest.json").read_text("utf-8"))["status"] == "OK"
+    assert sorted(os.listdir(parent)) == ["2026-11-21"]
+
+
+def test_rmtree_force_retries_and_reports_leftovers(tmp_path, monkeypatch):
+    d = tmp_path / "x"
+    (d / "sub").mkdir(parents=True)
+    (d / "sub" / "locked.txt").write_text("x")
+    naps = []
+    monkeypatch.setattr(b.time, "sleep", lambda s: naps.append(s))
+    calls = []
+    monkeypatch.setattr(b.shutil, "rmtree", lambda *a, **k: calls.append(1))  # 永遠刪不掉
+    left = b.rmtree_force(str(d))
+    assert len(calls) == 3 and len(naps) == 2 and left and left[0].endswith("locked.txt")
+    monkeypatch.undo()
+    assert b.rmtree_force(str(d)) == [] and not d.exists()
+
+
+def test_delete_backup_raises_when_the_folder_survives(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    d = root / "每日" / "2026-11-01"
+    d.mkdir(parents=True)
+    monkeypatch.setattr(b, "rmtree_force", lambda p, *a, **k: [p])
+    with pytest.raises(b.BackupError, match="刪不掉"):
+        b.delete_backup(str(root), str(d))
+
+
+def test_retention_failure_is_a_warning_and_not_counted(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    make_old_backups(root, 16, "2026-10-20")
+    monkeypatch.setattr(b, "rmtree_force", lambda p, *a, **k: [p])
+    warnings = []
+    n = b.run_retention(str(root), D(2026, 11, 4), None, warnings)
+    assert n == 0 and any("刪除舊備份失敗" in w for w in warnings)
+
+
+def test_undeletable_temp_leaves_a_line_in_the_cloud_log(world, monkeypatch):
+    real = b.rmtree_force
+    monkeypatch.setattr(b, "rmtree_force",
+                        lambda p, *a, **k: ["x.lock"] if os.path.basename(p).startswith("sdbackup-") else real(p, *a, **k))
+    assert b.main(["--root", str(world["root"]), "--no-notify"]) == 0
+    logs = "".join(p.read_text("utf-8") for p in (world["root"] / "紀錄").glob("*.log"))
+    assert "暫存資料夾刪不掉" in logs
+
+
+def test_notify_passes_text_through_environment_not_the_script(monkeypatch):
+    import base64
+    seen = {}
+    monkeypatch.setattr(b, "run_cmd", lambda cmd, timeout=120, cwd=None, env_extra=None: seen.update(cmd=cmd, env=env_extra) or (0, b"", b""))
+    monkeypatch.setattr(b.sys, "platform", "win32")
+    title, body = "備份 STALE’s “壞了”", "market-data fetch 失敗：don't '$(rm)' \"x\"\n第二行"
+    b.notify(title, body)
+    script = base64.b64decode(seen["cmd"][-1]).decode("utf-16-le")
+    assert "’" not in script and "壞了" not in script and "fetch" not in script
+    assert "$env:SDB_T" in script and "$env:SDB_B" in script
+    assert seen["env"] == {"SDB_T": title, "SDB_B": body}
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell 只在 Windows 上驗證")
+def test_environment_text_survives_powershell_unchanged():
+    text = "備份 STALE’s “壞了” don't \"x\" $(1+1)"
+    rc, out, err = b.run_cmd(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                              "[Console]::OutputEncoding=[Text.Encoding]::UTF8; [Console]::Out.Write($env:SDB_T)"],
+                             timeout=60, env_extra={"SDB_T": text})
+    assert rc == 0 and out.decode("utf-8") == text
+
+
+def test_git_always_enables_longpaths(monkeypatch):
+    seen = []
+    monkeypatch.setattr(b, "run_cmd", lambda cmd, timeout=120, cwd=None, env_extra=None: seen.append(cmd) or (0, b"", b""))
+    b.git("C:/x", "status")
+    assert "core.longpaths=true" in seen[0]
