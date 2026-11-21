@@ -18,7 +18,7 @@
   | 網站讀的 7 個發布 CSV（帳本 gid 0、1、2、10、11；儀表板資料 gid 0、5） | 試算表本身有版本紀錄，這只是多一份 | 每天下載 |
 
 - **沒防到的事**：帳本和備份都在同一個 Google 帳號，Google 帳號出事會一起不見。寫進還原說明。
-- **等使用者決定**：雲端看門狗（另一個獨立的 Apps Script 專案，每天從雲端讀 `最近備份.json`、核對最新資料夾的檔案大小與分享狀態，有問題才寄信給自己；權限只要唯讀雲端硬碟與寄信，不用 GitHub token）。不做的話，電腦長期沒開、排程被停用、雲端硬碟暫停同步或容量滿都不會有人知道。
+- **雲端看門狗**：使用者 2026-11-21 回答「要，加上」。另一個獨立的 Apps Script 專案，每天從雲端核對備份真的上傳了、沒有停、沒有被分享，有問題才寄信給自己（第 13 節）。原因：電腦長期沒開、排程被停用、雲端硬碟暫停同步或容量滿時，電腦那邊不會有任何訊息；「真的上傳了」也只有從雲端那一側看得到。
 - 實測大小（2026-11-21）：每天約 5 MB；完整歷史約 19 MB（market-data 17.5 MB，因為 `data/news/headlines.json` 每次整檔重寫，每月約多 30 MB）。一年後總量估 1 GB 以內。
 
 ## 1. 檔案
@@ -28,6 +28,7 @@
 | `tools/backup_to_drive.py` | 新增。**只用標準庫**。本機用 `pyw.exe -3.14` 跑（沒有主控台視窗）；純邏輯要能在 CI 的 Linux 3.12、3.13、3.14 被 import 和測試，所以檔案最上層不能 import Windows 專屬模組，Windows 專屬的東西放在函式裡。 |
 | `tests/test_backup_to_drive.py` | 新增。只測純邏輯（見第 10 節）。 |
 | `docs/RESTORE.md` | 新增。還原說明（第 9 節）。腳本每次把 origin/main 版複製到雲端的 `還原說明.txt`，內容有變才覆寫。 |
+| `apps_script/backup_watchdog.gs`、`apps_script/backup_watchdog.appsscript.json` | 新增。雲端看門狗（第 13 節）與它的權限設定檔。 |
 | `docs/BACKUP.md` | 本檔，做完補第 12 節進度。 |
 
 ## 2. 參數（檔頭）
@@ -95,7 +96,7 @@ G:\我的雲端硬碟\stock-dashboard 備份\
    ```
 7. **manifest.json**：每個檔的大小與 sha256，加上狀態與警告（欄位見第 5 節）。
 8. **寫進雲端**：先建 `每日\_未完成-<日期>-<PID>\`，逐檔複製，每檔複製後比對大小與 sha256（這只證明寫進了雲端硬碟的本機暫存，是否真的上傳要從雲端那一側看）；最後寫 manifest，再改名成 `<日期>`。同一天已經有資料夾：新結果的狀態不比舊的差（OK > PARTIAL > STALE）就取代（舊的刪除），否則丟掉新的並記進紀錄。完整歷史用同樣做法。
-9. **狀態檔**：`最近備份.json` 每次更新 last_attempt，last_ok 只在 OK 時更新（先寫暫存名稱再 `os.replace`）；`紀錄\YYYY-MM.log` 追加一行（時間、狀態、各 repo commit 前 7 碼、總大小、警告數）；`還原說明.txt` 內容有變才覆寫。
+9. **狀態檔**：`最近備份.json` 每次更新 `last_attempt`、`last_attempt_status`，`last_ok` 與 `last_ok_folder`（那份每日資料夾的名稱）只在 OK 時更新，另有 `last_bundle_folder`（最新一份完整歷史的資料夾名稱）與 `schema: 1`；時間都是 `+08:00` 的 ISO 格式（先寫暫存名稱再 `os.replace`）；`紀錄\YYYY-MM.log` 追加一行（時間、狀態、各 repo commit 前 7 碼、總大小、警告數）；`還原說明.txt` 內容有變才覆寫。
 10. **保留**：只在本次 OK 時執行（第 6 節）。
 11. **通知與結束碼**（第 7 節）。
 
@@ -166,7 +167,7 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
 8. `private.zip` 解壓回 `C:\stock-dashboard\private\`，永遠不進 git；`claude-memory.zip` 解壓回記憶資料夾。
 9. CSV：要重建試算表時用「檔案 → 匯入」。試算表本身的版本紀錄才是主要的保護。
 10. 沒備份到的東西：GitHub Secrets 與 Variables（寫的時候用 `gh secret list`、`gh variable list` 再查一次並寫結果）、Pages 設定、cron-job.org 帳號、Apps Script 線上版（可能比 repo 的 `apps_script/` 新）、富果金鑰（只在使用者裝置）；同一個 Google 帳號的風險沒防到。
-11. 怎麼確認備份還活著：雲端上的 `最近備份.json`；`Get-ScheduledTaskInfo StockDashboardBackup` 的 LastRunTime、LastTaskResult；結束碼意義（第 7 節）。
+11. 怎麼確認備份還活著：看門狗的信（第 13 節；沒信就是正常）；雲端上的 `最近備份.json`；`Get-ScheduledTaskInfo StockDashboardBackup` 的 LastRunTime、LastTaskResult；結束碼意義（第 7 節）。
 12. 雲端硬碟電腦版的本機暫存是 Google 程式自己的，不算備份存在本機；不要把備份資料夾設成「鏡像」。
 
 ## 10. 驗收
@@ -180,14 +181,47 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
 3. 用 `--root <scratchpad 裡的假根目錄>`（先放標記檔）跑一次真的備份：status=OK，有 3 個 repo zip、private.zip、claude-memory.zip、7 個 CSV、完整歷史 3 個 bundle；sha256 全部一致；`%TEMP%` 沒有 `sdbackup-*` 殘留；三個 repo 的 HEAD、分支、工作目錄、`git status` 都沒變（只有 origin/* 前進）。
 4. 還原演練：從假根目錄的 bundle 在乾淨資料夾 clone，main 等於 manifest 的 commit，`git fsck --full` 乾淨；zip 解開後的檔案跟 `git ls-tree -r origin/main` 一致。
 5. 模擬故障（都用 `--root` 或改參數，不動真正的 remote 設定）：根目錄沒有標記檔 → 結束碼 11；fetch 失敗（例如用一個測試用的假 repo 路徑或錯誤的 remote 名稱）→ STALE、不刪舊備份；CSV 回 HTML → PARTIAL。
-6. **不在這次做**（審查通過、使用者同意後由部署 session 做）：`--init` 建立真正的雲端資料夾、第一次寫進 G:、註冊排程、隔天從雲端那一側核對檔案。
+6. 看門狗：見第 13 節的驗收。
+7. **不在這次做**（審查通過、使用者同意後才做）：`--init` 建立真正的雲端資料夾、第一次寫進 G:、註冊排程（部署 session）；看門狗的安裝與授權（使用者自己在 script.google.com 做，教學 session 帶）；隔天從雲端那一側核對檔案。
 
 ## 11. 建議的 commit 切法
 
 1. `tools/backup_to_drive.py` 與 `tests/test_backup_to_drive.py`。
 2. `docs/RESTORE.md`。
-3. 本檔第 12 節與 `docs/PROGRESS.md`。
+3. `apps_script/backup_watchdog.gs` 與 `apps_script/backup_watchdog.appsscript.json`。
+4. 本檔第 12 節與 `docs/PROGRESS.md`。
 
 ## 12. 進度
 
-- 2026-11-21 規格寫好（主 session），交給「網站實作」session 實作。
+- 2026-11-21 規格寫好（主 session），交給「網站實作」session 實作；同一天使用者同意加看門狗（第 13 節），接著交辦。
+
+## 13. 雲端看門狗（Apps Script）
+
+**專案**：獨立的 Apps Script 專案「stock-dashboard 備份看門狗」，**不要放進帳本綁定的 ledger_write 專案**（避免動到記帳與配息觸發器）。`appsscript.json` 設 `"timeZone": "Asia/Taipei"`，`oauthScopes` 只列：
+`https://www.googleapis.com/auth/drive.readonly`、`https://www.googleapis.com/auth/script.send_mail`、`https://www.googleapis.com/auth/script.scriptapp`、`https://www.googleapis.com/auth/userinfo.email`（只用來取得自己的信箱當收件人）。不用 UrlFetch、不用 GitHub token。**repo 裡不寫任何信箱、資料夾 ID、帳號名稱。**
+
+**找資料夾**：`DriveApp.getFoldersByName("stock-dashboard 備份")`，只留「擁有者是自己」而且裡面有 `備份根目錄-請勿刪除.txt` 的；剛好一個才繼續，零個或多個都算問題（寄信）。不需要使用者填資料夾 ID。
+
+**觸發**：`installTrigger()` 讓使用者手動跑一次：先刪掉這個專案裡呼叫 `dailyCheck` 的舊觸發器，再建一個每天 9 點（台北，Apps Script 會落在 9～10 點之間）的觸發器。
+
+**`dailyCheck()` 檢查的事**（門檻放在檔頭的 `W = {...}`）：
+
+| 問題代號 | 條件 | 說明 |
+|---|---|---|
+| `NO_FOLDER` | 找不到或找到多個備份資料夾 | |
+| `NO_STATE` | `最近備份.json` 不存在或讀不懂 | |
+| `STALE_OK` | `last_ok` 距今超過 `W.MAX_OK_AGE_DAYS`（3）天 | 電腦沒開、排程停了、雲端硬碟沒同步、或一直不是 OK |
+| `NOT_UPLOADED` | `last_ok_folder` 那個每日資料夾在雲端找不到 `manifest.json`，或 manifest 列的任何一個檔在雲端不存在、大小不同 | 這是唯一能證明「真的上傳了」的檢查 |
+| `OLD_BUNDLE` | `last_bundle_folder` 距今超過 `W.MAX_BUNDLE_AGE_DAYS`（10）天，或那份完整歷史的 bundle 在雲端缺檔或大小不同 | |
+| `MARKET_STALE` | 最新 OK 的 manifest 裡 market-data 的 `commit_time` 距今超過 `W.MARKET_STALE_DAYS`（4）天 | 順便發現 market-data 的 Actions 或 cron-job.org 停了 |
+| `SHARED` | 備份根目錄、最新每日資料夾或裡面任何檔案的 `getSharingAccess()` 不是 `PRIVATE`，或 `getEditors()`、`getViewers()` 有自己以外的人 | 裡面有投信持股與排程提示詞，不可分享 |
+| `QUOTA` | `DriveApp.getStorageUsed() / getStorageLimit()` 超過 `W.QUOTA_WARN`（0.8） | 上限是 0 或讀不到就跳過這項，不算問題 |
+
+**寄信**：有問題才寄，收件人是 `Session.getEffectiveUser().getEmail()`。主旨 `【備份看門狗】<問題代號…>`，內文繁體中文，每個問題寫：發生什麼事、可能原因、要檢查什麼（例如開電腦後看 `Get-ScheduledTaskInfo StockDashboardBackup`、雲端硬碟電腦版的同步狀態、還原說明第 11 項）。同一個問題代號最多每 `W.REMIND_EVERY_DAYS`（3）天寄一次（上次寄送時間存在 Script Properties）；之前有問題、這次全部正常時，寄一封「恢復正常」並清掉紀錄。看門狗自己發生例外時也要寄信（主旨 `【備份看門狗】執行錯誤`），不要靜默失敗。
+
+**測試**：Apps Script 不能在 CI 跑，所以把判斷寫成純函式 `evaluate_(state, latestManifest, bundleManifest, listing, sharing, quota, now)` → 問題清單，讀雲端硬碟的部分另外包起來。提供：
+- `selfTest()`：用寫在程式裡的假資料跑 `evaluate_`，涵蓋每個問題代號各一個、全部正常一個、邊界（剛好 3 天）各一個，在執行紀錄印「通過 N／N」。
+- `testMail()`：門檻當成 0，實際寄一封測試信給自己，確認收得到。
+- `dryRun()`：跑一次真的檢查但不寄信，只把結果印到執行紀錄。
+
+**驗收**（實作 session 能做的部分）：`selfTest` 的假資料跟 Python 腳本真的寫出的 `最近備份.json`、`manifest.json` 欄位一致（用假根目錄那次的輸出對照）；權限設定檔只有上面 4 個範圍；程式裡沒有信箱、ID、帳號。**安裝與授權由使用者自己在 script.google.com 做**（Claude 不能代為授權），教學 session 帶：建立專案、貼程式與 appsscript.json（要先在專案設定打開「顯示 appsscript.json」）、跑 `selfTest`、授權、跑 `dryRun`、跑 `testMail`、跑 `installTrigger`。第一次真的備份寫進雲端之後才裝，不然 `dryRun` 會回報 `NO_FOLDER`。
