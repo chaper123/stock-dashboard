@@ -208,6 +208,18 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
     7. `還原說明.txt` 讀 origin/main 的 `docs/RESTORE.md`——**這個檔還沒推上 GitHub，所以在合併並推送之前，腳本只會警告、不會寫進雲端**（假根目錄那次就是這樣）。
     8. `gh secret list`、`gh variable list` 查到三個 repo 都是空的（RESTORE.md 第 10 點已寫）；HISTORY 提過的「存聯絡信箱的 Actions secret」目前不存在，workflow 也沒有用 `secrets.*`。
   - 沒驗到的：真正的 G: 與 `GoogleDriveFS.exe` 這個處理程序名稱（`tasklist` 判斷）、串流模式下改名資料夾與逐檔比對的實際行為、排程器環境（PATH 找得到 git、憑證管理員不跳視窗）。這些要部署 session 在 `--init` 與第一次真的寫入時確認。
+- 2026-11-21 看門狗做好（同一個分支；**沒有安裝、沒有授權、沒有碰任何真的雲端硬碟**）：`apps_script/backup_watchdog.gs`、`apps_script/backup_watchdog.appsscript.json`（只有 4 個範圍、時區 Asia/Taipei）、`tests/apps_script/backup_watchdog_test.html`（瀏覽器測試頁，`localhost:8771/tests/apps_script/backup_watchdog_test.html`，標題顯示 `PASS 14/14`）。同時 Python 腳本的 `最近備份.json` 照第 4 節第 9 步改成 `last_attempt_status`、`last_ok_folder`、`last_bundle_folder`（舊的 `status`、`backup_folder` 改名）。
+  - `selfTest` 54 項：全部正常；每個問題代號（NO_FOLDER 零個與兩個、NO_STATE、STALE_OK 從來沒有 OK 與時間看不懂、NOT_UPLOADED 資料夾不存在／沒有 manifest／缺 zip／缺 CSV／缺 manifest.json／大小不同／狀態檔沒有 last_ok_folder／資料夾名稱不是日期、OLD_BUNDLE 沒有任何一份／資料夾不存在／缺檔／大小不同／沒有 manifest、MARKET_STALE、SHARED 連結分享與有其他人、QUOTA 上限 0 與讀不到）；邊界（STALE_OK 剛好 3 天不算、多一分鐘算；OLD_BUNDLE 剛好 10 天不算；MARKET_STALE 剛好 4 天不算；QUOTA 剛好 80% 不算）；多個問題同時；`plan_` 的提醒間隔（同日、隔 1、2 天不寄，隔 3 個台北日期要寄，恢復正常寄一封並清紀錄）；信件主旨與內文；台北日期換算。
+  - 瀏覽器測試頁另用假的 DriveApp／MailApp／PropertiesService／ScriptApp 原封不動跑這份程式：健康時不寄信；缺檔寄一次、隔天不重寄、隔 3 天再寄、修好後寄恢復正常；零個或多個資料夾、別人擁有的、沒有標記檔的不算；狀態檔不存在或壞掉；分享；容量；Drive 丟例外寄「執行錯誤」；`testMail` 寄【測試】信且不寫提醒紀錄；`installTrigger` 只留一個每天 9 點（台北）的 `dailyCheck`；程式裡沒有信箱、ID、UrlFetch；設定檔只有 4 個範圍。
+  - 欄位對照：`selfTest` 的三份假資料（`SAMPLE_STATE`、`SAMPLE_MANIFEST`、`SAMPLE_BUNDLE`）是假根目錄那次真的備份寫出的 `最近備份.json`、每日 `manifest.json`、完整歷史 `manifest.json`（值精簡過）；`tests/test_backup_to_drive.py` 從 `.gs` 取出這三份 JSON 字面值，跟迷你 repo 跑完整流程實際寫出的檔案逐欄對照（鍵要一樣、list 比第一個元素），並確認看門狗讀的每個路徑與大小（zip、CSV、bundle）在實際寫出的資料夾裡都存在且大小相同。
+  - 實作時自己決定的地方：
+    1. `evaluate_` 的 `listing` 參數是 `{rootCount, daily, bundle}`（`daily`、`bundle` 是 `{相對路徑: 大小}` 或 `null`），`sharing` 是 `[{path, access, others}]`；`NO_FOLDER` 時直接回傳、不做其他檢查；`NO_STATE` 時仍做 `SHARED`、`QUOTA`。
+    2. `SHARED` 除了規格列的根目錄與最新每日資料夾，也檢查最新一份完整歷史資料夾與裡面的檔案（bundle 裡有投信持股）。
+    3. `last_ok` 是空的（從來沒有 OK）也算 `STALE_OK`；`last_bundle_folder` 是空的算 `OLD_BUNDLE`；`MARKET_STALE` 在 manifest 沒有 `commit_time` 時跳過；CSV 當天就失敗（`ok:false`）的不算缺檔。
+    4. 「同一問題每 3 天最多一次」用台北日期差 ≥ 3 判斷（不用時數，因為觸發時間在 9～10 點之間會飄）；`testMail` 不讀也不寫提醒紀錄、沒有問題時加一個 `TEST` 問題。
+    5. 看門狗自己的例外也走同一套提醒間隔（代號 `EXCEPTION`，主旨「執行錯誤」），避免天天寄；寄信本身失敗就丟出原例外，讓 Apps Script 自己的失敗通知接手。
+    6. 沒有做 `removeTrigger()`（規格沒列）。
+  - 沒驗到的：真的 Drive／Mail 服務的行為（`getEditors()` 是否包含擁有者、`getSharingAccess()` 的回傳值、`getOwner()` 在共用雲端硬碟為 null）；`getEditors`／`getViewers` 我用「排除自己的信箱」處理，`String(access)` 轉 "PRIVATE"，都靠 Apps Script 文件的說明，要在 `dryRun` 第一次實跑時確認。
 
 ## 13. 雲端看門狗（Apps Script）
 
