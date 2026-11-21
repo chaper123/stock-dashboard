@@ -130,7 +130,8 @@ Expand-Archive "<雲端路徑>\每日\2026-11-21\claude-memory.zip" "$env:USERPR
 
 ## 11. 怎麼確認備份還活著
 
-- 雲端根目錄的 `最近備份.json`：`last_attempt` 是最近一次嘗試，`last_ok` 是最近一次完全成功；`last_ok` 超過兩天沒更新就有問題。
+- 雲端看門狗（Apps Script，每天早上 9～10 點檢查；有問題才寄信給自己，**沒信就是正常**）；它沒裝或沒寄信時，用下面兩項自己看。
+- 雲端根目錄的 `最近備份.json`：`last_attempt`／`last_attempt_status` 是最近一次嘗試與結果，`last_ok`／`last_ok_folder` 是最近一次完全成功的時間與資料夾，`last_bundle_folder` 是最新一份完整歷史；`last_ok` 超過兩天沒更新就有問題。
 - 本機排程：
 
 ```powershell

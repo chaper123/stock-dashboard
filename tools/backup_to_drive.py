@@ -927,12 +927,18 @@ def _do_backup(args, root, started, tmp):
     else:
         warnings.append("origin/main 上還沒有 docs/RESTORE.md，雲端的還原說明沒有更新")
     state = dict(prev_state)
-    state.update(schema=1, last_attempt=iso(started), status=status, warnings=warnings, problems=all_problems,
-                 backup_folder=date_str, script_commit=manifest["script_commit"],
+    for k in ("status", "backup_folder"):  # 舊版欄位名稱（看門狗用 last_attempt_status、last_ok_folder）
+        state.pop(k, None)
+    fulls = list_backups(os.path.join(root, FULL))
+    state.update(schema=1, last_attempt=iso(started), last_attempt_status=status, warnings=warnings,
+                 problems=all_problems, script_commit=manifest["script_commit"],
+                 last_bundle_folder=max(fulls, key=lambda i: i["date"])["name"] if fulls else None,
                  repos={n: dict(last_fetch_ok_at=r["last_fetch_ok_at"], commit=r["commit"]) for n, r in repos.items()})
     if status == "OK":
         state["last_ok"] = iso(finished)
+        state["last_ok_folder"] = date_str
     state.setdefault("last_ok", None)
+    state.setdefault("last_ok_folder", None)
     dump_json(os.path.join(root, STATE_NAME), state)
     deleted = 0
     if status == "OK":
@@ -1074,7 +1080,7 @@ def main(argv=None):
         if root:
             try:
                 st = read_json(os.path.join(root, STATE_NAME)) or {}
-                st.update(schema=1, last_attempt=iso(now()), status="ERROR", problems=[msg])
+                st.update(schema=1, last_attempt=iso(now()), last_attempt_status="ERROR", problems=[msg])
                 dump_json(os.path.join(root, STATE_NAME), st)
             except Exception:
                 pass

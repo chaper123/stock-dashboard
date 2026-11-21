@@ -497,7 +497,9 @@ def test_full_run_ok_then_restore(world, capsys):
     # 還原說明、狀態檔、紀錄
     assert (root / "還原說明.txt").read_text("utf-8") == "# 還原\n"
     st = json.loads((root / "最近備份.json").read_text("utf-8"))
-    assert st["status"] == "OK" and st["last_ok"]
+    assert st["schema"] == 1 and st["last_attempt_status"] == "OK" and st["last_ok"]
+    assert st["last_ok_folder"] == day.name and st["last_bundle_folder"] == full.name
+    assert st["last_attempt"].endswith("+08:00") and st["last_ok"].endswith("+08:00")
     assert list((root / "紀錄").glob("*.log"))
     # 暫存都清掉、原 repo 沒被動到
     assert not [p for p in (tmp / "tmp").iterdir() if p.name.startswith("sdbackup-") or p.name.endswith(".lock")]
@@ -534,7 +536,8 @@ def test_stale_when_fetch_fails_and_nothing_deleted(world):
     assert set(before) <= set(tree_listing(root / "每日"))  # 舊的一份都沒少
     assert not list((root / "完整歷史").iterdir())  # fetch 失敗時不做完整歷史
     st = json.loads((root / "最近備份.json").read_text("utf-8"))
-    assert st["status"] == "STALE" and st["last_ok"] is None
+    assert st["last_attempt_status"] == "STALE" and st["last_ok"] is None and st["last_ok_folder"] is None
+    assert st["last_bundle_folder"] is None
 
 
 def test_partial_when_csv_is_html_and_nothing_deleted(world, monkeypatch):
