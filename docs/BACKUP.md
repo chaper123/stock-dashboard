@@ -191,3 +191,17 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
 ## 12. 進度
 
 - 2026-11-21 規格寫好（主 session），交給「網站實作」session 實作。
+- 2026-11-21 腳本、測試、還原說明做好（網站實作 session，分支 `claude/funds-fire-30y-122524`，**還沒合併、沒 push、沒寫過 G:、沒跑 `--init`、沒註冊排程**）：`tools/backup_to_drive.py`、`tests/test_backup_to_drive.py`（54 項，含用暫存迷你 repo 跑完整流程；3.12、3.14 都過）、`docs/RESTORE.md`。第 10 節 1～5 項用 scratchpad 的假根目錄驗收：
+  - 真的備份一次：OK、22 秒、4.8 MB（stock-dashboard.zip 0.75 MB、market-data.zip 1.9 MB、market-data-private.zip 23 KB、private.zip 1.6 MB〔157 檔〕、claude-memory.zip 20 KB〔11 檔〕、7 個 CSV 共 0.55 MB 全部 HTTP 200）；完整歷史 3 個 bundle（17 MB＋1.2 MB＋68 KB，stock-dashboard 帶 4 個 `local/*` 分支）；sha256 全部一致；`%TEMP%` 沒有 `sdbackup-*`；三個 repo 的 HEAD、分支、`git status`、本機設定、工作目錄檔案前後完全一致。
+  - 還原演練：三個 bundle clone 後 main＝manifest 的 commit、`git fsck --full` 乾淨；zip 解開的檔案（166／145／10 個）與 `git ls-tree -r` 的 blob 完全一致（market-data 的 CRLF 沒被改，`-c core.autocrlf=false` 有效）；private、claude-memory 解開後與原資料夾逐檔相同。
+  - 故障：沒標記檔 → 11（什麼都沒寫）；market-data 的 remote 網址壞掉、repo 路徑不存在 → STALE（結束碼 1）、17 份舊備份一份沒刪、不做完整歷史；CSV 回 HTML → PARTIAL（1）、沒刪舊備份；17 份舊備份＋一次 OK → 刪 3 份（上限）、留下每月最早的 OK；雲端硬碟不存在（不加 `--root`）→ 10；通知用 PowerShell 發出一次，結束碼 0。
+  - 跟規格不同或實作時自己決定的地方：
+    1. 「保留最近 12 個月」解讀成**最近 12 個「有備份的月份」**（按份數，備份中斷時比日曆算法多留）。
+    2. `private.zip`、`claude-memory.zip` **沒有外層資料夾**（RESTORE.md 的解壓指令直接指到目的地）；三個 repo 的 zip 有 `<repo>\` 外層，跟規格一致。
+    3. `--dry-run` 不拿鎖、不 fetch（只讀 repo 與雲端清單）；結束代碼 12（另一個在跑）不跳通知，10、11、20 與 STALE／PARTIAL 才跳。
+    4. 同日重跑、bundle 到期用「距上次 ≥ 7 天」；manifest 多了 `problems`（所有非 OK 的原因）與 `archive_error`；最近備份.json 多了 `problems`、`backup_folder`、`script_commit`。
+    5. fetch 失敗時完整歷史延到下次（寫警告），不另算問題；bundle 做不起來算 PARTIAL。
+    6. 規格只提到 `--init`、沒寫細節：做成「建立根目錄、標記檔與 `每日`、`完整歷史`、`紀錄` 三個子資料夾」，不加 `--root` 時用第一個有「我的雲端硬碟」或「My Drive」的磁碟機；沒實際對 G: 跑過。
+    7. `還原說明.txt` 讀 origin/main 的 `docs/RESTORE.md`——**這個檔還沒推上 GitHub，所以在合併並推送之前，腳本只會警告、不會寫進雲端**（假根目錄那次就是這樣）。
+    8. `gh secret list`、`gh variable list` 查到三個 repo 都是空的（RESTORE.md 第 10 點已寫）；HISTORY 提過的「存聯絡信箱的 Actions secret」目前不存在，workflow 也沒有用 `secrets.*`。
+  - 沒驗到的：真正的 G: 與 `GoogleDriveFS.exe` 這個處理程序名稱（`tasklist` 判斷）、串流模式下改名資料夾與逐檔比對的實際行為、排程器環境（PATH 找得到 git、憑證管理員不跳視窗）。這些要部署 session 在 `--init` 與第一次真的寫入時確認。

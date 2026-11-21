@@ -32,7 +32,7 @@
 5. **「資產」新頁與「試算」頁整頓**：2026-11-17 上線（`f1ff46d` 合併、`08d91d5` 導覽列，sw.js `2026-11-17-4`），規格與紀錄在 [ASSETS_PAGE.md](ASSETS_PAGE.md)。導覽列照使用者指定：總覽、持倉、資產、K 線、記帳、分析、新聞、報告、試算（記帳在正中間）。
 6. **帳本補兩組已賣出的買賣與已實現損益**（[REALIZED_PNL.md](REALIZED_PNL.md)）：2026-11-18 上線（sw.js `2026-11-18-1`）。帳本補了 00679B、00735 兩組買賣與 VOO、GOOGL、009816 的實際金額；持倉頁與總覽顯示已實現損益 +175。
 7. **配息自動記帳已全部上線**（2026-11-18；[OTHER_INCOME.md](OTHER_INCOME.md)、[AUTO_DIVIDENDS.md](AUTO_DIVIDENDS.md)）：網站（合併 `fa82ff1`，sw.js `2026-11-18-2`）、market-data `us.json`、Apps Script 與每日觸發器都好了。**11/19 確認第一次自動執行**（台北 09:00～10:00；看配息卡「上次自動檢查」或 Apps Script「觸發條件」的上次執行時間）。第一筆真正自動記帳預計是 GOOGL（12 月中）或 00981A。
-8. **備份到 Google 雲端硬碟**（[BACKUP.md](BACKUP.md)）：使用者 2026-11-21 要求「不要存在本機改備份在google雲端硬碟」。電腦每天用 Python 腳本把三個 repo、`private/`、Claude 記憶、發布 CSV 寫進 `G:`；規格寫好、交給網站實作 session 做。雲端看門狗等使用者決定；註冊排程要使用者同意。
+8. **備份到 Google 雲端硬碟**（[BACKUP.md](BACKUP.md)）：使用者 2026-11-21 要求「不要存在本機改備份在google雲端硬碟」。電腦每天用 Python 腳本把三個 repo、`private/`、Claude 記憶、發布 CSV 寫進 `G:`；腳本 `tools/backup_to_drive.py`、測試、[RESTORE.md](RESTORE.md) 已做好並用假根目錄驗收（備份、還原演練、三種故障都過），在分支 `claude/funds-fire-30y-122524`，**還沒合併；沒寫過 G:、沒 `--init`、沒註冊排程**（細節與跟規格不同處見 BACKUP.md 第 12 節）。下一步：審查合併並推送（RESTORE.md 要先上 origin/main，腳本才會把它複製到雲端）→ 使用者同意後部署 session 做 `--init`、第一次寫入、註冊排程 `StockDashboardBackup`。雲端看門狗等使用者決定。
 
 ## 注意事項
 - 分工（使用者 2026-11-12、11-13 訂）：主 session 的高階模型只做規劃、規格、審查與較難的製作；部署、例行檢查、照規格實作交給常駐的便宜模型 session（部署與例行檢查、網站實作、market-data 維護、排程維護；教學要用時開新的；id 在記憶 `delegate-routine-work`）。模型（使用者 2026-11-16 訂）：交辦預設 Sonnet，看新聞、讀執行紀錄這類簡單檢查用 Haiku，只有 Sonnet 做不到才用 Opus；主 session 以前開的 Opus session 已全部封存。同類工作用同一個 session，不要每件事開新的；主對話只講結論與要使用者決定的事。會對外生效的動作（push、部署、改排程）要使用者本人在執行的那個 session 裡同意。使用者 2026-11-18 再次強調：主 session 當管理者，部署（合併、改版本號、測試、push、線上確認）與例行檢查一律交給分支 session 做，做完呈交給主 session 核對批改，主 session 不自己動手部署。
@@ -55,7 +55,7 @@
 - [ASSET_TREND.md](ASSET_TREND.md)：資金頁總資產走勢的規格。
 - [REALIZED_PNL.md](REALIZED_PNL.md)：已實現損益的規格與要補進帳本的兩組買賣。
 - [OTHER_INCOME.md](OTHER_INCOME.md)：配息與手續費折抵（「其他入帳」分頁）的規格。
-- [BACKUP.md](BACKUP.md)：備份到 Google 雲端硬碟的規格；還原說明在 RESTORE.md（實作時新增）。
+- [BACKUP.md](BACKUP.md)：備份到 Google 雲端硬碟的規格；還原說明見 [RESTORE.md](RESTORE.md)。
 - [HISTORY.md](HISTORY.md)：2026-10-16～11-10 完整進度紀錄（Phase 0～4 的勾選清單也在裡面）；最後面是 11/11 起的大事記。
 - 私人（不進 git）：`private/routines/`——各版提示詞、`routines.json`、每版一個資料夾（v3、v4、v41、v42）的 README 記排程 ID、測試與上線紀錄；更新與核對的腳本在 `tools/`。
 
