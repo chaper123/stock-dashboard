@@ -50,7 +50,7 @@ P = dict(
 )
 ```
 
-旗標：`--dry-run`（只列計畫，不寫任何檔）、`--init`（建立雲端資料夾與標記檔，只有這個旗標會建資料夾）、`--force-bundle`、`--allow-delete N`、`--no-notify`、`--root <路徑>`（測試用：跳過找雲端硬碟，直接把這個資料夾當備份根目錄；仍要有標記檔）。
+旗標：`--dry-run`（只列計畫，不寫任何檔）、`--init`（建立雲端資料夾與標記檔，只有這個旗標會建資料夾）、`--force-bundle`、`--allow-delete N`、`--no-notify`、`--root <路徑>`（測試用：跳過找雲端硬碟，直接把這個資料夾當備份根目錄；仍要有標記檔；**空字串或只有空白是參數錯誤（結束碼 2）**，不會當成「沒給」去掃磁碟機）、`--accept-rewrite <repo>`（確認某個 repo 的歷史改寫是自己做的，見第 4 節第 3 步，可重複）。
 
 ## 3. 雲端資料夾結構
 
@@ -75,16 +75,16 @@ G:\我的雲端硬碟\stock-dashboard 備份\
 
 0. **鎖**：`%TEMP%\sdbackup.lock`（O_EXCL 建立；超過 2 小時視為殘留，可以取代）。拿不到鎖 → 結束碼 12。
 1. **找雲端硬碟**：掃 D～Z 磁碟機，找 `<DRIVE_ROOT_NAMES 其一>\<DRIVE_DIR_NAME>\<MARKER>`，同時確認 `GoogleDriveFS.exe` 在跑（`tasklist` 加 CREATE_NO_WINDOW）。找不到就每 30 秒重試，最多 `DRIVE_WAIT_SEC`（開機補跑時雲端硬碟可能還沒掛上）。還是失敗：通知，結束碼 10（找到資料夾但沒有標記檔：11）。**不建任何東西、不寫本機。** 標記檔可以擋下 G: 掛的是別的 Google 帳號、或資料夾被移走的情況。
-2. **暫存區**：`tempfile.mkdtemp(prefix="sdbackup-")`，`finally` 一定刪掉（git 物件檔是唯讀，刪除前先清唯讀屬性，用 `shutil.rmtree(..., onexc=...)`，3.12 沒有 onexc 就用 onerror）。
-3. **每個 repo**（所有子程序：環境變數 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，設逾時，Windows 上加 `creationflags=CREATE_NO_WINDOW`；不然在 pyw 底下每個 git 都會跳黑窗、或跳登入視窗卡住）：
+2. **暫存區**：`tempfile.mkdtemp(prefix="sdbackup-")`，`finally` 一定刪掉；開始時另外清掉超過 1 天的舊 `sdbackup-*`（上一次被排程時間上限或當機中止留下的，不碰鎖檔）；刪不掉（`rmtree_force` 重試 3 次、每次隔 1 秒）時在雲端 `紀錄` 的 log 加一行，不算失敗。刪除細節：git 物件檔是唯讀，刪除前先清唯讀屬性，用 `shutil.rmtree(..., onexc=...)`，3.12 沒有 onexc 就用 onerror）。
+3. **每個 repo**（所有子程序：環境變數 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`，設逾時，Windows 上加 `creationflags=CREATE_NO_WINDOW`；不然在 pyw 底下每個 git 都會跳黑窗、或跳登入視窗卡住。**逾時要連孫程序一起殺**：用 `Popen`，逾時時 Windows 執行 `taskkill /PID <pid> /T /F`（POSIX 用 process group），再 `communicate(timeout=30)`；只殺 git 本身的話，它啟動的 `git-remote-https` 會留著把管線握住、`run` 一直等下去。fetch 另加 `-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60`，連線卡住 60 秒就自己放棄。所有 git 呼叫加 `-c core.longpaths=true`，避免長路徑檔名在 Windows 失敗）：
    - `git -C <repo> fetch --no-prune --quiet origin`，失敗等 60 秒再試一次（`FETCH_TRIES`）。第一個 repo 兩次都失敗時，其他 repo 只試一次。只動 origin/* 與 FETCH_HEAD，**不 pull、不 checkout、不碰工作目錄與 worktree**。
    - 記錄：origin/main 的 commit 與 commit 時間、本機 main 落後幾個 commit（只記錄）。
-   - 非快轉檢查：上一份 OK 的 manifest 記的 commit 不是新 origin/main 的祖先（`git merge-base --is-ancestor`）→ 警告（可能被 force-push 或帳號被盜）。
+   - 非快轉檢查：比較的基準 commit 不是新 origin/main 的祖先（`git merge-base --is-ancestor`，結束碼 0＝是、1＝不是；**只有 0 與 1 有意義**，其他結束碼是檢查本身失敗）→ **PARTIAL**（可能被 force-push 或帳號被盜；跟第 5 節一致：不刪任何東西、通知）。基準＝上一份 OK 的 manifest 記的 commit，或使用者用 `--accept-rewrite <repo>` 確認過的那次之後的 commit，取**較新**的那個（`最近備份.json` 的 `rewrite_accepted.<repo> = {commit, at}`；只在那次 fetch 成功時記錄）。檢查本身失敗（結束碼不是 0 或 1，例如物件缺失）→ PARTIAL，問題寫「非快轉檢查失敗」，不當成沒事。這樣一次 force-push 只會 PARTIAL 到使用者確認為止，確認之後下一次就恢復 OK；後續的正常 push 不受影響。
    - 打包：`git -C <repo> -c core.autocrlf=false archive --format=zip --prefix=<repo>/ -o <tmp>\<repo>.zip origin/main`。**一定要 `-c core.autocrlf=false`**：這台電腦系統層是 autocrlf=true，不加的話 market-data 有 68 個檔的換行會被改掉（還原演練實測）。
    - 只在本機的分支（`git for-each-ref refs/heads`，`git rev-list --count <分支> --not --remotes=origin` > 0）與有未提交修改的 worktree（`git worktree list --porcelain` 後逐一 `git status --porcelain`）記進 warnings。
-4. **private 與記憶資料夾**：用 `zipfile`（ZIP_DEFLATED）走訪整個資料夾，空資料夾也要寫成資料夾項目，檔名用 UTF-8（zipfile 預設會設 UTF-8 旗標）。超過 `ZIP_WARN_MB` 警告。記憶資料夾不存在就警告、不算失敗。
+4. **private 與記憶資料夾**：用 `zipfile`（ZIP_DEFLATED）走訪整個資料夾，空資料夾也要寫成資料夾項目，檔名用 UTF-8（zipfile 預設會設 UTF-8 旗標）。超過 `ZIP_WARN_MB` 警告。**`private` 資料夾不存在或裡面一個檔案都沒有 → PARTIAL**（不刪任何東西、通知；排程提示詞與規劃筆記是這份備份的重點，空包不能當成功）。記憶資料夾不存在只警告、不算失敗（備份不到不影響還原其他東西）。
 5. **CSV**：從 `git show origin/main:site/js/config.js` 解析 `LEDGER_PUB`、`DASH_PUB` 與網站實際讀的 gid（目前 7 個，對照第 0 節）；`urllib` 下載，逾時 60 秒，失敗重試一次。驗證：HTTP 200、開頭不是 `<`（取消發布時會回 HTML）、能用 UTF-8 解碼。
-6. **完整歷史**：條件是「最新一份完整歷史距今超過 `BUNDLE_EVERY_DAYS` 天，或沒有任何一份，或 `--force-bundle`」，而且這次三個 fetch 都成功。**不能直接 `git bundle --all`**：本機 main 落後時，clone 出來的 main 是舊的（還原演練實測）。每個 repo：
+6. **完整歷史**：條件是「最新一份完整歷史距今超過 `BUNDLE_EVERY_DAYS` 天，或沒有任何一份，或 `--force-bundle`」。fetch 失敗時照做：fetch 失敗的 repo 從**本機已有的** `refs/remotes/origin/*` 與只在本機的分支做，manifest 標 `STALE`，那個 repo 的 `fetch_ok:false`，main 是本機最後一次 fetch 的 origin/main；只有某個 repo 一個本機 origin/main 都沒有時才略過並警告。長期 GitHub 掛掉時一樣每 7 天留一份完整歷史，不會變成沒有歷史。）**不能直接 `git bundle --all`**：本機 main 落後時，clone 出來的 main 是舊的（還原演練實測）。每個 repo：
    ```
    git init --bare <tmp>\b\<repo>.git
    git -C <tmp>\b\<repo>.git fetch <repo路徑> "+refs/remotes/origin/*:refs/heads/*" "+refs/tags/*:refs/tags/*" [每個只在本機的分支 "+refs/heads/<名>:refs/heads/local/<名>"]
@@ -95,7 +95,7 @@ G:\我的雲端硬碟\stock-dashboard 備份\
    git clone --bare <tmp>\<repo>.bundle <tmp>\v\<repo>.git，rev-parse main 必須等於 origin/main
    ```
 7. **manifest.json**：每個檔的大小與 sha256，加上狀態與警告（欄位見第 5 節）。
-8. **寫進雲端**：先建 `每日\_未完成-<日期>-<PID>\`，逐檔複製，每檔複製後比對大小與 sha256（這只證明寫進了雲端硬碟的本機暫存，是否真的上傳要從雲端那一側看）；最後寫 manifest，再改名成 `<日期>`。同一天已經有資料夾：新結果的狀態不比舊的差（OK > PARTIAL > STALE）就取代（舊的刪除），否則丟掉新的並記進紀錄。完整歷史用同樣做法。
+8. **寫進雲端**：先建 `每日\_未完成-<日期>-<PID>\`，逐檔複製，每檔複製後比對大小與 sha256（這只證明寫進了雲端硬碟的本機暫存，是否真的上傳要從雲端那一側看）；最後寫 manifest，再改名成 `<日期>`。同一天已經有資料夾：新結果的狀態不比舊的差（OK > PARTIAL > STALE）就取代（舊的刪除），否則丟掉新的並記進紀錄。完整歷史用同樣做法。**同日取代時兩次改名（舊的 → `<日期>-<PID>-舊`、暫存 → `<日期>`）都失敗，不能刪暫存資料夾**（那是唯一一份新備份）：先 1 秒後再試一次暫存 → `<日期>`；還是失敗就兩份都留著、丟出錯誤並把兩個路徑都寫進訊息。`cleanup_unfinished` 遇到「-舊」資料夾，只有同一天的正式資料夾存在時才清掉，不存在就留著（它是最後一份好備份）。刪舊備份（取代或保留規則）刪不掉時丟出 `BackupError`（不算刪了，進 warnings），不會假裝刪成功。
 9. **狀態檔**：`最近備份.json` 每次更新 `last_attempt`、`last_attempt_status`，`last_ok` 與 `last_ok_folder`（那份每日資料夾的名稱）只在 OK 時更新，另有 `last_bundle_folder`（最新一份完整歷史的資料夾名稱）與 `schema: 1`；時間都是 `+08:00` 的 ISO 格式（先寫暫存名稱再 `os.replace`）；`紀錄\YYYY-MM.log` 追加一行（時間、狀態、各 repo commit 前 7 碼、總大小、警告數）；`還原說明.txt` 內容有變才覆寫。
 10. **保留**：只在本次 OK 時執行（第 6 節）。
 11. **通知與結束碼**（第 7 節）。
@@ -115,11 +115,13 @@ G:\我的雲端硬碟\stock-dashboard 備份\
  "warnings":["market-data 已 5 天沒有新 commit"]}
 ```
 
+完整歷史資料夾的 manifest：`{"schema":1,"started","finished","status":"OK|STALE","date":"YYYY-MM-DD","repos":{"<repo>":{"bundle":{"file","bytes","sha256","commit","local_branches":[…]},"fetch_ok":true}}}`；有 repo fetch 失敗時 `status` 是 `STALE`、該 repo 的 `fetch_ok` 是 `false`。`最近備份.json` 另有 `rewrite_accepted`（`{<repo>: {commit, at}}`，只在使用者用 `--accept-rewrite` 確認過時才出現，見第 4 節第 3 步）；看門狗只讀自己用到的欄位，加欄位不影響它（`tests/test_backup_to_drive.py` 的欄位對照只要求 `.gs` 假資料裡有的鍵）。
+
 | 狀態 | 條件 | 影響 |
 |---|---|---|
 | OK | 三個 fetch 都成功、所有檔案寫入並比對一致、沒有非快轉 | 唯一會更新 last_ok、會刪舊備份的狀態 |
 | STALE | 有 repo 的 fetch 失敗 | 該 repo 的 zip 是最後一次成功 fetch 的內容，manifest 標 `fetch_ok:false` 與 `last_fetch_ok_at`；不刪任何東西；通知 |
-| PARTIAL | fetch 都成功，但有 CSV、zip 失敗，或偵測到非快轉 | 不刪任何東西；通知 |
+| PARTIAL | fetch 都成功，但有 CSV、zip 失敗、`private` 資料夾不存在或是空的，或偵測到非快轉（含非快轉檢查本身失敗） | 不刪任何東西；通知 |
 
 另外：market-data 的 origin/main 超過 `MARKET_STALE_DAYS` 天沒有新 commit → 警告（順便發現 Actions 或 cron-job.org 停了），不改狀態。
 
@@ -130,13 +132,14 @@ GitHub 長期掛掉時刪除會一直凍結、每天多約 5 MB，這是故意�
 **每日**
 - 只看 `每日\` 的直接子資料夾。名稱完全符合 `^\d{4}-\d{2}-\d{2}$`、能用固定格式解析成日期、裡面有 manifest.json，才算備份。其他資料夾一律不碰；唯一例外是自己產生的 `_未完成-*` 超過 2 天才清掉。
 - **按份數保留，不按日曆**（電腦關三週後第一次跑，不能把舊的全刪掉）。保留以下的聯集：最新 `KEEP_DAILY` 份；最近 `KEEP_MONTHLY` 個月每月最早一份 status=OK 的（那個月沒有 OK 就留最早一份）；最新一份 OK；日期在未來的（同時警告：時鐘可能不對）。
-- 刪除條件：本次 OK；一次最多刪 `MAX_DELETE_PER_RUN` 個，超過就整批不刪並警告（`--allow-delete N` 解除）；刪除前確認絕對路徑的上一層就是備份根目錄底下的 `每日`。
+- 刪除條件：本次 OK；**每日、完整歷史各最多刪 `MAX_DELETE_PER_RUN` 份**（上限是分開算的，一次執行最多刪 3 份每日＋3 份完整歷史），超過就整批不刪並警告（`--allow-delete N` 解除）；刪除前確認絕對路徑的上一層就是備份根目錄底下的 `每日`（完整歷史是 `完整歷史`）。
+- 日期在今天之後的資料夾（時鐘不對造成）不算「最新」：「最新一份完整歷史」、`last_bundle_folder`、是否到期做完整歷史、`--dry-run` 的計畫都只看日期 ≤ 今天的資料夾；未來日期的資料夾一律保留（每日另外警告）。
 
-**完整歷史**：同樣的名稱與 manifest 規則，保留最近 `KEEP_BUNDLES` 份；有 STALE、PARTIAL 或非快轉時不刪。
+**完整歷史**：同樣的名稱與 manifest 規則，保留最近 `KEEP_BUNDLES` 份，外加最新一份 status=OK 的（連續 fetch 失敗時 STALE 的份數可能擠掉所有 OK，不能因此把最後一份好的刪掉）；有 STALE、PARTIAL 或非快轉時不刪。
 
 ## 7. 通知與結束碼
 
-- 狀態不是 OK、或發生例外時跳 Windows 通知（toast），不裝第三方模組：用 `powershell.exe -NoProfile -NonInteractive -EncodedCommand <UTF-16LE base64>`（加 CREATE_NO_WINDOW）呼叫 `Windows.UI.Notifications`，AppId 用 PowerShell 的 `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe`。通知文字用繁體中文，寫狀態與第一個原因。`--no-notify` 不跳。
+- 狀態不是 OK、或發生例外時跳 Windows 通知（toast），不裝第三方模組：用 `powershell.exe -NoProfile -NonInteractive -EncodedCommand <UTF-16LE base64>`（加 CREATE_NO_WINDOW）呼叫 `Windows.UI.Notifications`，AppId 用 PowerShell 的 `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe`。通知文字用繁體中文，寫狀態與第一個原因。**標題與內文不能拼進 PowerShell 指令字串**（原因文字含引號、`$` 時會壞或被當成程式執行）：用環境變數 `SDB_T`、`SDB_B` 傳進去，PowerShell 端讀 `$env:SDB_T`、`$env:SDB_B`。`--no-notify` 不跳。
 - 結束碼：0＝OK；1＝STALE 或 PARTIAL；10＝雲端硬碟沒掛上；11＝找不到標記檔；12＝另一個在跑；20＝未預期的例外（最外層一定 try/except，先嘗試寫 last_attempt 再通知）。
 - 輸出不靠 print（pyw 沒有主控台）；`--dry-run` 與手動執行時可以印到 stdout。
 
@@ -160,7 +163,7 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
 1. 雲端資料夾結構與每個檔案是什麼；**這個資料夾不可分享**（裡面有投信持股與排程提示詞）。
 2. 核對：`Get-FileHash -Algorithm SHA256 <檔>` 跟 manifest 比。
 3. 只要最新檔案：解壓每日資料夾的 zip（裡面已經有 `<repo>/` 這層資料夾）。
-4. 要完整歷史：`git clone <repo>.bundle <資料夾>`（不用先 verify）；換到新主機：`git remote set-url origin <新網址>`、`git push --all`、`git push --tags`；`local/*` 是當時只在本機的分支。
+4. 要完整歷史：`git clone <repo>.bundle <資料夾>`（不用先 verify）；一般 clone 之後，`local/*`（當時只在本機的分支）出現在 `origin/local/*`、其他分支在 `origin/*`。**換到新主機要用 mirror**（一般 clone 只會建出 main 一個本機分支，`git push --all` 會漏掉其他分支）：`git clone --mirror <repo>.bundle <資料夾>.git` → `git remote set-url origin <新網址>`（mirror clone 的 origin 指向 bundle 檔，不改會推回自己）→ `git push --mirror`；tags 一起帶過去，不用另外 `git push --tags`。`tests/test_backup_to_drive.py` 有用暫存的 bare repo 實推驗證這三步。
 5. GitHub 不能用時讓網站復活：`site/` 是純靜態；把 `config.js` 讀 raw.githubusercontent.com 的行情與候選資料改到新位置（例如把 market-data 的 `data/` 放進 `site/data/` 改相對路徑），更新 `sw.js` 版本；託管可用 Cloudflare Pages、Netlify，或本機 `py -3.14 -m http.server --directory site`；帳本寫入的 Apps Script 在 Google 上不受影響。
 6. market-data 怎麼繼續更新：看 zip 裡 `.github/workflows/*.yml` 的指令，在本機或新的 CI 執行；cron-job.org 的工作改指向新的觸發方式。列出工作清單（名稱、時間、觸發哪個 workflow），不列 token。
 7. 私人 repo（投信持股）只能還原到私人位置，不可公開轉載。
@@ -237,13 +240,17 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
 | `NO_FOLDER` | 找不到或找到多個備份資料夾 | |
 | `NO_STATE` | `最近備份.json` 不存在或讀不懂 | |
 | `STALE_OK` | `last_ok` 距今超過 `W.MAX_OK_AGE_DAYS`（3）天 | 電腦沒開、排程停了、雲端硬碟沒同步、或一直不是 OK |
-| `NOT_UPLOADED` | `last_ok_folder` 那個每日資料夾在雲端找不到 `manifest.json`，或 manifest 列的任何一個檔在雲端不存在、大小不同 | 這是唯一能證明「真的上傳了」的檢查 |
+| `NOT_UPLOADED` | `last_ok_folder` 那個每日資料夾在雲端找不到 `manifest.json`，或 manifest 列的任何一個檔在雲端不存在、大小不同 | 這是唯一能證明「真的上傳了」的檢查；同名日期資料夾有兩個以上也算（只讀最近更新的那個，並說明有重複） |
 | `OLD_BUNDLE` | `last_bundle_folder` 距今超過 `W.MAX_BUNDLE_AGE_DAYS`（10）天，或那份完整歷史的 bundle 在雲端缺檔或大小不同 | |
-| `MARKET_STALE` | 最新 OK 的 manifest 裡 market-data 的 `commit_time` 距今超過 `W.MARKET_STALE_DAYS`（4）天 | 順便發現 market-data 的 Actions 或 cron-job.org 停了 |
-| `SHARED` | 備份根目錄、最新每日資料夾或裡面任何檔案的 `getSharingAccess()` 不是 `PRIVATE`，或 `getEditors()`、`getViewers()` 有自己以外的人 | 裡面有投信持股與排程提示詞，不可分享 |
+| `MARKET_STALE` | 最新 OK 的 manifest 裡 market-data 的 `commit_time` 距今超過 `W.MARKET_STALE_DAYS`（4）天 | 順便發現 market-data 的 Actions 或 cron-job.org 停了。**已經有 `STALE_OK` 或 `NO_STATE` 時不報**（那份 manifest 本來就舊，只會多一個假警報） |
+| `SHARED` | **整棵樹**（備份根目錄、每一個每日與完整歷史資料夾、`紀錄`、`最近備份.json`、所有檔案，不含垃圾桶）的 `getSharingAccess()` 不是 `PRIVATE`，或 `getEditors()`、`getViewers()` 有自己以外的人 | 裡面有投信持股與排程提示詞，不可分享 |
 | `QUOTA` | `DriveApp.getStorageUsed() / getStorageLimit()` 超過 `W.QUOTA_WARN`（0.8） | 上限是 0 或讀不到就跳過這項，不算問題 |
 
-**寄信**：有問題才寄，收件人是 `Session.getEffectiveUser().getEmail()`。主旨 `【備份看門狗】<問題代號…>`，內文繁體中文，每個問題寫：發生什麼事、可能原因、要檢查什麼（例如開電腦後看 `Get-ScheduledTaskInfo StockDashboardBackup`、雲端硬碟電腦版的同步狀態、還原說明第 11 項）。同一個問題代號最多每 `W.REMIND_EVERY_DAYS`（3）天寄一次（上次寄送時間存在 Script Properties）；之前有問題、這次全部正常時，寄一封「恢復正常」並清掉紀錄。看門狗自己發生例外時也要寄信（主旨 `【備份看門狗】執行錯誤`），不要靜默失敗。
+**垃圾桶與同名項目**：垃圾桶裡的檔案與資料夾（`isTrashed()`）一律當作不存在（找根目錄、讀 JSON、列檔案、查分享都一樣）；同名檔案取 `getLastUpdated()` 最新的那個；同名日期資料夾兩個以上（`NOT_UPLOADED`／`OLD_BUNDLE` 說明）是明確的問題，不是隨便挑一個。
+
+**`dryRun` 的執行紀錄**：除了檢查結果，另印「讀雲端硬碟共幾秒、檢查了幾個項目的分享設定」與「雲端硬碟用量 used／limit」，第一次實跑時確認整棵樹的檢查沒有逼近 Apps Script 的 6 分鐘上限（備份 14 份每日＋最多 12 份每月最早的＋2 份完整歷史，預計幾百個項目）。
+
+**寄信**：有問題才寄，收件人是 `Session.getEffectiveUser().getEmail()`。主旨 `【備份看門狗】<問題代號…>`，內文繁體中文，每個問題寫：發生什麼事、可能原因、要檢查什麼（例如開電腦後看 `Get-ScheduledTaskInfo StockDashboardBackup`、雲端硬碟電腦版的同步狀態、還原說明第 11 項）。同一個問題代號最多每 `W.REMIND_EVERY_DAYS`（3）天寄一次（上次寄送時間存在 Script Properties）；之前有問題、這次全部正常時，寄一封「恢復正常」並清掉紀錄。看門狗自己發生例外時也要寄信（主旨 `【備份看門狗】執行錯誤`），不要靜默失敗；**只有 `EXCEPTION` 的那次不能洗掉原本的提醒紀錄、也不算「恢復正常」**（保留原本各問題的上次寄送時間，另外記 `EXCEPTION`），否則出錯隔天原本的問題會被當成新問題又寄一次。
 
 **測試**：Apps Script 不能在 CI 跑，所以把判斷寫成純函式 `evaluate_(state, latestManifest, bundleManifest, listing, sharing, quota, now)` → 問題清單，讀雲端硬碟的部分另外包起來。提供：
 - `selfTest()`：用寫在程式裡的假資料跑 `evaluate_`，涵蓋每個問題代號各一個、全部正常一個、邊界（剛好 3 天）各一個，在執行紀錄印「通過 N／N」。
