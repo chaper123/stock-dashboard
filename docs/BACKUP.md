@@ -223,6 +223,7 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
     5. 看門狗自己的例外也走同一套提醒間隔（代號 `EXCEPTION`，主旨「執行錯誤」），避免天天寄；寄信本身失敗就丟出原例外，讓 Apps Script 自己的失敗通知接手。
     6. 沒有做 `removeTrigger()`（規格沒列）。
   - 沒驗到的：真的 Drive／Mail 服務的行為（`getEditors()` 是否包含擁有者、`getSharingAccess()` 的回傳值、`getOwner()` 在共用雲端硬碟為 null）；`getEditors`／`getViewers` 我用「排除自己的信箱」處理，`String(access)` 轉 "PRIVATE"，都靠 Apps Script 文件的說明，要在 `dryRun` 第一次實跑時確認。
+- 2026-11-21 審查退回 19 項修完（同一個分支，仍沒合併、沒 push、沒寫過 G:、沒跑 `--init`）：腳本與測試 `4fade41`、看門狗 `b39bd53`、規格與還原說明 `09917bd`。全套 pytest：`py -3.14` 與 `py -3.12` 都是 383 passed、1 skipped（約 3.7 分鐘；skip 的是 Windows 上沒權限建 symlink 的那一項）；看門狗 `selfTest` 65／65、瀏覽器測試頁 `PASS 22/22`。自己決定的地方：`--accept-rewrite` 的「較新基準」用 `rewrite_accepted.at` 對上一份 OK manifest 的 `finished`；只在該次 fetch 成功時記錄；fetch 失敗仍做完整歷史（manifest 標 STALE）；完整歷史多留最新一份 OK；完整歷史 manifest 多 `fetch_ok`；整棵樹的分享檢查沒有加時間上限保護，第一次實跑 `dryRun` 看印出的秒數。
 
 ## 13. 雲端看門狗（Apps Script）
 
