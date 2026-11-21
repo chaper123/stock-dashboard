@@ -503,6 +503,8 @@ def make_repo(base, name, files):
     origin = base / f"{name}-origin.git"
     work = base / name
     _git(base, "init", "--bare", "-q", "-b", "main", str(origin))
+    # push 時 receive-pack 在 origin 那一側執行，收不到測試設的 GIT_CONFIG_* 環境變數：深路徑要在 origin 自己的設定開 longpaths
+    _git(origin, "config", "core.longpaths", "true")
     _git(base, "init", "-q", "-b", "main", str(work))
     for rel, content in files.items():
         p = work / rel
@@ -637,6 +639,32 @@ def test_stale_when_fetch_fails_and_nothing_deleted(world):
     assert st["last_bundle_folder"] == full.name
 
 
+def test_stale_full_history_is_redone_as_soon_as_fetch_works_again(world, capsys):
+    root, wd = world["root"], world["repos"]["market-data"]
+    url = _git(wd, "remote", "get-url", "origin")
+    _git(wd, "remote", "set-url", "origin", str(world["tmp"] / "不存在.git"))
+    assert b.main(["--root", str(root), "--no-notify"]) == 1
+    full = root / "完整歷史" / b.now().date().isoformat()
+    assert json.loads((full / "manifest.json").read_text("utf-8"))["status"] == "STALE"
+    _git(wd, "remote", "set-url", "origin", url)  # 同一天恢復：不用等 7 天
+    assert b.main(["--dry-run", "--root", str(root)]) == 0
+    assert "STALE" in capsys.readouterr().out
+    assert b.main(["--root", str(root), "--no-notify"]) == 0
+    fm = json.loads((full / "manifest.json").read_text("utf-8"))
+    assert fm["status"] == "OK" and all(r["fetch_ok"] for r in fm["repos"].values())
+    assert len(list((root / "完整歷史").iterdir())) == 1  # 同一天取代，不是多一份
+    # 已經是 OK：下一次不再重做（還沒滿 7 天）
+    assert b.main(["--root", str(root), "--no-notify"]) == 0
+    assert json.loads((full / "manifest.json").read_text("utf-8"))["finished"] == fm["finished"]
+
+
+def test_bundle_due_stale_latest_needs_a_successful_fetch():
+    t, d = D(2026, 11, 20), D(2026, 11, 21)
+    assert b.bundle_due(t, d, 7, latest_status="STALE", fetch_ok=True)
+    assert not b.bundle_due(t, d, 7, latest_status="STALE", fetch_ok=False)  # 又連不上：不用每次都重做
+    assert not b.bundle_due(t, d, 7, latest_status="OK", fetch_ok=True)
+
+
 def test_partial_when_csv_is_html_and_nothing_deleted(world, monkeypatch):
     root = world["root"]
     make_old_backups(root)
@@ -760,6 +788,24 @@ def test_run_cmd_timeout_kills_grandchildren_quickly():
     assert "逾時" in err.decode()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="taskkill 的程序樹行為只在 Windows 上驗證")
+def test_run_cmd_returns_within_timeout_plus_30_when_a_grandchild_outlives_its_parent(tmp_path):
+    """中間層程序立刻結束、孫程序（握著輸出管線）睡 70 秒：孫程序不在 taskkill 的樹裡。
+    run_cmd 不能為了關管線等到孫程序結束，要在 timeout＋30 秒內回來。"""
+    pidfile = tmp_path / "gc.pid"
+    child = f"import os, time; open({str(pidfile)!r}, 'w').write(str(os.getpid())); time.sleep(70)"
+    code = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}])"
+    t0 = time.monotonic()
+    try:
+        rc, out, err = b.run_cmd([sys.executable, "-c", code], timeout=2)
+        elapsed = time.monotonic() - t0
+    finally:
+        if pidfile.exists():
+            subprocess.run(["taskkill", "/PID", pidfile.read_text().strip(), "/F"], capture_output=True)
+    assert rc == -1 and "逾時" in err.decode()
+    assert elapsed < 40, elapsed
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="git-remote-http 孫程序只在 Windows 上驗證")
 def test_git_fetch_against_a_silent_server_returns_in_time_and_leaves_no_remote_helper(tmp_path):
     import socket
@@ -780,13 +826,17 @@ def test_git_fetch_against_a_silent_server_returns_in_time_and_leaves_no_remote_
     th = threading.Thread(target=accept, daemon=True)
     th.start()
 
+    port = srv.getsockname()[1]
+
     def helpers():
-        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq git-remote-http.exe", "/NH"], capture_output=True, text=True)
-        return r.stdout.count("git-remote-http.exe")
+        # 只數「這次」的：git-remote-http 的命令列帶著這次的連接埠；別的 session 同時在 fetch 不會被算進來
+        ps = ("(Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'git-remote-http.exe' -and "
+              "$_.CommandLine -like '*127.0.0.1:" + str(port) + "*' } | Measure-Object).Count")
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True, text=True)
+        return int(r.stdout.strip() or "0")
     repo = tmp_path / "r"
     _git(tmp_path, "init", "-q", str(repo))
-    _git(repo, "remote", "add", "origin", f"http://127.0.0.1:{srv.getsockname()[1]}/x.git")
-    before = helpers()
+    _git(repo, "remote", "add", "origin", f"http://127.0.0.1:{port}/x.git")
     t0 = time.monotonic()
     try:
         rc, out, err = b.git(str(repo), "fetch", "origin", timeout=3)
@@ -799,7 +849,7 @@ def test_git_fetch_against_a_silent_server_returns_in_time_and_leaves_no_remote_
         srv.close()
     assert rc != 0 and elapsed < 10, elapsed
     time.sleep(1)
-    assert helpers() <= before
+    assert helpers() == 0
 
 
 def test_cleanup_old_temp_removes_only_old_sdbackup_dirs(tmp_path):
@@ -992,8 +1042,77 @@ def test_delete_backup_raises_when_the_folder_survives(tmp_path, monkeypatch):
     d = root / "每日" / "2026-11-01"
     d.mkdir(parents=True)
     monkeypatch.setattr(b, "rmtree_force", lambda p, *a, **k: [p])
-    with pytest.raises(b.BackupError, match="刪不掉"):
+    with pytest.raises(b.BackupError, match="刪不完"):
         b.delete_backup(str(root), str(d))
+    assert not d.exists() and any(n.endswith("-刪除") for n in os.listdir(root / "每日"))  # 剩下的已改名，不再像一份備份
+
+
+def _make_backup_folder(root, name):
+    d = root / "每日" / name
+    d.mkdir(parents=True)
+    (d / "manifest.json").write_text(json.dumps({"status": "OK"}), encoding="utf-8")
+    (d / "private.zip").write_bytes(b"x" * 100)
+    return d
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="只有 Windows 上開著的檔案會擋住刪除")
+def test_open_file_blocks_deletion_without_deleting_anything_and_next_run_removes_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(b.time, "sleep", lambda s: None)
+    root = tmp_path / "root"
+    d = _make_backup_folder(root, "2026-10-01")
+    with open(d / "private.zip", "rb"):  # 真的開著檔案：Windows 連資料夾改名都不讓
+        with pytest.raises(b.BackupError, match="改名失敗"):
+            b.delete_backup(str(root), str(d))
+        # 什麼都沒刪：還是一份完整、可以辨認的備份（不會變成缺 manifest 的孤兒）
+        assert (d / "manifest.json").is_file() and (d / "private.zip").is_file()
+        assert [i["name"] for i in b.list_backups(str(root / "每日"))] == ["2026-10-01"]
+    b.delete_backup(str(root), str(d))  # 關掉之後刪得掉
+    assert not d.exists() and os.listdir(root / "每日") == []
+
+
+def test_half_deleted_backup_is_renamed_then_retried_by_the_next_run(tmp_path, monkeypatch):
+    """改名成功、但裡面有檔案刪不掉（manifest.json 先被刪掉了）：不能變成沒人管的孤兒。
+    （Windows 上開著的檔案連改名都擋，所以「改名成功才刪不完」只能用模擬的：只刪 manifest.json、留下 private.zip。）"""
+    monkeypatch.setattr(b.time, "sleep", lambda s: None)
+    root = tmp_path / "root"
+    d = _make_backup_folder(root, "2026-10-01")
+    real = b.rmtree_force
+    blocked = {"on": True}
+
+    def partial(path, *a, **k):
+        if blocked["on"]:
+            (Path(path) / "manifest.json").unlink()
+            return [os.path.join(path, "private.zip")]
+        return real(path, *a, **k)
+    monkeypatch.setattr(b, "rmtree_force", partial)
+    with pytest.raises(b.BackupError, match="刪不完"):
+        b.delete_backup(str(root), str(d))
+    assert not d.exists()
+    left = [n for n in os.listdir(root / "每日") if n.endswith("-刪除")]
+    assert len(left) == 1 and left[0].startswith("_未完成-2026-10-01-")
+    stuck = root / "每日" / left[0]
+    assert (stuck / "private.zip").exists() and not (stuck / "manifest.json").exists()
+    assert b.list_backups(str(root / "每日")) == []  # 不再像一份備份
+    warnings = []
+    b.run_retention(str(root), D(2026, 11, 4), None, warnings)  # 還是擋著：下次執行重試、仍刪不掉就寫進 warnings
+    assert any("上次刪到一半" in w and left[0] in w for w in warnings), warnings
+    assert stuck.exists()
+    blocked["on"] = False  # 擋住的原因消失
+    warnings = []
+    b.run_retention(str(root), D(2026, 11, 4), None, warnings)  # 清乾淨，不用等 2 天
+    assert not stuck.exists() and not warnings
+
+
+def test_deleting_suffix_folders_are_retried_without_waiting_two_days(tmp_path):
+    root = tmp_path / "root"
+    parent = root / "每日"
+    fresh = parent / "_未完成-2026-10-01-123-刪除"
+    young = parent / "_未完成-2026-11-03-456"  # 一般的未完成資料夾，沒滿 2 天不動
+    for x in (fresh, young):
+        x.mkdir(parents=True)
+        (x / "f").write_text("x")
+    assert b.cleanup_unfinished(str(root), str(parent)) == 1
+    assert not fresh.exists() and young.exists()
 
 
 def test_retention_failure_is_a_warning_and_not_counted(tmp_path, monkeypatch):

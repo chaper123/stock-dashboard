@@ -251,12 +251,9 @@ def run_cmd(cmd, timeout=120, cwd=None, env_extra=None):
         try:
             out, err = p.communicate(timeout=30)
         except subprocess.TimeoutExpired:
+            # 孫程序不在被殺的樹裡、還握著管線：不要 close（close 會等 reader 執行緒＝等孫程序結束）。
+            # reader 執行緒是 daemon，直接放著回傳，等待上限才真的是 timeout＋30 秒。
             out = err = b""
-            for s in (p.stdout, p.stderr):
-                try:
-                    s.close()
-                except Exception:
-                    pass
         return -1, out or b"", f"逾時（{timeout} 秒）".encode()
     return p.returncode, out, err
 
@@ -413,15 +410,28 @@ def guard_delete(root, path):
         raise BackupError(f"拒絕刪除：{path} 是連結")
 
 
+DELETING_SUFFIX = "-刪除"
+
+
 def delete_backup(root, path):
+    """刪一份備份資料夾。日期資料夾先改名成 `_未完成-<日期>-<PID>-刪除` 再刪：刪到一半（manifest.json 已被刪、
+    別的檔案被占用刪不掉）時，剩下的就不再長得像一份備份，交給 cleanup_unfinished 下次執行重試，不會變成沒人管的孤兒。
+    改名失敗（整個資料夾被占用）就什麼都不刪，丟 BackupError。"""
     guard_delete(root, path)
-    rmtree_force(path)
-    if os.path.lexists(path):
-        raise BackupError(f"刪不掉：{path}")
+    target = path
+    if not os.path.basename(path).startswith(UNFINISHED):
+        target = os.path.join(os.path.dirname(path), f"{UNFINISHED}{os.path.basename(path)}-{os.getpid()}{DELETING_SUFFIX}")
+        try:
+            os.rename(path, target)
+        except OSError as e:
+            raise BackupError(f"刪不掉（改名失敗，什麼都沒刪）：{path}：{e}")
+    left = rmtree_force(target)
+    if os.path.lexists(target):
+        raise BackupError(f"刪不完：{os.path.basename(target)} 剩 {os.path.basename(left[0]) if left else '部分檔案'}，下次執行會重試")
 
 
-def cleanup_unfinished(root, parent, today_ts=None):
-    """清掉自己留下、超過 2 天的 _未完成-*。"""
+def cleanup_unfinished(root, parent, today_ts=None, warnings=None):
+    """清掉自己留下、超過 2 天的 _未完成-*；`-刪除` 結尾的（上次刪到一半）不看日期，每次都重試，還是刪不掉就記進 warnings。"""
     n = 0
     ts = today_ts if today_ts is not None else time.time()
     try:
@@ -436,11 +446,13 @@ def cleanup_unfinished(root, parent, today_ts=None):
             continue  # 同日取代到一半失敗：正式資料夾不見了，這份「-舊」是唯一的舊備份，不能清
         p = os.path.join(parent, name)
         try:
-            if os.path.isdir(p) and ts - os.path.getmtime(p) > UNFINISHED_KEEP_DAYS * 86400:
+            if os.path.isdir(p) and (name.endswith(DELETING_SUFFIX)
+                                     or ts - os.path.getmtime(p) > UNFINISHED_KEEP_DAYS * 86400):
                 delete_backup(root, p)
                 n += 1
-        except (OSError, BackupError):
-            pass
+        except (OSError, BackupError) as e:
+            if name.endswith(DELETING_SUFFIX) and warnings is not None:
+                warnings.append(f"上次刪到一半的備份還是刪不掉：{name}：{e}"[:200])
     return n
 
 
@@ -460,8 +472,11 @@ def not_worse(new, old):
     return STATUS_RANK.get(new, -1) >= STATUS_RANK.get(old, -1)
 
 
-def bundle_due(latest_date, today, every_days, force=False):
+def bundle_due(latest_date, today, every_days, force=False, latest_status=None, fetch_ok=False):
+    """完整歷史要不要做。最新一份是 STALE（當時 fetch 失敗）、而這次 fetch 都成功時算到期：立刻做一份 OK 的，不用再等 7 天。"""
     if force or latest_date is None:
+        return True
+    if latest_status == "STALE" and fetch_ok:
         return True
     return (today - latest_date).days >= every_days
 
@@ -922,7 +937,7 @@ def run_retention(root, today, allow_delete, warnings):
                 deleted += 1
             except (OSError, BackupError) as e:
                 warnings.append(f"刪除舊備份失敗：{it['name']}：{e}"[:200])
-        deleted += cleanup_unfinished(root, parent)
+        deleted += cleanup_unfinished(root, parent, warnings=warnings)
     return deleted
 
 
@@ -1023,7 +1038,8 @@ def _do_backup(args, root, started, tmp):
     bundle_info, bundle_files = None, []
     full_items = [i for i in list_backups(os.path.join(root, FULL)) if i["date"] <= today]  # 未來日期的（時鐘錯）不算
     latest_full = max((i["date"] for i in full_items), default=None)
-    if bundle_due(latest_full, today, P["BUNDLE_EVERY_DAYS"], args.force_bundle):
+    latest_full_status = next((i["status"] for i in full_items if i["date"] == latest_full), None)
+    if bundle_due(latest_full, today, P["BUNDLE_EVERY_DAYS"], args.force_bundle, latest_full_status, not fetch_failed):
         no_commit = [n for n, r in repos.items() if not r["commit"]]
         if no_commit:
             warnings.append(f"{'、'.join(no_commit)} 沒有 origin/main 可以備份，完整歷史（bundle）這次不做")
@@ -1152,8 +1168,10 @@ def do_dry_run(args, started):
         say(f"    {s['name']}-gid{s['gid']}.csv  {s['url']}")
     full_items = [i for i in list_backups(os.path.join(root, FULL)) if i["date"] <= today]
     latest_full = max((i["date"] for i in full_items), default=None)
-    due = bundle_due(latest_full, today, P["BUNDLE_EVERY_DAYS"], args.force_bundle)
-    say(f"  完整歷史（bundle）：上次 {latest_full or '沒有'}；這次{'要做' if due else '不做'}")
+    latest_full_status = next((i["status"] for i in full_items if i["date"] == latest_full), None)
+    due = bundle_due(latest_full, today, P["BUNDLE_EVERY_DAYS"], args.force_bundle, latest_full_status, True)
+    say(f"  完整歷史（bundle）：上次 {latest_full or '沒有'}（{latest_full_status or '-'}）；這次{'要做' if due else '不做'}"
+        + ("（上次是 STALE，fetch 成功就會重做）" if latest_full_status == "STALE" else ""))
     items = list_backups(os.path.join(root, DAILY))
     keep = retention_keep(items, today, P["KEEP_DAILY"], P["KEEP_MONTHLY"])
     max_del = args.allow_delete if args.allow_delete is not None else P["MAX_DELETE_PER_RUN"]
