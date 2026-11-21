@@ -107,6 +107,7 @@ function evaluate_(state, latestManifest, bundleManifest, listing, sharing, quot
         add("NOT_UPLOADED", `最近備份.json 的 last_ok_folder「${folder || ""}」不是日期資料夾名稱`);
       } else {
         const bad = missingFiles_(latestManifest, "daily", listing.daily);
+        if (listing.dailyDup > 1) bad.unshift(`有 ${listing.dailyDup} 個同名的日期資料夾（只讀最近更新的那個，請刪掉多的）`);
         if (bad.length) add("NOT_UPLOADED", `每日\\${folder}：${short_(bad)}`);
       }
     }
@@ -119,11 +120,12 @@ function evaluate_(state, latestManifest, bundleManifest, listing, sharing, quot
       const age = dayDiff_(taipeiYmd_(now), bf);
       if (age > w.MAX_BUNDLE_AGE_DAYS) parts.push(`最新一份是 ${bf}，已 ${age} 天（Python 腳本每 7 天做一次）`);
       const bad = missingFiles_(bundleManifest, "bundle", listing.bundle);
+      if (listing.bundleDup > 1) bad.unshift(`有 ${listing.bundleDup} 個同名的日期資料夾（只讀最近更新的那個，請刪掉多的）`);
       if (bad.length) parts.push(`完整歷史\\${bf}：${short_(bad)}`);
       if (parts.length) add("OLD_BUNDLE", parts.join("；"));
     }
-    // MARKET_STALE
-    const md = isObj_(latestManifest) && isObj_(latestManifest.repos) ? latestManifest.repos["market-data"] : null;
+    // MARKET_STALE：看的是「最近一次 OK」那份的 manifest；已經 STALE_OK 時那份本來就舊，不重複報（只會多一個假警報）
+    const md = !out.some((i) => i.code === "STALE_OK") && isObj_(latestManifest) && isObj_(latestManifest.repos) ? latestManifest.repos["market-data"] : null;
     if (md && md.commit_time) {
       const age = ageDays_(md.commit_time, now);
       if (age !== null && age > w.MARKET_STALE_DAYS) {
@@ -131,7 +133,7 @@ function evaluate_(state, latestManifest, bundleManifest, listing, sharing, quot
       }
     }
   }
-  // SHARED
+  // SHARED：整棵樹（根目錄、每個每日／完整歷史資料夾、紀錄、狀態檔、所有檔案）
   const shared = (sharing || []).filter((s) => s.access !== "PRIVATE" || (s.others && s.others.length));
   if (shared.length) {
     add("SHARED", short_(shared.map((s) => `${s.path}（${s.access !== "PRIVATE" ? "分享設定 " + s.access : "有其他人可存取"}）`)));
@@ -150,7 +152,9 @@ function plan_(issues, remind, now, w) {
   remind = remind || {};
   const today = taipeiYmd_(now);
   const send = [];
-  const next = {};
+  // 只有 EXCEPTION（看門狗自己讀不到雲端）時，不能當成「其他問題消失了」：保留原本的提醒紀錄、不算恢復正常
+  const onlyException = issues.length > 0 && issues.every((i) => i.code === "EXCEPTION");
+  const next = onlyException ? Object.assign({}, remind) : {};
   for (const it of issues) {
     const last = remind[it.code];
     const due = !last || Number.isNaN(Date.parse(last)) || dayDiff_(today, taipeiYmd_(new Date(last))) >= w.REMIND_EVERY_DAYS;
@@ -208,35 +212,56 @@ function mailSubject_(issues, recovered) {
 
 // ---------- 讀雲端硬碟（包起來，不放判斷）----------
 
+// 垃圾桶裡的項目一律當作不存在；同名的多個項目取最近更新的那個
+function alive_(it) {
+  const out = [];
+  while (it.hasNext()) {
+    const x = it.next();
+    if (!x.isTrashed()) out.push(x);
+  }
+  return out;
+}
+
+function newest_(arr) {
+  let best = null;
+  for (const x of arr) {
+    if (!best || x.getLastUpdated().getTime() > best.getLastUpdated().getTime()) best = x;
+  }
+  return best;
+}
+
 function readJson_(folder, name) {
-  const it = folder.getFilesByName(name);
-  if (!it.hasNext()) return null;
+  const f = newest_(alive_(folder.getFilesByName(name)));
+  if (!f) return null;
   try {
-    const v = JSON.parse(it.next().getBlob().getDataAsString("UTF-8"));
+    const v = JSON.parse(f.getBlob().getDataAsString("UTF-8"));
     return isObj_(v) ? v : null;
   } catch (e) {
     return null;
   }
 }
 
-function child_(folder, name) {
-  const it = folder.getFoldersByName(name);
-  return it.hasNext() ? it.next() : null;
+function children_(folder, name) {
+  return alive_(folder.getFoldersByName(name));
 }
 
-// 資料夾底下所有檔案：{相對路徑: 大小}（最多往下 3 層）
-function listFiles_(folder, prefix, out, depth) {
-  const files = folder.getFiles();
-  while (files.hasNext()) {
-    const f = files.next();
-    out[prefix + f.getName()] = f.getSize();
+function child_(folder, name) {
+  return newest_(children_(folder, name));
+}
+
+// 資料夾底下所有檔案：{相對路徑: 大小}（最多往下 3 層）；同名檔案取最近更新的那個
+function listFiles_(folder, prefix, out, depth, times) {
+  times = times || {};
+  for (const f of alive_(folder.getFiles())) {
+    const key = prefix + f.getName();
+    const t = f.getLastUpdated().getTime();
+    if (!(key in out) || t > times[key]) {
+      out[key] = f.getSize();
+      times[key] = t;
+    }
   }
   if (depth < 3) {
-    const subs = folder.getFolders();
-    while (subs.hasNext()) {
-      const s = subs.next();
-      listFiles_(s, prefix + s.getName() + "/", out, depth + 1);
-    }
+    for (const s of alive_(folder.getFolders())) listFiles_(s, prefix + s.getName() + "/", out, depth + 1, times);
   }
   return out;
 }
@@ -258,18 +283,11 @@ function sharingOf_(node, path, me) {
   };
 }
 
+// 整棵樹的分享設定（資料夾與檔案，不含垃圾桶）：每個項目一筆 {path, access, others}
 function sharingTree_(folder, path, me, out) {
   out.push(sharingOf_(folder, path, me));
-  const files = folder.getFiles();
-  while (files.hasNext()) {
-    const f = files.next();
-    out.push(sharingOf_(f, path + "\\" + f.getName(), me));
-  }
-  const subs = folder.getFolders();
-  while (subs.hasNext()) {
-    const s = subs.next();
-    sharingTree_(s, path + "\\" + s.getName(), me, out);
-  }
+  for (const f of alive_(folder.getFiles())) out.push(sharingOf_(f, path + "\\" + f.getName(), me));
+  for (const s of alive_(folder.getFolders())) sharingTree_(s, path + "\\" + s.getName(), me, out);
 }
 
 function collect_() {
@@ -278,24 +296,27 @@ function collect_() {
   const it = DriveApp.getFoldersByName(W.FOLDER_NAME);
   while (it.hasNext()) {
     const f = it.next();
+    if (f.isTrashed()) continue;
     const owner = f.getOwner();
     if (!owner || owner.getEmail() !== me) continue;
-    if (f.getFilesByName(W.MARKER).hasNext()) roots.push(f);
+    if (alive_(f.getFilesByName(W.MARKER)).length) roots.push(f);
   }
-  const data = { state: null, latest: null, bundle: null, listing: { rootCount: roots.length, daily: null, bundle: null }, sharing: [], quota: null };
+  const data = { state: null, latest: null, bundle: null, listing: { rootCount: roots.length, daily: null, bundle: null, dailyDup: 0, bundleDup: 0 }, sharing: [], quota: null };
   if (roots.length !== 1) return data;
   const root = roots[0];
   const state = readJson_(root, "最近備份.json");
   data.state = state;
-  data.sharing.push(sharingOf_(root, "（根目錄）", me));
+  sharingTree_(root, "（根目錄）", me, data.sharing);
   const pick = (sub, name, kind) => {
     if (!name || !DATE_NAME.test(name)) return;
     const parent = child_(root, sub);
-    const dir = parent ? child_(parent, name) : null;
-    if (!dir) return;
+    const dirs = parent ? children_(parent, name) : [];
+    if (!dirs.length) return;
+    const dir = newest_(dirs);
+    const which = kind === "latest" ? "daily" : "bundle";
     data[kind] = readJson_(dir, "manifest.json");
-    data.listing[kind === "latest" ? "daily" : "bundle"] = listFiles_(dir, "", {}, 0);
-    sharingTree_(dir, sub + "\\" + name, me, data.sharing);
+    data.listing[which] = listFiles_(dir, "", {}, 0);
+    data.listing[which + "Dup"] = dirs.length;
   };
   if (state) {
     pick("每日", state.last_ok_folder, "latest");
@@ -321,7 +342,10 @@ function run_(opts) {
   const w = opts.w || W;
   let issues;
   try {
+    const t0 = Date.now();
     const d = collect_();
+    Logger.log(`讀雲端硬碟共 ${Math.round((Date.now() - t0) / 100) / 10} 秒，檢查了 ${d.sharing.length} 個項目的分享設定`);
+    Logger.log(d.quota ? `雲端硬碟用量 ${d.quota.used}／${d.quota.limit} 位元組（${d.quota.limit > 0 ? Math.round(d.quota.used / d.quota.limit * 1000) / 10 + "%" : "上限不明"}）` : "讀不到雲端硬碟用量");
     issues = evaluate_(d.state, d.latest, d.bundle, d.listing, d.sharing, d.quota, now, w);
   } catch (e) {
     issues = [{ code: "EXCEPTION", detail: String((e && e.message) || e) }];
@@ -455,11 +479,28 @@ function selfTest() {
   t("OLD_BUNDLE 沒有 manifest", codes(check(d)), "OLD_BUNDLE");
   // MARKET_STALE 與邊界
   const mdTime = Date.parse(SAMPLE_MANIFEST.repos["market-data"].commit_time);
-  d = base();
-  t("MARKET_STALE 剛好 4 天不算", evaluate_(d.state, d.latest, d.bundle, d.listing, d.sharing, d.quota, new Date(mdTime + 4 * 86400000)).filter((i) => i.code === "MARKET_STALE").length, 0);
-  t("MARKET_STALE 超過 4 天一小時", evaluate_(d.state, d.latest, d.bundle, d.listing, d.sharing, d.quota, new Date(mdTime + 4 * 86400000 + 3600000)).filter((i) => i.code === "MARKET_STALE").length, 1);
+  const marketCount = (dd, now) => evaluate_(dd.state, dd.latest, dd.bundle, dd.listing, dd.sharing, dd.quota, now).filter((i) => i.code === "MARKET_STALE").length;
+  const freshOk = (dd, now) => { dd.state.last_ok = new Date(now.getTime() - 3600000).toISOString(); };
+  let nowM = new Date(mdTime + 4 * 86400000);
+  d = base(); freshOk(d, nowM);
+  t("MARKET_STALE 剛好 4 天不算", marketCount(d, nowM), 0);
+  nowM = new Date(mdTime + 4 * 86400000 + 3600000);
+  d = base(); freshOk(d, nowM);
+  t("MARKET_STALE 超過 4 天一小時", marketCount(d, nowM), 1);
   d = base(); d.latest.repos["market-data"].commit_time = null;
   t("MARKET_STALE 沒有 commit_time 就跳過", codes(check(d)), "");
+  // MARKET_STALE 不跟 STALE_OK／NO_STATE 一起報（那份 manifest 本來就舊）
+  d = base();
+  t("W5 同時 STALE_OK 時不報 MARKET_STALE", [marketCount(d, nowM), has(evaluate_(d.state, d.latest, d.bundle, d.listing, d.sharing, d.quota, nowM), "STALE_OK")], [0, true]);
+  d = base(); d.state = null;
+  t("W5 NO_STATE 時不報 MARKET_STALE", codes(evaluate_(d.state, d.latest, d.bundle, d.listing, d.sharing, d.quota, nowM)), "NO_STATE");
+  // 同名日期資料夾（垃圾桶以外還有兩個以上）
+  d = base(); d.listing.dailyDup = 2;
+  t("W2 每日有 2 個同名資料夾", [codes(check(d)), check(d)[0].detail.includes("2 個同名")], ["NOT_UPLOADED", true]);
+  d = base(); d.listing.bundleDup = 3;
+  t("W2 完整歷史有 3 個同名資料夾", [codes(check(d)), check(d)[0].detail.includes("3 個同名")], ["OLD_BUNDLE", true]);
+  d = base(); d.listing.dailyDup = 1; d.listing.bundleDup = 1;
+  t("W2 各一個不算", codes(check(d)), "");
   // SHARED
   d = base(); d.sharing[1].access = "ANYONE_WITH_LINK";
   t("SHARED 知道連結的人", codes(check(d)), "SHARED");
@@ -498,8 +539,27 @@ function selfTest() {
   p = plan_([{ code: "SHARED", detail: "y" }], r0, at("2026-11-22T09:10:00+08:00", 1));
   t("plan 新問題要寄、舊問題移除", [p.send.map((i) => i.code), Object.keys(p.remind), p.recovered], [["SHARED"], ["SHARED"], false]);
   t("plan REMIND_EVERY_DAYS=0 每次都寄", plan_(iss, r0, day0, Object.assign({}, W, { REMIND_EVERY_DAYS: 0 })).send.length, 1);
+  // 看門狗自己出錯（EXCEPTION）不能洗掉原本的提醒紀錄，也不算恢復正常（5 天：STALE_OK 只在第 0、3 天寄）
+  const EXC = [{ code: "EXCEPTION", detail: "讀不到雲端" }];
+  const mailedOn = {};
+  let rem = {};
+  const seq = [["STALE_OK"], ["EXCEPTION"], ["STALE_OK"], ["STALE_OK"], ["STALE_OK"]];
+  seq.forEach((codesToday, i) => {
+    const q = plan_(codesToday.map((c) => ({ code: c, detail: "x" })), rem, at("2026-11-22T09:10:00+08:00", i));
+    mailedOn[i] = q.send.map((x) => x.code).join(",");
+    rem = q.remind;
+    if (i === 1) t("W4 例外那天不算恢復正常", q.recovered, false);
+  });
+  t("W4 五天的寄信紀錄（STALE_OK 只在第 0、3 天；EXCEPTION 第 1 天）", mailedOn, { 0: "STALE_OK", 1: "EXCEPTION", 2: "", 3: "STALE_OK", 4: "" });
+  p = plan_(EXC, r0, at("2026-11-22T09:10:00+08:00", 1));
+  t("W4 只有例外時保留原本紀錄並加上 EXCEPTION", Object.keys(p.remind).sort(), ["EXCEPTION", "STALE_OK"]);
+  t("W4 例外保留的 STALE_OK 時間不變", p.remind.STALE_OK, r0.STALE_OK);
+  p = plan_([], p.remind, at("2026-11-22T09:10:00+08:00", 2));
+  t("W4 例外之後真的恢復正常要寄恢復信並清掉紀錄", [p.recovered, p.remind], [true, {}]);
+  p = plan_([{ code: "EXCEPTION", detail: "x" }, { code: "SHARED", detail: "y" }], r0, at("2026-11-22T09:10:00+08:00", 1));
+  t("W4 例外加上別的問題時照原本方式（只留現在有的）", Object.keys(p.remind).sort(), ["EXCEPTION", "SHARED"]);
   // 信件內容
-  const body = mailBody_([{ code: "SHARED", detail: "每日\\2026-11-21" }], false);
+  const body =mailBody_([{ code: "SHARED", detail: "每日\\2026-11-21" }], false);
   t("信件有代號、說明與要檢查的事", [body.includes("SHARED"), body.includes("可能原因"), body.includes("要檢查")], [true, true, true]);
   t("信件主旨", mailSubject_([{ code: "STALE_OK" }, { code: "SHARED" }], false), "【備份看門狗】STALE_OK、SHARED");
   t("例外主旨", mailSubject_([{ code: "EXCEPTION" }], false), "【備份看門狗】執行錯誤");

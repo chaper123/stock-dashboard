@@ -34,14 +34,16 @@ const NOW = new Date("2026-11-22T09:10:00+08:00");
 const iter = (arr) => { let i = 0; return { hasNext: () => i < arr.length, next: () => arr[i++] }; };
 const user = (e) => ({ getEmail: () => e });
 class FFile {
-  constructor(name, size, content = "") { Object.assign(this, { name, size, content, access: "PRIVATE", editors: [], viewers: [] }); }
+  constructor(name, size, content = "") { Object.assign(this, { name, size, content, access: "PRIVATE", editors: [], viewers: [], trashed: false, updated: new Date("2026-11-21T13:00:00+08:00") }); }
   getName() { return this.name; } getSize() { return this.size; }
+  isTrashed() { return this.trashed; } getLastUpdated() { return this.updated; }
   getBlob() { return { getDataAsString: () => this.content }; }
   getSharingAccess() { return this.access; } getEditors() { return this.editors.map(user); } getViewers() { return this.viewers.map(user); }
 }
 class FFolder {
-  constructor(name, children = [], owner = ME) { Object.assign(this, { name, children, owner, access: "PRIVATE", editors: [], viewers: [] }); }
+  constructor(name, children = [], owner = ME) { Object.assign(this, { name, children, owner, access: "PRIVATE", editors: [], viewers: [], trashed: false, updated: new Date("2026-11-21T13:00:00+08:00") }); }
   getName() { return this.name; }
+  isTrashed() { return this.trashed; } getLastUpdated() { return this.updated; }
   getFiles() { return iter(this.children.filter((c) => c instanceof FFile)); }
   getFolders() { return iter(this.children.filter((c) => c instanceof FFolder)); }
   getFilesByName(n) { return iter(this.children.filter((c) => c instanceof FFile && c.name === n)); }
@@ -197,6 +199,122 @@ await test("分享：連結分享或有其他人 → SHARED（含每日資料夾
   w = makeWorld(src, SAMPLE);
   w.root.editors = [ME];
   eq(w.api.dryRun(), [], "只有自己不算");
+});
+await test("W2 垃圾桶：垃圾桶裡的資料夾、檔案、舊根目錄、被分享的垃圾桶檔案都當作不存在", () => {
+  const w = makeWorld(src, SAMPLE);
+  const day = w.root.find("每日/2026-11-21");
+  // 垃圾桶裡同名的空資料夾（更新時間較新）、大小不同的舊 zip、被連結分享的垃圾桶檔
+  const trashedDir = new FFolder("2026-11-21", []); trashedDir.trashed = true; trashedDir.updated = new Date("2026-11-22T08:00:00+08:00");
+  w.root.find("每日").children.push(trashedDir);
+  const badZip = new FFile("private.zip", 1); badZip.trashed = true; badZip.updated = new Date("2026-11-22T08:00:00+08:00"); badZip.access = "ANYONE_WITH_LINK";
+  day.children.push(badZip);
+  const trashedState = new FFile("最近備份.json", 5, "{壞掉"); trashedState.trashed = true; trashedState.updated = new Date("2026-11-22T08:00:00+08:00");
+  w.root.children.push(trashedState);
+  // 垃圾桶裡另一個也有標記檔的根目錄（不算第二個）
+  const trashedRoot = new FFolder("stock-dashboard 備份", [new FFile("備份根目錄-請勿刪除.txt", 7)]); trashedRoot.trashed = true;
+  w.top.children.push(trashedRoot);
+  eq(w.api.dryRun(), [], "垃圾桶裡的東西不該造成任何問題");
+});
+await test("W2 垃圾桶：真正的檔案在垃圾桶裡時視為缺檔", () => {
+  const w = makeWorld(src, SAMPLE);
+  w.root.find("每日/2026-11-21/market-data.zip").trashed = true;
+  const issues = w.api.dryRun();
+  eq(issues.map((i) => i.code), ["NOT_UPLOADED"], "問題");
+  ok(issues[0].detail.includes("缺 market-data.zip"), "沒寫缺哪個：" + issues[0].detail);
+});
+await test("W2 同名檔案：取最近更新的那個（大小對的較新 → 正常；較舊 → 缺檔）", () => {
+  let w = makeWorld(src, SAMPLE);
+  let good = w.root.find("每日/2026-11-21/private.zip");
+  let stale = new FFile("private.zip", 1); stale.updated = new Date("2026-11-20T00:00:00+08:00");
+  w.root.find("每日/2026-11-21").children.push(stale);
+  eq(w.api.dryRun(), [], "新的是對的");
+  w = makeWorld(src, SAMPLE);
+  good = w.root.find("每日/2026-11-21/private.zip");
+  good.updated = new Date("2026-11-20T00:00:00+08:00");
+  const wrongNewer = new FFile("private.zip", 1); wrongNewer.updated = new Date("2026-11-22T00:00:00+08:00");
+  w.root.find("每日/2026-11-21").children.push(wrongNewer);
+  eq(w.api.dryRun().map((i) => i.code), ["NOT_UPLOADED"], "較新的大小不對");
+  w = makeWorld(src, SAMPLE);
+  const oldState = new FFile("最近備份.json", 5, "{壞掉"); oldState.updated = new Date("2026-11-01T00:00:00+08:00");
+  w.root.children.push(oldState);
+  eq(w.api.dryRun(), [], "同名的舊狀態檔不影響");
+});
+await test("W2 同名日期資料夾（兩個都不在垃圾桶）→ 明確的問題", () => {
+  const w = makeWorld(src, SAMPLE);
+  w.root.find("每日").children.push(new FFolder("2026-11-21", []));
+  const issues = w.api.dryRun();
+  eq(issues.map((i) => i.code), ["NOT_UPLOADED"], "問題");
+  ok(issues[0].detail.includes("2 個同名"), "沒說有重複：" + issues[0].detail);
+  const w2 = makeWorld(src, SAMPLE);
+  w2.root.find("完整歷史").children.push(new FFolder("2026-11-21", []));
+  const i2 = w2.api.dryRun();
+  eq(i2.map((i) => i.code), ["OLD_BUNDLE"], "完整歷史重複");
+  ok(i2[0].detail.includes("2 個同名"), "沒說有重複：" + i2[0].detail);
+});
+await test("W3 SHARED 看整棵樹：舊的每日資料夾、最近備份.json、紀錄資料夾被分享都要抓到", () => {
+  let w = makeWorld(src, SAMPLE);
+  const oldDay = new FFolder("2026-11-10", [new FFile("manifest.json", 100)]);
+  w.root.find("每日").children.push(oldDay);
+  eq(w.api.dryRun(), [], "分享前正常");
+  oldDay.access = "ANYONE_WITH_LINK";
+  const a = w.api.dryRun();
+  eq(a.map((i) => i.code), ["SHARED"], "舊每日資料夾");
+  ok(a[0].detail.includes("每日") && a[0].detail.includes("2026-11-10"), "沒寫路徑：" + a[0].detail);
+  w = makeWorld(src, SAMPLE);
+  w.root.children.find((c) => c.name === "最近備份.json").viewers = ["stranger@example.invalid"];
+  const b = w.api.dryRun();
+  eq(b.map((i) => i.code), ["SHARED"], "最近備份.json");
+  ok(b[0].detail.includes("最近備份.json"), "沒寫路徑：" + b[0].detail);
+  w = makeWorld(src, SAMPLE);
+  const log = new FFolder("紀錄", [new FFile("2026-11.log", 300)]);
+  w.root.children.push(log);
+  eq(w.api.dryRun(), [], "紀錄資料夾分享前正常");
+  log.access = "DOMAIN";
+  const c = w.api.dryRun();
+  eq(c.map((i) => i.code), ["SHARED"], "紀錄資料夾");
+  ok(c[0].detail.includes("紀錄"), "沒寫路徑：" + c[0].detail);
+  w = makeWorld(src, SAMPLE);
+  const log2 = new FFolder("紀錄", [new FFile("2026-11.log", 300)]);
+  w.root.children.push(log2);
+  log2.children[0].editors = ["stranger@example.invalid"];
+  eq(w.api.dryRun().map((i) => i.code), ["SHARED"], "紀錄裡的檔案");
+});
+await test("W3／W6 dryRun 在執行紀錄印出秒數、檢查項目數、容量用量與上限", () => {
+  const w = makeWorld(src, SAMPLE);
+  w.quota = { used: 12345, limit: 100000 };
+  w.api.dryRun();
+  const text = w.logs.join("\n");
+  ok(/讀雲端硬碟共 [\d.]+ 秒/.test(text), "沒印秒數：" + text);
+  const m = text.match(/檢查了 (\d+) 個項目/);
+  ok(m, "沒印項目數：" + text);
+  // 根目錄 + 標記檔 + 狀態檔 + 每日（資料夾＋manifest＋5 zip＋csv 資料夾＋7 csv）＋完整歷史（資料夾＋manifest＋3 bundle）
+  eq(Number(m[1]), 1 + 2 + 2 + 1 + 1 + 5 + 7 + 1 + 1 + 3 + 1 + 0, "項目數") ;
+  ok(text.includes("12345／100000") && text.includes("12.3%"), "沒印容量用量與上限：" + text);
+});
+await test("W4 看門狗自己出錯那天不洗掉提醒紀錄：STALE_OK 只在第 0、3 天寄，出錯另外寄一次", () => {
+  const w = makeWorld(src, SAMPLE);
+  w.state.last_ok = "2026-11-10T09:00:00+08:00"; // 久沒成功
+  w.root.children.find((c) => c.name === "最近備份.json").content = JSON.stringify(w.state);
+  const day = (n) => new Date(NOW.getTime() + n * 86400000);
+  const subjects = [];
+  for (let n = 0; n < 5; n++) {
+    w.now = day(n);
+    w.boom = n === 1;
+    const before = w.mails.length;
+    w.api.dailyCheck();
+    subjects.push(w.mails.slice(before).map((m) => m.subject).join("|"));
+  }
+  ok(/STALE_OK/.test(subjects[0]), "第 0 天要寄 STALE_OK：" + subjects[0]);
+  eq(subjects[1], "【備份看門狗】執行錯誤", "第 1 天寄出錯信");
+  eq(subjects[2], "", "第 2 天不重寄");
+  ok(/STALE_OK/.test(subjects[3]), "第 3 天要再寄 STALE_OK：" + subjects[3]);
+  eq(subjects[4], "", "第 4 天不寄");
+  ok(!subjects.some((s) => s.includes("恢復正常")), "出錯不能當成恢復正常");
+});
+await test("W5 已經 STALE_OK 時不再另報 MARKET_STALE（那份 manifest 本來就舊）", () => {
+  const w = makeWorld(src, SAMPLE);
+  w.now = new Date(NOW.getTime() + 6 * 86400000); // last_ok 已 6 天，market-data 的 commit 也超過 4 天
+  eq(w.api.dryRun().map((i) => i.code), ["STALE_OK"], "只有 STALE_OK");
 });
 await test("容量超過 80% → QUOTA", () => {
   const w = makeWorld(src, SAMPLE);
