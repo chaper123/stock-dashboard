@@ -22,7 +22,7 @@
 ## 待辦
 1. **v4.2／v4.2a 後續**（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 14、16 節）：11/17 第一次正式執行通過（剛好是大波動日，格式與數字都對）。
    - 還沒遇到費半漲跌在 3%～5% 之間的日子（不該用大波動日格式），遇到那天看一次執行紀錄。
-   - v4.2a 的「近 N 個交易日」寫法還沒實際出現過（外資或投信一路同方向到檔案第一列才會用到），遇到時看一次執行紀錄；v4.2a 第一次正式執行是 11/23（週一），也看一次。
+   - v4.2a 的「近 N 個交易日」寫法還沒實際出現過（外資或投信一路同方向到檔案第一列才會用到），遇到時看一次執行紀錄。v4.2a 前四次正式執行（11/23、11/24）檢查過了，都正常；6 個小問題記在 NEWS_ROUTINE.md 第 16 節，留給 v4.2b 一起改。
 2. **已完成**：Sonnet 晨報測試（2026-11-19）維持 Opus（[NEWS_ROUTINE.md](NEWS_ROUTINE.md) 第 15 節）；v4.2a 2026-11-21 上線（第 16 節）。
 3. **設計改版擱置**（使用者 2026-11-11 決定先功能、後美化；使用者沒提就不要主動提）：IMPROVE 的 D01～D08、R16、R17 跟著擱置。
    - 首頁示意在本機分支 `claude/fervent-merkle-1607ac`（工作目錄 `.claude/worktrees/fervent-merkle-1607ac`，cacbefe）與備份分支 `archive/design-preview-2026-11-10`，沒有 push、沒有合併。要看：在 `.claude/launch.json` 暫時加 `py -3.14 -m http.server 8766 --directory .claude/worktrees/fervent-merkle-1607ac/site`，開 `/preview-home.html`。
