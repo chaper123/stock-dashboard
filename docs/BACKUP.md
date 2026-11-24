@@ -228,6 +228,11 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
   - 沒驗到的：真的 Drive／Mail 服務的行為（`getEditors()` 是否包含擁有者、`getSharingAccess()` 的回傳值、`getOwner()` 在共用雲端硬碟為 null）；`getEditors`／`getViewers` 我用「排除自己的信箱」處理，`String(access)` 轉 "PRIVATE"，都靠 Apps Script 文件的說明，要在 `dryRun` 第一次實跑時確認。
 - 2026-11-21 審查退回 19 項修完（同一個分支，仍沒合併、沒 push、沒寫過 G:、沒跑 `--init`）：腳本與測試 `4fade41`、看門狗 `b39bd53`、規格與還原說明 `09917bd`。全套 pytest：`py -3.14` 與 `py -3.12` 都是 383 passed、1 skipped（約 3.7 分鐘；skip 的是 Windows 上沒權限建 symlink 的那一項）；看門狗 `selfTest` 65／65、瀏覽器測試頁 `PASS 22/22`。自己決定的地方：`--accept-rewrite` 的「較新基準」用 `rewrite_accepted.at` 對上一份 OK manifest 的 `finished`；只在該次 fetch 成功時記錄；fetch 失敗仍做完整歷史（manifest 標 STALE）；完整歷史多留最新一份 OK；完整歷史 manifest 多 `fetch_ok`；整棵樹的分享檢查沒有加時間上限保護，第一次實跑 `dryRun` 看印出的秒數。
 - 2026-11-21 最後一輪 7 項小修正：`run_cmd` 保底不關管線（等待上限 timeout＋30 秒）、`delete_backup` 改名成 `-刪除` 再刪並每次重試、STALE 的完整歷史在 fetch 恢復後立刻補 OK、測試 fixture 的 bare origin 開 longpaths、靜默伺服器測試只數自己的 `git-remote-http`、說明文字對齊、看門狗安裝步驟補 `dryRun` 的秒數與用量對照。全套 pytest：`py -3.14`、`py -3.12` 都是 389 passed、1 skipped；測試頁 `PASS 22/22`。
+- 2026-11-24 上線（部署 session，使用者在部署 session 逐步同意）：合併 `5821a21`（分支 `claude/funds-fire-30y-122524` 頭 `b3416b6`），push `96b6049..5821a21`（16 個 commit，沒動 `site/`、沒觸發 Pages）；合併後 `py -3.14`、`py -3.12` 都是 389 passed、1 skipped，CI 3.12、3.13、3.14 都綠（run `45334106418`）。
+  - `--dry-run`（還沒建資料夾）：找不到備份根目錄、結束碼 10（資料夾本來就還不存在；11 是資料夾在、缺標記檔，跟規格一致）；`G:` 與 `GoogleDriveFS.exe` 都在。`--init` 13:36 建好根目錄、標記檔與 `每日`、`完整歷史`、`紀錄`。
+  - 第一次真的備份（13:36，不加 `--no-notify`）：OK、結束碼 0、35 秒；每日 4.6 MB（5 個 zip、7 個 CSV、manifest），完整歷史 19.3 MB（3 個 bundle，market-data 18.9 MB），問題 0、警告 2（stock-dashboard 本機只有的兩個設計預覽分支 `archive/design-preview-2026-11-10`、`claude/fervent-merkle-1607ac`；三個舊 worktree 的 `.claude/launch.json` 有未提交修改，備份只含 origin/main）。核對：manifest 15 個檔的大小與 sha256 全部一致；`還原說明.txt` 與 origin/main 的 `docs/RESTORE.md` 同一個 blob；三個 repo 備份前後 HEAD、分支、工作目錄、本機設定完全相同（只有 origin/* 前進）；`%TEMP%` 沒有 `sdbackup-*`。
+  - 排程 `StockDashboardBackup`（使用者同意後 14:18 前後註冊）：每天 22:00、只在登入時跑、StartWhenAvailable、上限 1 小時、重試 2 次（15 分鐘）、IgnoreNew、不叫醒電腦，讀回的設定與第 8 節相符。馬上 `Start-ScheduledTask` 試跑一次：22 秒、`LastTaskResult` 0，紀錄多一行、每日資料夾被同日取代（沒有 `_未完成-*`）、sha256 重驗一致；使用者說沒有看到任何視窗閃過。
+  - 還沒做：雲端看門狗（第 13 節，教學 session 帶使用者安裝授權）；隔天從雲端那一側確認 22:00 的自動執行（`最近備份.json` 的 `last_ok` 要在 11/24 22:00 之後）。
 
 ## 13. 雲端看門狗（Apps Script）
 
