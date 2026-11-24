@@ -232,7 +232,14 @@ Register-ScheduledTask -TaskName 'StockDashboardBackup' -Action $act -Trigger $t
   - `--dry-run`（還沒建資料夾）：找不到備份根目錄、結束碼 10（資料夾本來就還不存在；11 是資料夾在、缺標記檔，跟規格一致）；`G:` 與 `GoogleDriveFS.exe` 都在。`--init` 13:36 建好根目錄、標記檔與 `每日`、`完整歷史`、`紀錄`。
   - 第一次真的備份（13:36，不加 `--no-notify`）：OK、結束碼 0、35 秒；每日 4.6 MB（5 個 zip、7 個 CSV、manifest），完整歷史 19.3 MB（3 個 bundle，market-data 18.9 MB），問題 0、警告 2（stock-dashboard 本機只有的兩個設計預覽分支 `archive/design-preview-2026-11-10`、`claude/fervent-merkle-1607ac`；三個舊 worktree 的 `.claude/launch.json` 有未提交修改，備份只含 origin/main）。核對：manifest 15 個檔的大小與 sha256 全部一致；`還原說明.txt` 與 origin/main 的 `docs/RESTORE.md` 同一個 blob；三個 repo 備份前後 HEAD、分支、工作目錄、本機設定完全相同（只有 origin/* 前進）；`%TEMP%` 沒有 `sdbackup-*`。
   - 排程 `StockDashboardBackup`（使用者同意後 14:18 前後註冊）：每天 22:00、只在登入時跑、StartWhenAvailable、上限 1 小時、重試 2 次（15 分鐘）、IgnoreNew、不叫醒電腦，讀回的設定與第 8 節相符。馬上 `Start-ScheduledTask` 試跑一次：22 秒、`LastTaskResult` 0，紀錄多一行、每日資料夾被同日取代（沒有 `_未完成-*`）、sha256 重驗一致；使用者說沒有看到任何視窗閃過。
-  - 還沒做：雲端看門狗（第 13 節，教學 session 帶使用者安裝授權）；隔天從雲端那一側確認 22:00 的自動執行（`最近備份.json` 的 `last_ok` 要在 11/24 22:00 之後）。
+  - 主 session 核對：用 Google 雲端硬碟連接器只讀中繼資料，確認 zip 與 bundle 真的已經上傳，大小跟本機一致、分享狀態都是 PRIVATE；manifest 15 個檔的 sha256 重算一致。
+- 2026-11-24 雲端看門狗安裝完成（教學 session 帶，使用者自己操作與授權）：
+  - 獨立專案「stock-dashboard 備份看門狗」，沒碰帳本綁定的專案；oauthScopes 4 行。授權畫面列 3 項：雲端硬碟寫的是「查看及下載所有雲端硬碟檔案」，這就是 drive.readonly 的中文名稱；userinfo.email 沒有單獨列出，但 testMail 寄得到。
+  - selfTest 65／65。
+  - dryRun 全部正常：讀雲端硬碟 22.5 秒、28 個項目的分享設定。用量 148,777,024,802／2,199,023,255,552 位元組（6.8%）。對照 Google One：帳號共 2 TB（家庭方案），整體已用約 13.6%，其中雲端硬碟 138.55 GB 跟程式的數字對得上。**`getStorageUsed()` 只算雲端硬碟**，Gmail、相簿、家庭成員的用量不在裡面，所以 QUOTA 的百分比會比 Google One 顯示的低。帳號有 2 TB，這份備份一年不到 1 GB，容量不是問題，所以程式說明不改，只記在這裡（第 0 節「15 GB 免費額度」的估算對這個帳號不適用）。
+  - testMail 收到，主旨是「【測試】【備份看門狗】…」，測試信多了「【測試】」前綴。
+  - installTrigger：1 個 dailyCheck 每日觸發器（9～10 點）。
+  - 還沒驗：第一次自動執行。11/25 要看兩件事：`最近備份.json` 的 `last_ok` 在 11/24 22:00 之後（排程自己跑過）；看門狗「觸發條件」頁的上次執行時間有值、錯誤率不是紅色（沒問題就不會寄信）。
 
 ## 13. 雲端看門狗（Apps Script）
 
