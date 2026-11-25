@@ -26,7 +26,9 @@
 
 第一層照本節原約定輸出（market-data README「新聞標題格式」），台北 08:20 由 cron-job.org 觸發（10/23 08:20 正常）。
 
-`data/news/headlines.json`（最近 72 小時，約 1,100 則、0.7 MB，只能用程式篩選）：
+`data/news/headlines.json`（最近 72 小時；2026-11 平日約 2,000～3,400 則、1.5～2.5 MB，只能用程式篩選）：
+
+- **2026-11-25 起 `link` 可能是 null**（[HEADLINES_SIZE.md](HEADLINES_SIZE.md)）：已經解出原文網址 `url` 的 Google News 項目，不再存轉址 `link`，鍵保留。讀取端一律用 `url || link`；engine 與網站本來就這樣讀，排程不用改。中央社、Fed 的 link 等於 url，不變。
 
 - 最上層：`generated_at_taipei`、`window_hours`（72）、`status`、`tiers`、`feeds`（34 個查詢，`name`、`ok`、`count`）、`errors`、`stats`（`by_tier`、`by_symbol`、`by_topic`）、`sec_8k`（目前「未啟用」，等 Actions secret）。
 - `items[]`：`id`、`published_utc`、`published_taipei`、`source`、`source_url`、`tier`（1 官方、2 主要媒體、3 第一手發言、4 其他）、`lang`、`title`、`link`、`symbols`、`topics`、`also`（同標題合併掉的其他來源）、`queries` 等。

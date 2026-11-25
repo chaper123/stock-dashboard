@@ -80,3 +80,13 @@ market-data 的 workflow 不跑測試，所以在本機用 `py -3.12` 與 `py -3
 ## 8. 進度
 
 - 2026-11-24 規格寫好（主 session），交給「market-data 維護」session 實作。
+- **第一階段**：只讓程式讀得懂 null link，輸出不變。
+  - 2026-11-24 19:01 push，commit `473009c`。改了 `is_google_news`、`item_id` 沿用 id、`load_previous` 帶回 id，merge 與 cap 改用新判斷。
+  - 上線後檢查了兩次排程：11/24 21:02、11/25 08:22。topics 的 sample_ids 都找得到；meta 是 ok；url 快取在 70～75%；沒有 null link。
+  - 舊項目 id 改變 13、22 個（改動前是 5～12 個）。原因是 Google News 給同一篇文章換了新轉址，合併時新項目勝出；改動前就會這樣。新舊程式吃同一份輸入，輸出逐項相同。
+- **第二階段**：寫成 null。
+  - 2026-11-25 09:21 push，commit `267e7b8`，已經 rebase 到最新的 origin/main。
+  - 測試：`py -3.12`、`py -3.14` 各 176 個全過，`:206` 改成 None，新增讀回自己輸出的往返測試。
+  - 重播：從 v1 起 84 版 84/84 相同，另外補了上線後的 2 版。最後一版 1.96 MB 變 1.48 MB，2,160 則裡有 1,464 則 link 是 null。
+  - engine（0876bf0）：`--brief` 相同。
+  - 上線後頭 3 次排程（11:10、13:40、16:30）的檢查，由 market-data 維護做。
