@@ -3,7 +3,7 @@
 > 新 session 先讀這份（現況、待辦、注意事項）。舊決定與測試細節在 [HISTORY.md](HISTORY.md)，要查時用搜尋找相關段落，不要整份讀。
 > 每次 commit 一起更新。這份保持精簡：做完的事在這裡只留一兩句，細節寫進主題文件（見文件地圖）或接在 HISTORY.md 最後面。程式註解裡的「PROGRESS.md 第 N 項」指 HISTORY.md 的編號。
 
-最後更新：2026-11-21
+最後更新：2026-11-26
 
 ## 網址
 - repo：https://github.com/chaper123/stock-dashboard
@@ -33,7 +33,7 @@
 6. **帳本補兩組已賣出的買賣與已實現損益**（[REALIZED_PNL.md](REALIZED_PNL.md)）：2026-11-18 上線（sw.js `2026-11-18-1`）。帳本補了 00679B、00735 兩組買賣與 VOO、GOOGL、009816 的實際金額；持倉頁與總覽顯示已實現損益 +175。
 7. **配息自動記帳已全部上線**（2026-11-18；[OTHER_INCOME.md](OTHER_INCOME.md)、[AUTO_DIVIDENDS.md](AUTO_DIVIDENDS.md)）：網站（合併 `fa82ff1`，sw.js `2026-11-18-2`）、market-data `us.json`、Apps Script 與每日觸發器都好了。每天台北 09:00～10:00 自動檢查，使用者 11/25 確認配息卡「上次自動檢查」是當天早上。第一筆真正自動記帳預計是 GOOGL（12 月中）或 00981A。
 8. **備份到 Google 雲端硬碟**（[BACKUP.md](BACKUP.md)、[RESTORE.md](RESTORE.md)）：**2026-11-24 已上線**（合併 `5821a21`）。排程 `StockDashboardBackup` 每天 22:00（只在登入時跑）把三個 repo 的 origin/main、`private/`、Claude 記憶、7 個發布 CSV 寫進 `G:\我的雲端硬碟\stock-dashboard 備份\`（每日約 5 MB；每 7 天一份完整歷史約 19 MB）；第一次備份與排程試跑都 OK，sha256 全部一致、沒有視窗閃過，細節在 BACKUP.md 第 12 節。雲端看門狗（另一個 Apps Script 專案，每天 9～10 點檢查，有問題才寄信）也在 11/24 裝好，dryRun 全部正常。11/25 第一次自動執行都正常：22:00 電腦沒開，隔天登入後 09:08 補跑 OK；看門狗 09:00 跑過，錯誤率 0%。
-9. **縮小 market-data 的 headlines.json 成長**（[HEADLINES_SIZE.md](HEADLINES_SIZE.md)）：使用者 2026-11-24 說「要，今天做」。repo 每月約長 21 MB，主因是每則新標題的 Google News 轉址 link；做法是已解出 url 的不再存 link（每月少約 30%，讀取端與排程都不改），分兩階段上線（第一階段 11/24 `473009c`、第二階段 11/25 09:21 `267e7b8`，上線後頭 3 次排程都通過，每則小約 23%）。**11/26** 看晨間、午間摘要的「輸入」那行；**12/09** 量兩週的成長。歷史不改寫，**每年 10 月**看一次 repo 大小，超過 500 MB 再排改寫。交給 market-data 維護 session 做。
+9. **縮小 market-data 的 headlines.json 成長**（[HEADLINES_SIZE.md](HEADLINES_SIZE.md)）：使用者 2026-11-24 說「要，今天做」。repo 每月約長 21 MB，主因是每則新標題的 Google News 轉址 link；做法是已解出 url 的不再存 link（每月少約 30%，讀取端與排程都不改），分兩階段上線（第一階段 11/24 `473009c`、第二階段 11/25 09:21 `267e7b8`，上線後頭 3 次排程都通過，每則小約 23%）。11/26 隔天的晨午間排程檢查通過：NVDA 件數變少是新聞量自然變少，舊項目消失與 id 改變的機制都跟改動前一樣。**12/09** 量兩週的成長。歷史不改寫，**每年 10 月**看一次 repo 大小，超過 500 MB 再排改寫。交給 market-data 維護 session 做。
 
 ## 注意事項
 - 分工（使用者 2026-11-12、11-13 訂）：主 session 的高階模型只做規劃、規格、審查與較難的製作；部署、例行檢查、照規格實作交給常駐的便宜模型 session（部署與例行檢查、網站實作、market-data 維護、排程維護；教學要用時開新的；id 在記憶 `delegate-routine-work`）。模型（使用者 2026-11-16 訂）：交辦預設 Sonnet，看新聞、讀執行紀錄這類簡單檢查用 Haiku，只有 Sonnet 做不到才用 Opus；主 session 以前開的 Opus session 已全部封存。同類工作用同一個 session，不要每件事開新的；主對話只講結論與要使用者決定的事。會對外生效的動作（push、部署、改排程）要使用者本人在執行的那個 session 裡同意。使用者 2026-11-18 再次強調：主 session 當管理者，部署（合併、改版本號、測試、push、線上確認）與例行檢查一律交給分支 session 做，做完呈交給主 session 核對批改，主 session 不自己動手部署。
